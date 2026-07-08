@@ -49,6 +49,11 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
     shutdown: CancellationToken,
     pool_ttl: Duration,
 ) {
+    if let Err(err) = stream.set_nodelay(true) {
+        portal.logger.error(format_args!(
+            "portal::conn::handle_tcp_incoming: failed to enable TCP_NODELAY: {err}"
+        ));
+    }
     let local = stream
         .local_addr()
         .map(|address| address.to_string())
