@@ -3,6 +3,10 @@
 
 //! TCP/TLS portal connection tests.
 
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, BorrowedFd, RawFd};
+#[cfg(windows)]
+use std::os::windows::io::{AsRawSocket, BorrowedSocket, RawSocket};
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::task::{Context, Poll};
@@ -27,17 +31,85 @@ use super::support::{
     TestSocksAuth, connect_test_tls, spawn_test_socks5_tcp, spawn_test_socks5_udp,
 };
 
+#[cfg(any(unix, windows))]
 #[tokio::test]
-async fn tcp_carrier_tuning_enables_nodelay() {
+async fn tcp_incoming_enables_nodelay_on_accepted_stream() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let (client, accepted) = tokio::join!(TcpStream::connect(addr), listener.accept());
-    let _client = client.unwrap();
-    let (accepted, _) = accepted.unwrap();
+    let listen_addr = listener.local_addr().unwrap();
+    let portal = Portal::new(
+        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Logger::new(LogLevel::None, false),
+    )
+    .unwrap();
+    let portal_inner = portal.inner.clone();
+    let shutdown = CancellationToken::new();
+    let child_shutdown = shutdown.clone();
+    let (raw_socket_sender, raw_socket_receiver) = oneshot::channel();
+    let server_task = tokio::spawn(async move {
+        let (stream, peer) = listener.accept().await.unwrap();
+        let raw_socket = raw_tcp_socket(&stream);
+        assert!(!tcp_nodelay_for_raw_socket(raw_socket));
+        raw_socket_sender.send(raw_socket).unwrap();
+        let admission = portal_inner
+            .unauthenticated_admission
+            .try_acquire(peer.ip())
+            .unwrap();
 
-    assert!(!accepted.nodelay().unwrap());
-    super::super::tcp::tune_tcp_carrier_stream(&accepted);
-    assert!(accepted.nodelay().unwrap());
+        handle_tcp_incoming_with_pool_ttl(
+            portal_inner,
+            stream,
+            peer,
+            admission,
+            child_shutdown,
+            Duration::from_millis(100),
+        )
+        .await;
+    });
+
+    let client = TcpStream::connect(listen_addr).await.unwrap();
+    let raw_socket = raw_socket_receiver.await.unwrap();
+    timeout(Duration::from_secs(1), async {
+        while !tcp_nodelay_for_raw_socket(raw_socket) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    drop(client);
+    shutdown.cancel();
+    timeout(Duration::from_secs(2), server_task)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[cfg(unix)]
+type RawTcpSocket = RawFd;
+
+#[cfg(windows)]
+type RawTcpSocket = RawSocket;
+
+#[cfg(unix)]
+fn raw_tcp_socket(stream: &TcpStream) -> RawTcpSocket {
+    stream.as_raw_fd()
+}
+
+#[cfg(windows)]
+fn raw_tcp_socket(stream: &TcpStream) -> RawTcpSocket {
+    stream.as_raw_socket()
+}
+
+#[cfg(unix)]
+fn tcp_nodelay_for_raw_socket(raw_socket: RawTcpSocket) -> bool {
+    let borrowed = unsafe { BorrowedFd::borrow_raw(raw_socket) };
+    socket2::SockRef::from(&borrowed).tcp_nodelay().unwrap()
+}
+
+#[cfg(windows)]
+fn tcp_nodelay_for_raw_socket(raw_socket: RawTcpSocket) -> bool {
+    let borrowed = unsafe { BorrowedSocket::borrow_raw(raw_socket) };
+    socket2::SockRef::from(&borrowed).tcp_nodelay().unwrap()
 }
 
 #[tokio::test]
