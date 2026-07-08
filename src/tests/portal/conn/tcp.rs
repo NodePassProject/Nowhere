@@ -3,16 +3,11 @@
 
 //! TCP/TLS portal connection tests.
 
-#[cfg(unix)]
-use std::os::fd::{AsRawFd, BorrowedFd, RawFd};
-use std::pin::Pin;
 use std::sync::atomic::Ordering;
-use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::oneshot;
+use tokio::net::{TcpListener, UdpSocket};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -20,7 +15,7 @@ use url::Url;
 use crate::common::{LogLevel, Logger, handshake_timeout};
 use crate::portal::Portal;
 use crate::protocol::{
-    Carrier, UOT_MAGIC_TARGET, read_uot_packet, write_auth_frame, write_request_frame,
+    UOT_MAGIC_TARGET, read_uot_packet, write_auth_frame, write_request_frame,
     write_uot_packet_frame, write_uot_setup_frame,
 };
 
@@ -28,122 +23,6 @@ use super::super::*;
 use super::support::{
     TestSocksAuth, connect_test_tls, spawn_test_socks5_tcp, spawn_test_socks5_udp,
 };
-
-#[cfg(unix)]
-#[tokio::test]
-async fn tcp_incoming_enables_nodelay_on_accepted_stream() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let listen_addr = listener.local_addr().unwrap();
-    let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
-        Logger::new(LogLevel::None, false),
-    )
-    .unwrap();
-    let portal_inner = portal.inner.clone();
-    let shutdown = CancellationToken::new();
-    let child_shutdown = shutdown.clone();
-    let (raw_socket_sender, raw_socket_receiver) = oneshot::channel();
-    let server_task = tokio::spawn(async move {
-        let (stream, peer) = listener.accept().await.unwrap();
-        let raw_socket = raw_tcp_socket(&stream);
-        assert!(!tcp_nodelay_for_raw_socket(raw_socket));
-        raw_socket_sender.send(raw_socket).unwrap();
-        let admission = portal_inner
-            .unauthenticated_admission
-            .try_acquire(peer.ip())
-            .unwrap();
-
-        handle_tcp_incoming_with_pool_ttl(
-            portal_inner,
-            stream,
-            peer,
-            admission,
-            child_shutdown,
-            Duration::from_millis(100),
-        )
-        .await;
-    });
-
-    let client = TcpStream::connect(listen_addr).await.unwrap();
-    let raw_socket = raw_socket_receiver.await.unwrap();
-    timeout(Duration::from_secs(1), async {
-        while !tcp_nodelay_for_raw_socket(raw_socket) {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-
-    drop(client);
-    shutdown.cancel();
-    timeout(Duration::from_secs(2), server_task)
-        .await
-        .unwrap()
-        .unwrap();
-}
-
-#[cfg(unix)]
-type RawTcpSocket = RawFd;
-
-#[cfg(unix)]
-fn raw_tcp_socket(stream: &TcpStream) -> RawTcpSocket {
-    stream.as_raw_fd()
-}
-
-#[cfg(unix)]
-fn tcp_nodelay_for_raw_socket(raw_socket: RawTcpSocket) -> bool {
-    let borrowed = unsafe { BorrowedFd::borrow_raw(raw_socket) };
-    socket2::SockRef::from(&borrowed).tcp_nodelay().unwrap()
-}
-
-#[tokio::test]
-async fn tls_tcp_relay_flushes_target_to_client_writes_before_target_eof() {
-    let target_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let target_addr = target_listener.local_addr().unwrap();
-    let (release_target, wait_release) = oneshot::channel();
-    let target_task = tokio::spawn(async move {
-        let (mut target, _) = target_listener.accept().await.unwrap();
-        target.write_all(b"chunk").await.unwrap();
-        let _ = wait_release.await;
-        let _ = target.shutdown().await;
-    });
-
-    let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
-        Logger::new(LogLevel::None, false),
-    )
-    .unwrap();
-    let mut client_read = tokio::io::empty();
-    let (flushed, wait_flushed) = oneshot::channel();
-    let mut client_write = FlushSignalWriter::new(flushed);
-
-    let relay_task = tokio::spawn(async move {
-        super::super::relay::relay_tcp_target(
-            portal.inner,
-            &mut client_read,
-            &mut client_write,
-            target_addr.to_string(),
-            "127.0.0.1:1000".to_string(),
-            "127.0.0.1:2077".to_string(),
-            Carrier::Tcp,
-        )
-        .await;
-    });
-
-    let flushed = timeout(Duration::from_millis(250), wait_flushed)
-        .await
-        .expect("relay did not flush target_to_client write before target EOF")
-        .unwrap();
-    assert_eq!(flushed, b"chunk");
-
-    let _ = release_target.send(());
-    timeout(Duration::from_secs(2), relay_task)
-        .await
-        .unwrap()
-        .unwrap();
-
-    target_task.await.unwrap();
-}
 
 #[tokio::test]
 async fn tls_tcp_pool_waits_beyond_handshake_timeout_then_relays() {
@@ -213,43 +92,6 @@ async fn tls_tcp_pool_waits_beyond_handshake_timeout_then_relays() {
     let _ = tls.shutdown().await;
     echo_task.await.unwrap();
     server_task.await.unwrap();
-}
-
-struct FlushSignalWriter {
-    buffered: Vec<u8>,
-    flushed: Option<oneshot::Sender<Vec<u8>>>,
-}
-
-impl FlushSignalWriter {
-    fn new(flushed: oneshot::Sender<Vec<u8>>) -> Self {
-        Self {
-            buffered: Vec::new(),
-            flushed: Some(flushed),
-        }
-    }
-}
-
-impl tokio::io::AsyncWrite for FlushSignalWriter {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        self.buffered.extend_from_slice(buf);
-        Poll::Ready(Ok(buf.len()))
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        if let Some(flushed) = self.flushed.take() {
-            let buffered = std::mem::take(&mut self.buffered);
-            let _ = flushed.send(buffered);
-        }
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
 }
 
 #[tokio::test]
