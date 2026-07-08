@@ -48,6 +48,7 @@ where
                 limiter.wait_read(n as i64).await;
             }
             target_write.write_all(&buffer1[..n]).await?;
+            target_write.flush().await?;
         }
     };
 
@@ -62,6 +63,7 @@ where
                 limiter.wait_write(n as i64).await;
             }
             client_write.write_all(&buffer2[..n]).await?;
+            client_write.flush().await?;
             portal.stats.tcp_tx.fetch_add(n as u64, Ordering::Relaxed);
             if let Some((_, downlink)) = carriers {
                 match downlink {

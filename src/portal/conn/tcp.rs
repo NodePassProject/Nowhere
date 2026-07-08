@@ -49,6 +49,7 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
     shutdown: CancellationToken,
     pool_ttl: Duration,
 ) {
+    tune_tcp_carrier_stream(&stream);
     let local = stream
         .local_addr()
         .map(|address| address.to_string())
@@ -322,6 +323,10 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
             ) => {}
         }
     }
+}
+
+pub(super) fn tune_tcp_carrier_stream(stream: &TcpStream) {
+    let _ = stream.set_nodelay(true);
 }
 
 /// Tracks an authenticated but not-yet-claimed TCP pooled connection.
