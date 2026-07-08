@@ -5,8 +5,6 @@
 
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, BorrowedFd, RawFd};
-#[cfg(windows)]
-use std::os::windows::io::{AsRawSocket, BorrowedSocket, RawSocket};
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::task::{Context, Poll};
@@ -31,7 +29,7 @@ use super::support::{
     TestSocksAuth, connect_test_tls, spawn_test_socks5_tcp, spawn_test_socks5_udp,
 };
 
-#[cfg(any(unix, windows))]
+#[cfg(unix)]
 #[tokio::test]
 async fn tcp_incoming_enables_nodelay_on_accepted_stream() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -87,28 +85,14 @@ async fn tcp_incoming_enables_nodelay_on_accepted_stream() {
 #[cfg(unix)]
 type RawTcpSocket = RawFd;
 
-#[cfg(windows)]
-type RawTcpSocket = RawSocket;
-
 #[cfg(unix)]
 fn raw_tcp_socket(stream: &TcpStream) -> RawTcpSocket {
     stream.as_raw_fd()
 }
 
-#[cfg(windows)]
-fn raw_tcp_socket(stream: &TcpStream) -> RawTcpSocket {
-    stream.as_raw_socket()
-}
-
 #[cfg(unix)]
 fn tcp_nodelay_for_raw_socket(raw_socket: RawTcpSocket) -> bool {
     let borrowed = unsafe { BorrowedFd::borrow_raw(raw_socket) };
-    socket2::SockRef::from(&borrowed).tcp_nodelay().unwrap()
-}
-
-#[cfg(windows)]
-fn tcp_nodelay_for_raw_socket(raw_socket: RawTcpSocket) -> bool {
-    let borrowed = unsafe { BorrowedSocket::borrow_raw(raw_socket) };
     socket2::SockRef::from(&borrowed).tcp_nodelay().unwrap()
 }
 
