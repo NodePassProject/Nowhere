@@ -68,21 +68,22 @@ SOCKS5 outbound:
   Percent-encode reserved characters in SOCKS usernames and passwords.
 
 Environment:
-  NOW_QUIC_MAX_STREAMS     Maximum authenticated QUIC streams.
-  NOW_QUIC_MAX_UDP_FLOWS   Maximum DATAGRAM UDP flows per QUIC connection.
-  NOW_QUIC_UDP_QUEUE_BYTES Maximum queued DATAGRAM bytes per QUIC connection.
-  NOW_MAX_PENDING_FLOW_PAIRS Maximum unmatched asymmetric flow halves per session.
+  NOW_QUIC_MAX_STREAMS      Maximum authenticated QUIC streams.
+  NOW_QUIC_MAX_UDP_FLOWS    Maximum DATAGRAM UDP flows per QUIC connection.
+  NOW_QUIC_UDP_QUEUE_BYTES  Maximum queued DATAGRAM bytes per QUIC connection.
+  NOW_TCP_IDLE_POOL_CONNS   Maximum authenticated idle TLS/TCP connections.
+  NOW_MAX_PENDING_PAIRS     Maximum unmatched asymmetric flow halves per session.
   NOW_FLOW_PAIR_TIMEOUT     Timeout for matching asymmetric flow halves.
-  NOW_TCP_DATA_BUF_SIZE    TCP relay buffer size.
-  NOW_UDP_DATA_BUF_SIZE    UDP target receive buffer size.
-  NOW_TCP_DIAL_TIMEOUT     TCP target dial timeout.
-  NOW_UDP_DIAL_TIMEOUT     UDP target dial timeout.
-  NOW_TCP_READ_TIMEOUT     TCP half-close grace timeout.
-  NOW_UDP_IDLE_TIMEOUT     QUIC and DATAGRAM/UoT flow idle timeout.
-  NOW_HANDSHAKE_TIMEOUT    Base authentication deadline before jitter.
-  NOW_REPORT_INTERVAL      Local CHECK_POINT and LINK_STATUS report interval.
-  NOW_SHUTDOWN_TIMEOUT     Graceful shutdown wait.
-  NOW_RELOAD_INTERVAL      Minimum PEM certificate reload interval.";
+  NOW_TCP_DATA_BUF_SIZE     TCP relay buffer size.
+  NOW_UDP_DATA_BUF_SIZE     UDP target receive buffer size.
+  NOW_TCP_DIAL_TIMEOUT      TCP target dial timeout.
+  NOW_UDP_DIAL_TIMEOUT      UDP target dial timeout.
+  NOW_TCP_READ_TIMEOUT      TCP half-close grace timeout.
+  NOW_UDP_IDLE_TIMEOUT      QUIC and DATAGRAM/UoT flow idle timeout.
+  NOW_HANDSHAKE_TIMEOUT     Base authentication deadline before jitter.
+  NOW_REPORT_INTERVAL       Local CHECK_POINT and LINK_STATUS report interval.
+  NOW_SHUTDOWN_TIMEOUT      Graceful shutdown wait.
+  NOW_RELOAD_INTERVAL       Minimum PEM certificate reload interval.";
 
 #[tokio::main]
 async fn main() {
@@ -215,7 +216,7 @@ fn init_logger(level: Option<std::borrow::Cow<'_, str>>) -> Logger {
         }
         Some("event") => {
             logger.set_log_level(LogLevel::Event);
-            logger.event(format_args!("Main.initLogger: log level set to EVENT"));
+            logger.event(format_args!("main::init_logger: log level set to EVENT"));
         }
         _ => {}
     }

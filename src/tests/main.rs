@@ -23,6 +23,8 @@ fn help_text_documents_usage_and_configuration_surface() {
         "NOW_QUIC_MAX_STREAMS",
         "NOW_QUIC_MAX_UDP_FLOWS",
         "NOW_QUIC_UDP_QUEUE_BYTES",
+        "NOW_TCP_IDLE_POOL_CONNS",
+        "NOW_MAX_PENDING_PAIRS",
         "NOW_HANDSHAKE_TIMEOUT",
         "Password credentials are not supported.",
         "tls=0 is not supported.",
