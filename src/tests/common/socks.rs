@@ -169,14 +169,18 @@ async fn udp_associate_wraps_payload_and_keeps_control_alive() {
         .await;
 
         let mut packet = [0u8; 512];
-        let (size, peer) = relay.recv_from(&mut packet).await.unwrap();
-        let (header_len, fragment) = parse_udp_header(&packet[..size]).unwrap();
-        assert_eq!(fragment, 0);
-        assert_eq!(&packet[header_len..size], b"hello");
-        let mut fragmented = packet[..size].to_vec();
-        fragmented[2] = 1;
-        relay.send_to(&fragmented, peer).await.unwrap();
-        relay.send_to(&packet[..size], peer).await.unwrap();
+        for expected in [b"hello".as_slice(), b"bye".as_slice()] {
+            let (size, peer) = relay.recv_from(&mut packet).await.unwrap();
+            let (header_len, fragment) = parse_udp_header(&packet[..size]).unwrap();
+            assert_eq!(fragment, 0);
+            assert_eq!(&packet[header_len..size], expected);
+            if expected == b"hello" {
+                let mut fragmented = packet[..size].to_vec();
+                fragmented[2] = 1;
+                relay.send_to(&fragmented, peer).await.unwrap();
+            }
+            relay.send_to(&packet[..size], peer).await.unwrap();
+        }
 
         let mut eof = [0u8; 1];
         assert_eq!(control.read(&mut eof).await.unwrap(), 0);
@@ -188,10 +192,16 @@ async fn udp_associate_wraps_payload_and_keeps_control_alive() {
         .dial_udp("dns.test:53", Duration::from_secs(2))
         .await
         .unwrap();
-    assert_eq!(socket.send(b"hello").await.unwrap(), 5);
+    let mut packet = Vec::new();
+    assert_eq!(socket.send(b"hello", &mut packet).await.unwrap(), 5);
     let mut response = [0u8; 512];
-    let size = socket.recv(&mut response).await.unwrap();
-    assert_eq!(&response[..size], b"hello");
+    let payload = socket.recv(&mut response).await.unwrap();
+    assert_eq!(&response[payload], b"hello");
+    let capacity = packet.capacity();
+    assert_eq!(socket.send(b"bye", &mut packet).await.unwrap(), 3);
+    assert_eq!(packet.capacity(), capacity);
+    let payload = socket.recv(&mut response).await.unwrap();
+    assert_eq!(&response[payload], b"bye");
     drop(socket);
     server.await.unwrap();
 }

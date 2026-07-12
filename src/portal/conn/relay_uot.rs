@@ -78,6 +78,7 @@ pub(in crate::portal::conn) async fn relay_udp_over_tcp_target<R, W>(
     portal.stats.add_session(true);
     let _done = SessionGuard::new(portal.clone(), true);
     let mut target_buf = portal.buffers.get_udp_buffer();
+    let mut target_packet = Vec::new();
     let idle_sleep = tokio::time::sleep_until(Instant::now() + udp_idle_timeout());
     tokio::pin!(idle_sleep);
 
@@ -95,7 +96,7 @@ pub(in crate::portal::conn) async fn relay_udp_over_tcp_target<R, W>(
                 if let Some(limiter) = &portal.rate_limiter {
                     limiter.wait_read(payload.len() as i64).await;
                 }
-                match socket.send(&payload).await {
+                match socket.send(&payload, &mut target_packet).await {
                     Ok(n) => {
                         portal.stats.udp_rx.fetch_add(n as u64, Ordering::Relaxed);
                         portal.stats.up_tcp.fetch_add(n as u64, Ordering::Relaxed);
@@ -109,15 +110,16 @@ pub(in crate::portal::conn) async fn relay_udp_over_tcp_target<R, W>(
                 }
             }
             read = socket.recv(&mut target_buf) => {
-                let n = match read {
-                    Ok(n) => n,
+                let payload = match read {
+                    Ok(range) => &target_buf[range],
                     Err(err) => break format!("target read error: {err}"),
                 };
+                let n = payload.len();
                 idle_sleep.as_mut().reset(Instant::now() + udp_idle_timeout());
                 if let Some(limiter) = &portal.rate_limiter {
                     limiter.wait_write(n as i64).await;
                 }
-                if let Err(err) = write_uot_packet(client_write, &target_buf[..n]).await {
+                if let Err(err) = write_uot_packet(client_write, payload).await {
                     break format!("client write error: {err}");
                 }
                 portal.stats.udp_tx.fetch_add(n as u64, Ordering::Relaxed);
@@ -182,6 +184,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
     let _done = SessionGuard::new(portal.clone(), true);
     let mut ack_sent = false;
     let mut target_buf = portal.buffers.get_udp_buffer();
+    let mut target_packet = Vec::new();
     let idle_sleep = tokio::time::sleep_until(Instant::now() + udp_idle_timeout());
     tokio::pin!(idle_sleep);
     let complete_reason = loop {
@@ -197,7 +200,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                 if let Some(limiter) = &portal.rate_limiter {
                     limiter.wait_read(payload.len() as i64).await;
                 }
-                match socket.send(&payload).await {
+                match socket.send(&payload, &mut target_packet).await {
                     Ok(n) => {
                         if !ack_sent {
                             if let Err(err) =
@@ -217,16 +220,17 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                 }
             }
             read = socket.recv(&mut target_buf) => {
-                let n = match read {
-                    Ok(n) => n,
+                let payload = match read {
+                    Ok(range) => &target_buf[range],
                     Err(err) => break format!("target read error: {err}"),
                 };
-                if n == 0 { continue; }
+                if payload.is_empty() { continue; }
+                let n = payload.len();
                 idle_sleep.as_mut().reset(Instant::now() + udp_idle_timeout());
                 if let Some(limiter) = &portal.rate_limiter {
                     limiter.wait_write(n as i64).await;
                 }
-                if let Err(err) = send_paired_udp(&mut downlink, flow_id, &target_buf[..n]).await {
+                if let Err(err) = send_paired_udp(&mut downlink, flow_id, payload).await {
                     break format!("client write error: {err}");
                 }
                 portal.stats.udp_tx.fetch_add(n as u64, Ordering::Relaxed);

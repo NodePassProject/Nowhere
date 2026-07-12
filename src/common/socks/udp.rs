@@ -5,6 +5,7 @@
 
 use std::io::ErrorKind;
 use std::net::SocketAddr;
+use std::ops::Range;
 
 use anyhow::{Context, Result, bail};
 use tokio::net::{TcpStream, UdpSocket};
@@ -25,16 +26,20 @@ impl OutboundUdpSocket {
         }
     }
 
-    pub(crate) async fn send(&self, payload: &[u8]) -> Result<usize> {
+    pub(crate) async fn send(&self, payload: &[u8], packet: &mut Vec<u8>) -> Result<usize> {
         match self {
             Self::Direct(socket) => socket.send(payload).await.map_err(Into::into),
-            Self::Socks(association) => association.send(payload).await,
+            Self::Socks(association) => association.send(payload, packet).await,
         }
     }
 
-    pub(crate) async fn recv(&self, buffer: &mut [u8]) -> Result<usize> {
+    pub(crate) async fn recv(&self, buffer: &mut [u8]) -> Result<Range<usize>> {
         match self {
-            Self::Direct(socket) => socket.recv(buffer).await.map_err(Into::into),
+            Self::Direct(socket) => socket
+                .recv(buffer)
+                .await
+                .map(|size| 0..size)
+                .map_err(Into::into),
             Self::Socks(association) => association.recv(buffer).await,
         }
     }
@@ -47,13 +52,14 @@ pub(crate) struct SocksUdpAssociation {
 }
 
 impl SocksUdpAssociation {
-    async fn send(&self, payload: &[u8]) -> Result<usize> {
-        let mut packet = Vec::with_capacity(self.target_header.len() + payload.len());
+    async fn send(&self, payload: &[u8], packet: &mut Vec<u8>) -> Result<usize> {
+        packet.clear();
+        packet.reserve(self.target_header.len() + payload.len());
         packet.extend_from_slice(&self.target_header);
         packet.extend_from_slice(payload);
         let sent = self
             .socket
-            .send(&packet)
+            .send(packet)
             .await
             .context("common::socks::SocksUdpAssociation::send: failed to write relay")?;
         if sent != packet.len() {
@@ -62,7 +68,7 @@ impl SocksUdpAssociation {
         Ok(payload.len())
     }
 
-    async fn recv(&self, buffer: &mut [u8]) -> Result<usize> {
+    async fn recv(&self, buffer: &mut [u8]) -> Result<Range<usize>> {
         loop {
             let size = tokio::select! {
                 result = self.socket.recv(buffer) => result.context(
@@ -91,9 +97,7 @@ impl SocksUdpAssociation {
             if fragment != 0 {
                 continue;
             }
-            let payload_len = size - header_len;
-            buffer.copy_within(header_len..size, 0);
-            return Ok(payload_len);
+            return Ok(header_len..size);
         }
     }
 }

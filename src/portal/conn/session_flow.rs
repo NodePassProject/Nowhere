@@ -154,6 +154,7 @@ impl PortalUdpFlow {
             ));
         }
         let mut buf = session.portal.buffers.get_udp_buffer();
+        let mut target_packet = Vec::new();
         let idle_sleep = tokio::time::sleep_until(Instant::now() + udp_idle_timeout());
         tokio::pin!(idle_sleep);
 
@@ -171,7 +172,7 @@ impl PortalUdpFlow {
                     if self.is_closed() {
                         break "closed".to_string();
                     }
-                    match socket.send(&datagram.payload).await {
+                    match socket.send(&datagram.payload, &mut target_packet).await {
                         Ok(n) => {
                             session.portal.stats.udp_rx.fetch_add(n as u64, Ordering::Relaxed);
                             session.portal.stats.up_udp.fetch_add(n as u64, Ordering::Relaxed);
@@ -186,8 +187,8 @@ impl PortalUdpFlow {
                     }
                 }
                 read = socket.recv(&mut buf) => {
-                    let n = match read {
-                        Ok(n) => n,
+                    let payload = match read {
+                        Ok(range) => &buf[range],
                         Err(err) => {
                             if self.is_closed() {
                                 break "closed".to_string();
@@ -195,11 +196,12 @@ impl PortalUdpFlow {
                             break format!("target read error: {err}");
                         }
                     };
-                    if n == 0 {
+                    if payload.is_empty() {
                         continue;
                     }
                     idle_sleep.as_mut().reset(Instant::now() + udp_idle_timeout());
-                    let frame = frame_payload_bytes(&response_header, &buf[..n]);
+                    let n = payload.len();
+                    let frame = frame_payload_bytes(&response_header, payload);
                     if let Some(limiter) = &session.portal.rate_limiter {
                         limiter.wait_write(n as i64).await;
                     }
