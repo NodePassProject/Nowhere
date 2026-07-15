@@ -1,105 +1,80 @@
 # Quick Start
 
-This guide builds and starts the Nowhere v1 Portal from source.
-
-## Requirements
-
-- Rust toolchain with Rust 2024 edition support.
-- A host that can bind the chosen TCP and/or UDP listener port.
-- A client implementation that speaks Nowhere v1.
-
 ## Build
 
+Nowhere uses stable Rust and the 2024 edition:
+
 ```bash
+git clone https://github.com/NodePassProject/Nowhere.git
+cd Nowhere
 cargo build --release --locked
+./target/release/nowhere --version
+./target/release/nowhere --help
 ```
 
-The release binary is:
+## Local Portal and Vector
+
+Terminal one:
+
+```bash
+./target/release/nowhere 'portal://secret@127.0.0.1:2077?log=debug'
+```
+
+Terminal two:
+
+```bash
+./target/release/nowhere \
+  'vector://secret@127.0.0.1:2077?up=udp&down=udp&sni=none&socks=127.0.0.1:1080&log=debug'
+```
+
+The Portal's default certificate is self-signed. This local example uses
+`sni=none`, so certificate verification is disabled without an extra warning.
+
+Test TCP through SOCKS5:
+
+```bash
+curl --proxy socks5h://127.0.0.1:1080 https://example.com/
+```
+
+Applications with SOCKS5 UDP ASSOCIATE support can use the same listener for
+UDP. One association may address multiple targets; Vector maintains one idle-
+timed Nowhere UDP flow per target.
+
+## Choose Upload and Download
+
+Set the two Vector direction parameters independently:
 
 ```text
-target/release/nowhere
+up=tcp&down=tcp&pool=5
+up=tcp&down=udp
+up=udp&down=tcp
+up=udp&down=udp
 ```
 
-Inspect the command-line surface:
+Split combinations require Portal `net=mix`, which is the default. `pool` is
+effective only for `tcp/tcp`; values over 256 are clamped and all other carrier
+pairs report `pool=0`.
+
+## Production TLS
+
+Portal:
 
 ```bash
-./target/release/nowhere --help
-./target/release/nowhere --version
+nowhere \
+  'portal://secret@:2077?net=mix&tls=2&crt=/etc/nowhere/fullchain.pem&key=/etc/nowhere/privkey.pem'
 ```
 
-## Start a Local Portal
+Vector:
 
 ```bash
-./target/release/nowhere 'portal://secret@:2077'
+nowhere \
+  'vector://secret@relay.example:2077?up=tcp&down=tcp&pool=5&sni=relay.example&socks=127.0.0.1:1080'
 ```
 
-This starts the Portal with these effective defaults:
+The configured ALPN defaults to `now/1`. If overridden, supply the identical
+nonempty value to Portal and Vector.
 
-| Setting | Effective value |
-| --- | --- |
-| shared key | `secret` |
-| listen host | empty host, dual-stack wildcard |
-| listen port | `2077` |
-| `log` | `info` |
-| `tls` | `1`, generated self-signed certificate |
-| `net` | `mix`, TLS/TCP and QUIC/UDP listeners |
-| `spec` | `auto` |
-| `alpn` | `now/1` |
-| `rate` | `0`, disabled |
-| `etar` | `0`, disabled |
-| `dial` | `auto` |
-| `socks` | `none`, direct outbound connections |
+## Shutdown
 
-The startup log prints the effective URL after parsing. Treat that line as the
-operator-facing source of truth for the running process.
-
-## Bind a Specific Address
-
-Bind IPv4 only:
-
-```bash
-./target/release/nowhere 'portal://secret@0.0.0.0:2077'
-```
-
-Bind IPv6 only:
-
-```bash
-./target/release/nowhere 'portal://secret@[::]:2077'
-```
-
-Use `net=tcp` or `net=udp` when only one transport should listen:
-
-```bash
-./target/release/nowhere 'portal://secret@:2077?net=tcp'
-./target/release/nowhere 'portal://secret@:2077?net=udp'
-```
-
-These values select ingress transports rather than proxy payload types.
-`net=tcp` carries TCP relays and UDP-over-TCP (UoT). `net=udp` carries TCP
-relays on QUIC bidirectional streams and UDP flows in QUIC DATAGRAM frames.
-
-## Use a PEM Certificate
-
-The default `tls=1` mode creates a new self-signed certificate at startup. Use
-`tls=2` when the Portal should load a certificate chain and private key from
-disk:
-
-```bash
-./target/release/nowhere 'portal://secret@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
-```
-
-Both files must be valid at startup. Certificate reloads are attempted during
-ClientHello handling after `NOW_RELOAD_INTERVAL` has elapsed.
-
-## Stop
-
-Send `SIGINT` with `Ctrl-C`. The Portal closes listeners, closes active
-connections, waits up to `NOW_SHUTDOWN_TIMEOUT` for QUIC endpoints and live
-flow tasks to become idle, resets active rate limiters, flushes the logger, and
-exits.
-
-## Next Steps
-
-- Read [configuration.md](configuration.md) for the full URL contract.
-- Read [operations.md](operations.md) before exposing a long-running service.
-- Read [security.md](security.md) before choosing a TLS trust policy.
+Send Ctrl-C or SIGINT. New connections stop, pending pairs are cancelled,
+QUIC endpoints close, and flow tasks drain until `NOW_SHUTDOWN_TIMEOUT`.

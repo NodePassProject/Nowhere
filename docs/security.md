@@ -1,123 +1,74 @@
 # Security Notes
 
-Nowhere v1 is intentionally small, but it is still an exposed network service.
-This document summarizes the security properties and operator choices that are
-outside the wire format.
+## Transport and Identity
 
-## Supported Transport Security
+Nowhere requires TLS 1.3 for TLS/TCP and QUIC. Plaintext operation, 0-RTT
+application data, and half-RTT server data are disabled.
 
-The Portal supports only TLS-backed modes:
+The shared key authenticates each physical connection through a TLS exporter.
+It is never sent on the wire. The 16-byte authentication tag binds transport,
+connection secrets, and logical session ID, so a captured authentication frame
+cannot be replayed on another TLS or QUIC connection.
 
-| Mode | Behavior |
-| --- | --- |
-| `tls=1` | Generate an in-memory self-signed certificate at startup. |
-| `tls=2` | Load a PEM certificate chain and private key from `crt` and `key`. |
+Use a high-entropy shared key and treat command lines, management records, and
+debug logs containing it as secrets. Authentication is authorization to dial
+arbitrary targets; Nowhere does not implement accounts or target allowlists.
 
-Plaintext `tls=0` is rejected.
+## Certificate Policy
 
-TLS 1.3 early data and half-RTT server data are disabled for both TLS/TCP and
-QUIC. Application data is not accepted as 0-RTT.
+Portal `tls=1` creates a new self-signed certificate at each start. It is useful
+for local testing but has no stable identity.
 
-TLS/TCP carries ordinary TCP relays and UoT UDP flows. QUIC carries TCP relays
-on bidirectional streams and UDP flows in DATAGRAM frames. UoT setup and packet
-frames are accepted only after the same TLS/TCP authentication used by ordinary
-TCP relays.
+Portal `tls=2` loads a PEM chain and key and can reload them. Public deployments
+should use a CA-trusted certificate.
 
-## Shared Key
+Vector has an explicit trust boundary:
 
-The shared key is the URL username after percent decoding. It must be non-empty
-and at most 255 UTF-8 bytes.
+- Supplying `sni=<name>` loads system roots and requires valid chain and name.
+- Empty, omitted, or `sni=none` disables certificate verification; operator
+  output records the effective value as `sni=none`.
 
-Use a high-entropy value. Do not reuse a human password from another system. Do
-not put production keys in shell history, process managers that expose command
-lines broadly, issue trackers, examples, or repository files.
+Exporter-bound shared-key authentication does not replace server certificate
+verification: without it, an active intermediary that knows or obtains the
+shared key can impersonate a Portal. Prefer `sni` outside controlled networks.
 
-The protocol derives:
+## Authentication Failure
 
-```text
-auth_key = SHA-256(shared_key_bytes)
-```
+No target is dialed before auth succeeds. Failure paths wait for a common
+authentication deadline and return no detailed network error. QUIC closes
+with a generic access-denied application error; diagnostic details remain in
+local logs.
 
-The shared key does not alter the spec-derived field order or padding layout.
-It only changes authentication tags.
+## Resource Boundaries
 
-## Spec and ALPN Agreement
+Before QUIC authentication, Portal requires Retry, admits only bounded global
+and source-prefix connection counts, exposes one bidi stream, and grants small
+receive credit. Pre-authentication DATAGRAMs are discarded rather than queued.
 
-Both peers must agree on:
+After auth, explicit caps cover streams, UDP flows, pending pairs, TLS idle
+lanes, queue bytes, reassembly slots and lifetime, target length, setup time,
+and idle flows. Decoders check length and enum bounds before allocating.
 
-- shared key;
-- `effective_spec`;
-- `effective_alpn`; and
-- frame version `1`.
+Vector applies global local SOCKS flow limits, pins UDP ASSOCIATE traffic to the
+control peer, rejects SOCKS UDP fragments, and closes all target flows when the
+association control connection ends.
 
-`spec` changes the authentication constants, padding, and field order. `alpn`
-changes TLS and QUIC negotiation only. A mismatch in ALPN fails during transport
-setup. A mismatch in shared key or spec fails during authentication.
+## SOCKS Exposure
 
-## Authentication Failure Behavior
+`socks=:1080`, `0.0.0.0`, and `[::]` expose Vector to other hosts. Configure
+RFC1929 credentials and firewall rules before using wildcard listeners.
+Credentials are redacted from effective URLs and access logs.
 
-No target traffic is forwarded before authentication succeeds. Failed
-authentication paths are delayed until one sampled absolute deadline:
+Portal outbound SOCKS errors never fall back direct, preventing route-policy
+bypass. Domain targets stay unresolved until the configured outbound proxy
+when proxying is enabled.
 
-```text
-NOW_HANDSHAKE_TIMEOUT * [0.8, 1.2]
-```
+## Deployment Checklist
 
-After the delay, TCP closes without an application response. QUIC closes with
-application code `0x01` and reason `access denied`. Detailed failure
-information is written only to the local log and only after network closure is
-initiated.
-
-## Pre-Authentication Resource Limits
-
-The Portal limits unauthenticated work before accepting a client:
-
-- QUIC Retry is required before a QUIC connection reaches authentication.
-- At most 256 pre-authenticated connections are admitted process-wide.
-- At most 32 pre-authenticated connections are admitted per IPv4 `/32` or IPv6
-  `/64`.
-- QUIC DATAGRAM frames received before authentication are drained with a 64 KiB
-  aggregate retention budget.
-
-These limits reduce unauthenticated resource pressure. They are not a
-replacement for network-level filtering or service supervision.
-
-## TLS Trust Policy
-
-For `tls=1`, clients must explicitly trust or pin the generated certificate.
-The generated certificate is not stable across restarts.
-
-For `tls=2`, clients should use normal platform certificate validation and
-server-name checks unless they deliberately deploy a different trust model.
-Fingerprint pinning can be useful in controlled deployments, but it must be
-rotated deliberately when certificates change.
-
-## Deployment Guidance
-
-- Use `tls=2` for public or long-lived deployments.
-- Keep certificate and key files readable only by the service user.
-- Place the Portal behind firewall rules that match the intended client set
-  when possible.
-- Prefer explicit `net=tcp` or `net=udp` when one ingress transport is not
-  needed. `net=tcp` still permits UDP through UoT.
-- Monitor `CHECK_POINT` counters and process restarts.
-- Rotate shared keys through a coordinated client and server rollout.
-- Treat debug logs as sensitive because they may expose operational details.
-- Treat management-layer state, API responses, event streams, and logs as
-  sensitive when they contain a Portal URL: its username is the shared key.
-
-## Non-Goals
-
-The Portal does not provide:
-
-- user accounts;
-- key rotation protocol messages;
-- remote management APIs;
-- application-layer authorization rules;
-- target allowlists; or
-- plaintext transport.
-
-Implement those controls outside the Portal when a deployment requires them.
-[OpenCtrl](https://github.com/NodePassProject/OpenCtrl) is a supported external
-management layer; see the [integration guide](integrations.md) for its security
-and process-lifecycle boundaries.
+- Use `tls=2` and Vector `sni` for public or long-lived deployments.
+- Restrict certificate/key file permissions.
+- Use independent high-entropy shared and SOCKS keys.
+- Enable only required Portal listener transports.
+- Monitor CHECK_POINT, LINK_STATUS, authentication failures, and restarts.
+- Coordinate Portal and Vector upgrades; mixed wire versions are unsupported.
+- Treat debug access paths as sensitive operational metadata.

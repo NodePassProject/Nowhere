@@ -1,243 +1,78 @@
 # Operations Guide
 
-This guide covers the behavior that matters after the Portal starts.
+## Startup Output
 
-## Startup
+Portal and Vector log a credential-free effective URL. Shared keys and SOCKS
+passwords are never included. Vector prints `sni=none` when certificate
+verification is disabled.
 
-The Portal validates configuration before accepting traffic. In `net=mix`, TCP
-and UDP listeners must both bind successfully. The process logs the effective
-startup URL after defaults are applied:
+Both commands validate selected values before opening listeners. Unknown
+parameters and later duplicates are ignored; missing optional parameters use
+their defaults.
 
-```text
-portal::run: starting: portal://:<port>?tls=1&net=mix&spec=auto&alpn=now/1&rate=0&etar=0&dial=auto&socks=none
-```
+## Logs
 
-Use this line when comparing intended configuration with runtime behavior. It
-prints effective values, not necessarily the exact command-line URL. When
-SOCKS5 authentication is configured, this line prints only the proxy endpoint
-and never prints the username or password.
+Levels are `none`, `debug`, `info`, `warn`, `error`, and `event`.
 
-## SOCKS5 Outbound Behavior
-
-When `socks` is configured, all TCP and UDP target traffic is routed through
-that SOCKS5 server. TCP uses CONNECT. Every QUIC DATAGRAM and UoT flow uses its
-own UDP ASSOCIATE control connection and relay socket. Closing the control
-connection closes the associated flow.
-
-Target domain names are resolved by the SOCKS5 server. The Portal resolves only
-the proxy endpoint and any domain returned by the proxy for its UDP relay. If
-`dial` specifies a local IP, proxy addresses and relay sockets must use the same
-address family.
-
-Proxy connection, authentication, command, or relay failures close only the
-affected Nowhere flow. The Portal never bypasses the configured proxy by
-falling back to a direct target connection. TCP proxy setup shares
-`NOW_TCP_DIAL_TIMEOUT`; UDP proxy setup shares `NOW_UDP_DIAL_TIMEOUT`.
-
-## Logging
-
-Logs are written to standard output with a local timestamp and severity. Startup
-errors are written to standard error.
-
-Available URL log levels:
-
-| Level | Behavior |
-| --- | --- |
-| `none` | Disable output. |
-| `debug` | Emit debug, info, warning, error, and event records. |
-| `info` | Emit normal operational logs, warnings, errors, and event records. |
-| `warn` | Emit warnings, errors, and event records. |
-| `error` | Emit errors and event records. |
-| `event` | Emit event records only. |
-
-An unknown `log` value selects `info`.
-
-## Event Records
-
-At startup and then every `NOW_REPORT_INTERVAL`, the Portal emits a checkpoint
-record when the active log level includes events:
+EVENT emits periodic machine-readable records:
 
 ```text
-CHECK_POINT|MODE=0|PING=0ms|POOL=<n>|TCPS=<n>|UDPS=<n>|TCPRX=<bytes>|TCPTX=<bytes>|UDPRX=<bytes>|UDPTX=<bytes>
+CHECK_POINT|MODE=0|PING=0ms|POOL=5|TCPS=0|UDPS=0|TCPRX=0|TCPTX=0|UDPRX=0|UDPTX=0
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `POOL` | Authenticated TLS/TCP connections waiting for their first request frame. |
-| `TCPS` | Active TCP relay streams. |
-| `UDPS` | Active UDP flows across QUIC DATAGRAM and UoT. |
-| `TCPRX` | Client-to-target TCP bytes. |
-| `TCPTX` | Target-to-client TCP bytes. |
-| `UDPRX` | Client-to-target UDP payload bytes. |
-| `UDPTX` | Target-to-client UDP payload bytes. |
+Portal MODE values remain `0=mix`, `1=tcp`, `2=udp`. Vector MODE values encode
+direction pairs: `0=tcp/tcp`, `1=tcp/udp`, `2=udp/tcp`, `3=udp/udp`.
 
-`MODE` is `0` for `net=mix`, `1` for `net=tcp`, and `2` for `net=udp`. `PING`
-remains fixed in v1. `NOW_REPORT_INTERVAL` controls only local record emission;
-it does not send transport keepalive packets.
-
-At debug log level, carrier health and routing counters are emitted separately:
+DEBUG additionally emits:
 
 ```text
-LINK_STATUS|TCP=<lanes>|UDP=<sessions>|PAIRS=<sessions>|UPTCP=<payload-bytes>|UPUDP=<payload-bytes>|DOWNTCP=<payload-bytes>|DOWNUDP=<payload-bytes>
+LINK_STATUS|TCP=0|UDP=0|PAIRS=0|UPTCP=0|UPUDP=0|DOWNTCP=0|DOWNUDP=0
 ```
 
-`TCP` counts authenticated TLS lanes, `UDP` authenticated QUIC sessions, and
-`PAIRS` logical sessions with both carriers ready. Directional byte fields
-count payload after Nowhere framing is removed.
+Access logs use matching `starting` and `complete` messages and show upload and
+download carriers plus client, relay, and target endpoints. They never include
+authentication secrets.
 
-## Rate Limits
+## Pools and Reconnection
 
-`rate` limits client-to-target traffic. `etar` limits target-to-client traffic.
-Both are process-wide limits shared across active TLS/TCP and QUIC sessions.
-For UoT, only UDP payload bytes are charged; typed frame headers and setup
-framing are not.
+Vector `tcp/tcp` pool connections complete TLS and exporter authentication
+before entering the idle set. Acquired lanes are single-use. Closed, expired,
+or consumed slots are replenished in the background.
 
-```text
-portal://secret@:2077?rate=100&etar=200
-```
+Vector remains running while Portal is unavailable. Current affected flows
+fail; later requests trigger bounded-backoff reconnect, while the SOCKS listener
+continues accepting requests. QUIC reconnect retains the logical session ID so
+Portal can replace the stale carrier deterministically.
 
-The conversion is:
+## Limits and Rate Control
 
-```text
-bytes_per_second = mbps * 125000
-```
+`rate` is client-to-target and `etar` is target-to-client. Portal and Vector
+enforce their configured limits independently; the effective path is bounded by
+the tighter side.
 
-Limits are enforced above the transport layer. They do not select or tune QUIC
-congestion control.
+Tune environment limits only after measuring CPU, memory, queue pressure, and
+target behavior. Increasing QUIC streams or UDP flows also increases worst-case
+state. Queue overload and invalid early DATAGRAMs are dropped rather than
+allowed to grow without bound.
 
-## QUIC Runtime Behavior
+## Certificates
 
-The Portal:
+Portal `tls=2` checks PEM files at startup and reloads them no more often than
+`NOW_RELOAD_INTERVAL`. Reload failure leaves the last valid certificate active
+and writes an error.
 
-- enables QUIC DATAGRAM;
-- requires QUIC Retry before accepting an incoming connection;
-- starts pre-authenticated connections with one bidirectional stream and 64 KiB
-  of connection-level receive credit;
-- raises the bidirectional-stream limit to `NOW_QUIC_MAX_STREAMS` after
-  authentication;
-- dispatches each DATAGRAM UDP flow to an independent bounded worker so target
-  dialing and rate-limit waits do not block unrelated flows;
-- reassembles fixed `NOWU` fragments under a 64-slot, 10-second, connection-byte
-  budget before forwarding one complete UDP packet;
-- applies one flow permit budget to every symmetric and asymmetric UDP flow
-  involving the authenticated QUIC session;
-- uses backpressured DATAGRAM submission, re-fragments once after a path-MTU
-  change, and drops only the affected packet if it remains too large;
-- drops new DATAGRAM packets when the per-flow queue, per-QUIC-connection byte
-  budget, or reassembly cap is full;
-- rejects new UDP flow setup when the authenticated logical session's shared
-  flow limit is full;
-- raises the connection-level receive credit to 32 MiB after authentication;
-- uses 16 MiB per-stream receive credit;
-- permits up to 32 MiB of unacknowledged stream data per connection;
-- disables unidirectional streams;
-- uses BBR congestion control;
-- uses `NOW_UDP_IDLE_TIMEOUT` as the QUIC idle timeout; and
-- does not send QUIC transport keepalive packets.
+Vector reads system roots for verified `sni` connections. Root-store or name
+errors fail the carrier rather than falling back to unverified TLS.
 
-QUIC DATAGRAM send and receive buffers are configured to 4 MiB. The UDP socket
-send and receive buffers are requested at 4 MiB. Operating systems may clamp
-socket buffer requests.
+## Graceful Shutdown
 
-## UoT Runtime Behavior
+On Ctrl-C, listeners and reconnect loops stop, QUIC endpoints send close,
+pending pairs receive cancellation, and active tasks drain for
+`NOW_SHUTDOWN_TIMEOUT`. At deadline, remaining tasks are aborted and all rate
+and pool state is released.
 
-UoT is available whenever the TLS/TCP listener is enabled; it has no separate
-configuration switch. After normal transport authentication, a client sends a
-logical-flow header with UDP kind, the target request required by its role, and
-then typed `DATA`, `READY`, `CLOSE`, and `REJECT` frames.
+## Upgrade Rule
 
-Each UoT connection represents one carrier half, or one symmetric Duplex flow,
-for a logical UDP flow to one target. Packet boundaries are preserved, traffic
-in either direction refreshes
-`NOW_UDP_IDLE_TIMEOUT`, and closing the TLS/TCP connection closes the flow.
-UoT flows increment `UDPS`, `UDPRX`, and `UDPTX`, not the TCP relay counters.
-
-UoT is useful when QUIC/UDP cannot traverse the network, but TCP head-of-line
-blocking applies. Prefer QUIC DATAGRAM when native UDP transport is available
-and packet loss must not stall unrelated packets.
-
-## Authentication Deadlines
-
-After a TLS or QUIC handshake completes, authentication uses one absolute
-deadline sampled from:
-
-```text
-NOW_HANDSHAKE_TIMEOUT * [0.8, 1.2]
-```
-
-Successful authentication proceeds immediately. Failed authentication waits
-until the sampled deadline. TCP then closes without an application response.
-QUIC closes with application code `0x01` and reason `access denied`.
-
-This timing policy keeps common invalid-auth paths less distinguishable while
-still bounding resource use.
-
-## Admission Limits
-
-Before authentication, the Portal applies a process-wide admission limit shared
-by TCP and QUIC:
-
-| Limit | Value |
-| --- | --- |
-| Total pre-authenticated connections | `256` |
-| Per IPv4 `/32` or IPv6 `/64` | `32` |
-
-A validated QUIC attempt above either limit is ignored. A TCP connection above
-either limit is accepted and immediately closed. A slot is released as soon as
-authentication succeeds or fails.
-
-## Runtime Controls
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `NOW_QUIC_MAX_STREAMS` | `1024` | Maximum concurrent QUIC bidirectional streams after authentication. |
-| `NOW_QUIC_MAX_UDP_FLOWS` | `256` | Maximum active UDP flows per authenticated logical session across all carrier combinations. |
-| `NOW_QUIC_UDP_QUEUE_BYTES` | `4194304` | Maximum queued and partially reassembled UDP payload bytes per authenticated QUIC connection. |
-| `NOW_TCP_IDLE_POOL_CONNS` | `4096` | Maximum authenticated TLS/TCP connections waiting for a first request. |
-| `NOW_MAX_PENDING_PAIRS` | `1024` | Maximum pending logical-flow records (`flow_id` values) per session. |
-| `NOW_FLOW_PAIR_TIMEOUT` | `15s` | Time allowed to complete a split logical flow. |
-| `NOW_TCP_DATA_BUF_SIZE` | `32768` | Buffer size for each TCP relay direction. |
-| `NOW_UDP_DATA_BUF_SIZE` | `65536` | UDP target-socket receive buffer size. |
-| `NOW_TCP_DIAL_TIMEOUT` | `15s` | TCP target connection timeout. |
-| `NOW_UDP_DIAL_TIMEOUT` | `15s` | UDP target connection timeout. |
-| `NOW_TCP_READ_TIMEOUT` | `30s` | Grace period after one TCP direction reaches EOF. |
-| `NOW_UDP_IDLE_TIMEOUT` | `120s` | QUIC connection and QUIC DATAGRAM/UoT flow idle timeout. |
-| `NOW_HANDSHAKE_TIMEOUT` | `5s` | Base authentication deadline before jitter. |
-| `NOW_REPORT_INTERVAL` | `5s` | Local checkpoint event interval. |
-| `NOW_SHUTDOWN_TIMEOUT` | `5s` | Single graceful drain window shared by endpoints, accept loops, and flow tasks. |
-| `NOW_RELOAD_INTERVAL` | `3600s` | Minimum interval between PEM reload attempts. |
-
-Duration values accept forms such as `500ms`, `15s`, and `2m`. Invalid values
-use the defaults above. `NOW_QUIC_MAX_UDP_FLOWS`,
-`NOW_QUIC_UDP_QUEUE_BYTES`, and `NOW_TCP_IDLE_POOL_CONNS` must be
-positive; zero or invalid values use their defaults and emit a warning. Other
-integer controls must be non-negative.
-
-`NOW_SERVICE_COOLDOWN` also exists in the runtime defaults and currently
-defaults to `3s`; it is reserved for service-side retry paths.
-
-## Shutdown
-
-`SIGINT` starts graceful shutdown. The Portal:
-
-1. Cancels accept loops.
-2. Closes QUIC endpoints and active connections.
-3. Cancels logical flows and starts one `NOW_SHUTDOWN_TIMEOUT` drain window
-   shared by endpoints, accept loops, connection tasks, and flow tasks.
-4. At the shared deadline, force-aborts and joins any remaining accept,
-   connection, or flow tasks.
-5. Resets active rate limiters.
-6. Emits the shutdown-complete log and flushes the logger.
-
-## Operational Practices
-
-- Run with `tls=2` for long-lived public deployments.
-- Put certificates and keys outside the repository and restrict file
-  permissions to the service user.
-- Keep `log=event` for machine parsing and `log=info` during rollout.
-- Use `net=tcp` or `net=udp` when a deployment only needs one ingress transport.
-- Prefer explicit listen addresses when running behind a supervisor that
-  expects one address family.
-- Validate the effective startup URL after every config change.
-- Treat `rate` and `etar` as process-wide fairness controls, not per-client
-  quotas.
+Nowhere has no mixed-version mode. Upgrade Portal and all 1.5-compatible clients
+as one coordinated operation. The current Anywhere release must remain on an
+older Portal until its codec is updated.
