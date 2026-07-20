@@ -1,6 +1,6 @@
 [package]
 name = "nowhere"
-version = "1.5.0"
+version = "1.5.1"
 edition = "2024"
 description = "One-port, two-transport encrypted relay with independently split directions"
 license = "GPL-3.0-only"
