@@ -268,26 +268,16 @@ async fn run_udp_association(
                 if flows.len() >= max_flows {
                     continue;
                 }
-                let tunnel = match open_udp(vector.clone(), &target).await {
-                    Ok(tunnel) => tunnel,
-                    Err(error) => {
-                        vector.logger.debug(format_args!(
-                            "vector::socks::run_udp_association: target {target} failed: {error}"
-                        ));
-                        continue;
-                    }
-                };
                 let (sender, receiver) = mpsc::channel(64);
                 if sender.try_send(payload).is_err() {
                     continue;
                 }
                 flows.insert(target.clone(), sender);
-                tasks.spawn(relay_udp_target(
+                tasks.spawn(open_and_relay_udp_target(
                     vector.clone(),
                     udp.clone(),
                     client_endpoint.clone(),
                     target,
-                    tunnel,
                     receiver,
                     association_shutdown.clone(),
                 ));
@@ -301,6 +291,38 @@ async fn run_udp_association(
     flows.clear();
     while tasks.join_next().await.is_some() {}
     outcome
+}
+
+async fn open_and_relay_udp_target(
+    vector: Arc<VectorInner>,
+    socket: Arc<UdpSocket>,
+    client_endpoint: Arc<StdMutex<Option<SocketAddr>>>,
+    target: SocksAddress,
+    outbound: mpsc::Receiver<QueuedLocalPacket>,
+    shutdown: CancellationToken,
+) {
+    let tunnel = tokio::select! {
+        _ = shutdown.cancelled() => return,
+        result = open_udp(vector.clone(), &target) => match result {
+            Ok(tunnel) => tunnel,
+            Err(error) => {
+                vector.logger.debug(format_args!(
+                    "vector::socks::open_and_relay_udp_target: target {target} failed: {error}"
+                ));
+                return;
+            }
+        },
+    };
+    relay_udp_target(
+        vector,
+        socket,
+        client_endpoint,
+        target,
+        tunnel,
+        outbound,
+        shutdown,
+    )
+    .await;
 }
 
 fn validate_udp_source_request(requested: &SocksAddress, peer_ip: IpAddr) -> Result<Option<u16>> {
