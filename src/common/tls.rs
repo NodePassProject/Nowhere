@@ -8,6 +8,7 @@ mod tls_cert;
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use quinn::crypto::rustls::QuicServerConfig;
@@ -16,7 +17,7 @@ use url::Url;
 
 pub(crate) use self::tls_cert::certificate_sha256;
 use self::tls_cert::{ReloadingCertResolver, new_self_signed_cert};
-use super::{Logger, query_first};
+use super::{Logger, query_first, reload_interval};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
     "log", "net", "tls", "crt", "key", "alpn", "rate", "etar", "dial", "socks",
@@ -47,6 +48,15 @@ impl fmt::Display for TLSMode {
 pub fn new_server_configs(
     parsed_url: &Url,
     alpn: &str,
+    logger: Logger,
+) -> Result<(TLSMode, Arc<rustls::ServerConfig>, quinn::ServerConfig)> {
+    new_server_configs_with_reload_interval(parsed_url, alpn, reload_interval(), logger)
+}
+
+pub(crate) fn new_server_configs_with_reload_interval(
+    parsed_url: &Url,
+    alpn: &str,
+    reload_interval: Duration,
     logger: Logger,
 ) -> Result<(TLSMode, Arc<rustls::ServerConfig>, quinn::ServerConfig)> {
     let query = query_first(parsed_url, PORTAL_QUERY_PARAMETERS)?;
@@ -81,9 +91,14 @@ pub fn new_server_configs(
         TLSMode::CATrusted => {
             let crt_file = query.get("crt").cloned().unwrap_or_default();
             let key_file = query.get("key").cloned().unwrap_or_default();
-            let (resolver, cert_sha256) =
-                ReloadingCertResolver::new(crt_file, key_file, provider, logger.clone())
-                    .context("common::tls::new_server_configs: failed to load certificate")?;
+            let (resolver, cert_sha256) = ReloadingCertResolver::new(
+                crt_file,
+                key_file,
+                provider,
+                reload_interval,
+                logger.clone(),
+            )
+            .context("common::tls::new_server_configs: failed to load certificate")?;
             (
                 server_builder.with_cert_resolver(Arc::new(resolver)),
                 cert_sha256,

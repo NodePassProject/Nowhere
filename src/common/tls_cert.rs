@@ -7,9 +7,9 @@ use std::fmt::Write;
 use std::fs;
 use std::io::BufReader;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use crate::common::{Logger, reload_interval};
+use crate::common::Logger;
 use anyhow::{Context, Result, anyhow, bail};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -40,6 +40,7 @@ pub(super) struct ReloadingCertResolver {
     key_file: String,
     provider: Arc<CryptoProvider>,
     cached: RwLock<CachedCert>,
+    reload_interval: Duration,
     logger: Logger,
 }
 
@@ -54,6 +55,7 @@ impl ReloadingCertResolver {
         crt_file: String,
         key_file: String,
         provider: Arc<CryptoProvider>,
+        reload_interval: Duration,
         logger: Logger,
     ) -> Result<(Self, String)> {
         let cert = Arc::new(load_certified_key(&crt_file, &key_file, &provider)?);
@@ -67,6 +69,7 @@ impl ReloadingCertResolver {
                     cert,
                     last_reload: Instant::now(),
                 }),
+                reload_interval,
                 logger,
             },
             fingerprint,
@@ -79,12 +82,12 @@ impl ResolvesServerCert for ReloadingCertResolver {
         let should_reload = self
             .cached
             .read()
-            .map(|c| c.last_reload.elapsed() >= reload_interval())
+            .map(|c| c.last_reload.elapsed() >= self.reload_interval)
             .unwrap_or(false);
 
         if should_reload
             && let Ok(mut cached) = self.cached.write()
-            && cached.last_reload.elapsed() >= reload_interval()
+            && cached.last_reload.elapsed() >= self.reload_interval
         {
             match load_certified_key(&self.crt_file, &self.key_file, &self.provider) {
                 Ok(new_cert) => {
