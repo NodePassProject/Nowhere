@@ -8,6 +8,12 @@ use std::time::Duration;
 
 use super::{FlowTaskTracker, ReadyGate};
 
+impl ReadyGate {
+    fn active(&self) -> usize {
+        self.state.load(std::sync::atomic::Ordering::Acquire) & super::READY_GATE_COUNT
+    }
+}
+
 #[test]
 fn ready_gate_linearizes_existing_commits_before_close() {
     let gate = ReadyGate::default();

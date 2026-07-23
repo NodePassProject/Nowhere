@@ -19,6 +19,12 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{Mutex, mpsc};
 
+impl PairingRegistry {
+    fn is_accepting(&self) -> bool {
+        self.accepting.load(Ordering::Acquire)
+    }
+}
+
 fn registry(max_udp_flows: usize, timeout: Duration) -> Arc<PairingRegistry> {
     Arc::new(PairingRegistry {
         tcp: Mutex::new(HashMap::new()),

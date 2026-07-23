@@ -1237,11 +1237,6 @@ impl PairingRegistry {
         self.accepting.store(false, Ordering::Release);
     }
 
-    #[cfg(test)]
-    pub(super) fn is_accepting(&self) -> bool {
-        self.accepting.load(Ordering::Acquire)
-    }
-
     async fn purge_quic_generation(self: &Arc<Self>, session_id: SessionId, generation: u64) {
         let mut stale = self
             .tcp

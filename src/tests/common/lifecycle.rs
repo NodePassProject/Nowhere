@@ -6,6 +6,18 @@
 use super::*;
 use crate::common::{LogLevel, Logger};
 
+impl Lifecycle {
+    pub(crate) fn state(&self) -> Option<LifeState> {
+        match self.state.load(std::sync::atomic::Ordering::Acquire) {
+            value if value == LifeState::Starting as u8 => Some(LifeState::Starting),
+            value if value == LifeState::Ready as u8 => Some(LifeState::Ready),
+            value if value == LifeState::Draining as u8 => Some(LifeState::Draining),
+            value if value == LifeState::Stopped as u8 => Some(LifeState::Stopped),
+            _ => None,
+        }
+    }
+}
+
 #[test]
 fn lifecycle_vocabulary_is_stable() {
     assert_eq!(LifeMode::Portal.to_string(), "PORTAL");

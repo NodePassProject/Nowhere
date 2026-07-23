@@ -44,11 +44,6 @@ impl ReadyGate {
     pub(super) fn close(&self) {
         self.state.fetch_or(READY_GATE_CLOSED, Ordering::AcqRel);
     }
-
-    #[cfg(test)]
-    fn active(&self) -> usize {
-        self.state.load(Ordering::Acquire) & READY_GATE_COUNT
-    }
 }
 
 pub(super) struct ReadyPermit<'a> {

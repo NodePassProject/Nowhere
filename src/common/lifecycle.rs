@@ -104,17 +104,6 @@ impl Lifecycle {
             self.mode
         ));
     }
-
-    #[cfg(test)]
-    pub(crate) fn state(&self) -> Option<LifeState> {
-        match self.state.load(Ordering::Acquire) {
-            value if value == LifeState::Starting as u8 => Some(LifeState::Starting),
-            value if value == LifeState::Ready as u8 => Some(LifeState::Ready),
-            value if value == LifeState::Draining as u8 => Some(LifeState::Draining),
-            value if value == LifeState::Stopped as u8 => Some(LifeState::Stopped),
-            _ => None,
-        }
-    }
 }
 
 /// Reusable signal receiver so a second signal can force an in-progress shutdown.
