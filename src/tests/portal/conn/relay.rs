@@ -22,10 +22,12 @@ fn symmetric_exchange_path(
 #[test]
 fn paired_path_contains_both_carriers_and_both_client_links() {
     let uplink = LinkPath {
+        version: crate::protocol::ProtocolVersion::V2,
         peer: "198.51.100.1:1000".into(),
         local: "192.0.2.1:2077".into(),
     };
     let downlink = LinkPath {
+        version: crate::protocol::ProtocolVersion::V2,
         peer: "[2001:db8::2]:2000".into(),
         local: "[2001:db8::1]:2077".into(),
     };

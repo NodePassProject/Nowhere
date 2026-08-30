@@ -25,7 +25,7 @@ fn app_with_instance() -> App {
             endpoint: "0.0.0.0:2077".to_owned(),
             config_summary: "net=mix tls=1".to_owned(),
             telemetry_interval_ms: 1_000,
-            telemetry_protocol_version: 2,
+            telemetry_protocol_version: 3,
         },
         lifecycle: Lifecycle::Ready,
         snapshot: Some(TelemetrySnapshot {
@@ -279,7 +279,7 @@ fn full_sidebar_keeps_long_lifecycle_labels_visible() {
             endpoint: "[::1]:1082".to_owned(),
             config_summary: "portal=relay.example:2077".to_owned(),
             telemetry_interval_ms: 1_000,
-            telemetry_protocol_version: 2,
+            telemetry_protocol_version: 3,
         },
         lifecycle: Lifecycle::Starting,
         snapshot: None,
@@ -294,7 +294,7 @@ fn full_sidebar_keeps_long_lifecycle_labels_visible() {
 fn selected_uses_available_height_for_complete_config() {
     let mut app = app_with_instance();
     app.instances[0].meta.config_summary =
-        "net=mix tls=1 alpn=now/1 rate=0 etar=0 dial=auto socks=none next=origin.example:3077 up=udp down=tcp mux=0 sni=origin.example pin=present"
+        "net=mix tls=1 rate=0 etar=0 dial=auto socks=none next=origin.example:3077 up=udp down=tcp mux=0 sni=origin.example pin=present"
             .to_owned();
 
     let output = rendered(160, 40, &app);

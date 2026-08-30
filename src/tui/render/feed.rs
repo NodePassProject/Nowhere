@@ -127,6 +127,17 @@ fn access_line(record: &AccessRecord, app: &App) -> Line<'static> {
             format!("{:<4}", record.protocol.to_ascii_uppercase()),
             accent(app, palette::protocol(&record.protocol)),
         ),
+        Span::styled(
+            format!(
+                "{:<3}",
+                record
+                    .wire_version
+                    .as_deref()
+                    .unwrap_or("—")
+                    .to_ascii_uppercase()
+            ),
+            dim(app),
+        ),
         Span::raw(" "),
         Span::styled(format!("{status:<4}"), accent(app, status_color)),
         Span::raw(format!(

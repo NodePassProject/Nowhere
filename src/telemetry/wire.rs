@@ -8,12 +8,12 @@ use std::time::Duration;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::Carrier;
+use crate::protocol::{Carrier, ProtocolVersion};
 
 use super::process::{now_unix_ms, process_incarnation, process_uid};
 
 /// Version of the local telemetry protocol. It is not a data-plane wire version.
-pub(crate) const PROTOCOL_VERSION: u16 = 2;
+pub(crate) const PROTOCOL_VERSION: u16 = 3;
 /// Maximum accepted JSON payload, excluding the four-byte length prefix.
 pub(crate) const MAX_FRAME_SIZE: usize = 64 * 1024;
 
@@ -140,7 +140,7 @@ pub(crate) struct AccessStart {
     pub(crate) id: u64,
     pub(crate) timestamp_ms: u64,
     pub(crate) protocol: TrafficProtocol,
-    pub(crate) alpn: String,
+    pub(crate) wire_version: Option<ProtocolVersion>,
     pub(crate) flow_id: Option<u64>,
     pub(crate) session_tag: Option<String>,
     pub(crate) client: Option<String>,
@@ -156,7 +156,7 @@ pub(crate) struct AccessStarted {
     pub(crate) id: u64,
     pub(crate) timestamp_ms: u64,
     pub(crate) protocol: TrafficProtocol,
-    pub(crate) alpn: String,
+    pub(crate) wire_version: Option<ProtocolVersion>,
     pub(crate) flow_id: Option<u64>,
     pub(crate) session_tag: Option<String>,
     pub(crate) client: Option<String>,
@@ -174,7 +174,7 @@ pub(crate) struct AccessFinished {
     pub(crate) timestamp_ms: u64,
     pub(crate) duration_ms: u64,
     pub(crate) protocol: TrafficProtocol,
-    pub(crate) alpn: String,
+    pub(crate) wire_version: Option<ProtocolVersion>,
     pub(crate) flow_id: Option<u64>,
     pub(crate) session_tag: Option<String>,
     pub(crate) client: Option<String>,

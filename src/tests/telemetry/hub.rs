@@ -31,7 +31,7 @@ fn access_span_finishes_only_once() {
         id: 0,
         timestamp_ms: 1,
         protocol: TrafficProtocol::Tcp,
-        alpn: "now/1".to_owned(),
+        wire_version: Some(crate::protocol::ProtocolVersion::V1),
         flow_id: Some(7),
         session_tag: Some("abc123".to_owned()),
         client: Some("127.0.0.1:1".to_owned()),
@@ -66,6 +66,40 @@ fn access_fields_are_not_built_without_a_receiver() {
     span.add_upload(10);
     span.add_download(20);
     span.finish(AccessOutcome::Success, None);
+}
+
+#[test]
+fn negotiated_wire_version_is_added_to_completion() {
+    let hub = TelemetryHub::new(descriptor());
+    let mut events = hub.event_receiver();
+    let mut span = hub.start_access(|| AccessStart {
+        id: 0,
+        timestamp_ms: 1,
+        protocol: TrafficProtocol::Tcp,
+        wire_version: None,
+        flow_id: None,
+        session_tag: None,
+        client: None,
+        path_peers: Vec::new(),
+        target: "example:443".to_owned(),
+        initial_uplink: Some(Carrier::TlsTcp),
+        initial_downlink: Some(Carrier::TlsTcp),
+        path: None,
+    });
+    span.set_wire_version(crate::protocol::ProtocolVersion::V2);
+    span.finish(AccessOutcome::Success, None);
+
+    let Ok(ServerMessage::AccessStart(start)) = events.try_recv() else {
+        panic!("missing access start");
+    };
+    assert_eq!(start.wire_version, None);
+    let Ok(ServerMessage::AccessFinish(finish)) = events.try_recv() else {
+        panic!("missing access finish");
+    };
+    assert_eq!(
+        finish.wire_version,
+        Some(crate::protocol::ProtocolVersion::V2)
+    );
 }
 
 #[test]

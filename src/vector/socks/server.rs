@@ -170,7 +170,7 @@ async fn handle_client(
                 .await?;
                 return Ok(());
             }
-            let access = start_access(
+            let mut access = start_access(
                 &vector,
                 TrafficProtocol::Tcp,
                 Some(peer.to_string()),
@@ -179,6 +179,7 @@ async fn handle_client(
             let target = to_target(&request.address)?;
             match open_tcp(vector.client.clone(), &target, 0).await {
                 Ok(tunnel) => {
+                    access.set_wire_version(tunnel.protocol_version());
                     let reply = tunnel.socks_reply();
                     write_reply(&mut stream, reply, &SocksAddress::unspecified()).await?;
                     tokio::select! {

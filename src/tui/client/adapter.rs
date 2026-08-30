@@ -138,7 +138,7 @@ pub(super) fn access_start_ui_value(value: AccessStarted) -> AccessRecord {
             TrafficProtocol::Udp => "UDP",
         }
         .to_owned(),
-        alpn: value.alpn,
+        wire_version: value.wire_version.map(|version| version.to_string()),
         session_tag: value.session_tag,
         client: value.client,
         path_peers: value.path_peers,
@@ -161,7 +161,7 @@ pub(super) fn access_finish_ui_value(
         client,
         path_peers,
         target,
-        alpn,
+        wire_version,
         session_tag,
         initial_uplink,
         initial_downlink,
@@ -176,7 +176,7 @@ pub(super) fn access_finish_ui_value(
             id,
             timestamp_ms,
             protocol,
-            alpn,
+            wire_version,
             flow_id,
             session_tag,
             client,
@@ -189,6 +189,7 @@ pub(super) fn access_finish_ui_value(
     });
     record.timestamp_ms = timestamp_ms;
     record.event_id = id;
+    record.wire_version = wire_version.map(|version| version.to_string());
     record.phase = AccessPhase::Finish;
     let benign_end = error.as_deref().is_some_and(is_benign_access_end);
     record.status = Some(match outcome {

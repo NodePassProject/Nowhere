@@ -48,7 +48,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
         id: 0,
         timestamp_ms: now_unix_ms(),
         protocol: TrafficProtocol::Udp,
-        alpn: portal.alpn.clone(),
+        wire_version: Some(uplink_path.version),
         flow_id: Some(flow_id.into()),
         session_tag: None,
         client: Some(uplink_path.peer.clone()),

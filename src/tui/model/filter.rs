@@ -13,6 +13,10 @@ pub fn access_matches(record: &AccessRecord, lowercase_filter: &str) -> bool {
             .contains(lowercase_filter)
         || record.route.to_ascii_lowercase().contains(lowercase_filter)
         || record
+            .wire_version
+            .as_deref()
+            .is_some_and(|value| value.contains(lowercase_filter))
+        || record
             .client
             .as_deref()
             .is_some_and(|value| value.to_ascii_lowercase().contains(lowercase_filter))

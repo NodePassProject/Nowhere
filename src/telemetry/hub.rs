@@ -173,7 +173,7 @@ impl TelemetryHub {
             id: start.id,
             timestamp_ms: start.timestamp_ms,
             protocol: start.protocol,
-            alpn: start.alpn,
+            wire_version: start.wire_version,
             flow_id: start.flow_id,
             session_tag: start.session_tag,
             client: start.client,
@@ -213,7 +213,7 @@ impl TelemetryHub {
                 timestamp_ms: now_unix_ms(),
                 duration_ms: started_at.elapsed().as_millis().min(u64::MAX as u128) as u64,
                 protocol: started.protocol,
-                alpn: started.alpn.clone(),
+                wire_version: started.wire_version,
                 flow_id: started.flow_id,
                 session_tag: started.session_tag.clone(),
                 client: started.client.clone(),
@@ -273,6 +273,12 @@ impl AccessSpan {
     pub(crate) fn add_download(&self, bytes: u64) {
         if self.started.is_some() {
             self.download_bytes.fetch_add(bytes, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn set_wire_version(&mut self, version: crate::protocol::ProtocolVersion) {
+        if let Some(started) = &mut self.started {
+            started.wire_version = Some(version);
         }
     }
 

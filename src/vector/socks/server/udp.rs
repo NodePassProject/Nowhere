@@ -146,7 +146,7 @@ async fn open_and_relay_udp_target(
         .lock()
         .unwrap_or_else(|lock| lock.into_inner())
         .map(|endpoint| endpoint.to_string());
-    let access = start_access(&vector, TrafficProtocol::Udp, source, &target);
+    let mut access = start_access(&vector, TrafficProtocol::Udp, source, &target);
     let protocol_target = match to_target(&target) {
         Ok(target) => target,
         Err(error) => {
@@ -167,6 +167,7 @@ async fn open_and_relay_udp_target(
             }
         },
     };
+    access.set_wire_version(tunnel.protocol_version());
     relay_udp_target(
         vector,
         UdpClientSide {
@@ -353,7 +354,7 @@ pub(super) fn start_access(
             id: 0,
             timestamp_ms: now_unix_ms(),
             protocol,
-            alpn: vector.config.alpn.clone(),
+            wire_version: None,
             flow_id: None,
             session_tag: None,
             client,
