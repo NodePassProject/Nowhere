@@ -102,8 +102,8 @@ Functional validation belongs on every deployment platform:
 - Portal reaches `READY` on every configured listener;
 - Vector accepts SOCKS5 CONNECT and UDP ASSOCIATE;
 - every configured uplink/downlink carrier combination reaches a target;
-- custom ALPN, credentials, certificate verification, and native chains match
-  at both ends;
+- negotiated protocol version, credentials, certificate verification, and
+  native chains match at both ends;
 - flow limits fail promptly instead of waiting for capacity;
 - idle Mux Shards and UDP flows retire at their documented deadlines;
 - graceful shutdown reaches `STOPPED` within the configured deadline;

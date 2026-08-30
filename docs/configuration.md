@@ -15,7 +15,6 @@ portal://shared-key@host:port?net=mix&tls=1&log=info
 | `net` | `mix`, `tcp`, `udp` | `mix` |
 | `tls` | `1` generated certificate, `2` supplied certificate | `1` |
 | `crt`, `key` | PEM paths, required with `tls=2` | — |
-| `alpn` | exact TLS/QUIC ALPN, 1–255 bytes | `now/1` |
 | `rate`, `etar` | Mbps, `0` disables limit | `0` |
 | `dial` | `auto` or local IP | `auto` |
 | `socks` | outbound SOCKS5 configuration | disabled |
@@ -27,8 +26,8 @@ portal://shared-key@host:port?net=mix&tls=1&log=info
 | `log` | `none`, `debug`, `info`, `warn`, `error`, `event` | `info` |
 
 When `next` is enabled, `up`, `down`, `mux`, `sni`, and `pin` configure that
-upstream hop. The Portal's `alpn` also applies to its native upstream client.
-These upstream options are ignored when `next` is absent or `none`.
+upstream hop. Protocol version is negotiated independently with the next
+Portal. These upstream options are ignored when `next` is absent or `none`.
 `socks` and `next` are mutually exclusive outbound paths.
 
 ## Vector URL
@@ -40,7 +39,6 @@ vector://shared-key@host:port?up=tcp&down=tcp&socks=127.0.0.1:1080
 | Query | Values | Default |
 |---|---|---|
 | `up`, `down` | `tcp` or `udp` | `udp` |
-| `alpn` | exact TLS/QUIC ALPN, 1–255 bytes | `now/1` |
 | `mux` | `0` dedicated TLS lanes, `1` TLS Mux | `0` |
 | `sni` | verified DNS name, or `none` | `none` |
 | `pin` | certificate SHA-256 pin, or `none` | `none` |
@@ -53,18 +51,18 @@ vector://shared-key@host:port?up=tcp&down=tcp&socks=127.0.0.1:1080
 ```text
 Portal URL
     |
-    +-- listener: net, tls, crt, key, alpn
+    +-- listener: net, tls, crt, key
     +-- relay:    rate, etar, dial, log
     |
     +-- outbound path
           |
           +-- direct target access
           +-- socks  --> SOCKS5 proxy --> target
-          +-- next   --> {up, down, mux, sni, pin, alpn} --> Portal
+          +-- next   --> {up, down, mux, sni, pin} --> Portal
 
 Vector URL
     |
-    +-- Portal client: up, down, alpn, mux, sni, pin
+    +-- Portal client: up, down, mux, sni, pin
     +-- SOCKS5 edge:   socks
     +-- relay:         rate, etar, log
 ```
@@ -78,10 +76,12 @@ use the least-loaded shard; a shard carries 4 active flows before another
 opens and closes after 30 seconds fully idle. With `mux=0`, every TLS-carried
 Flow owns one on-demand lane that closes with the Flow.
 
-Portal and Vector advertise only their configured ALPN and require an exact
-match. ALPN and Mux are independent settings. Portal's `mux` option controls
-only its `next` client. Inbound Portal connections accept a `0xff`-marked Mux
-carrier or an unmarked dedicated lane on the same listener.
+Portal and Vector offer fixed ALPNs in the order `nw2`, `now/1`. V2 peers select
+`nw2`; a V2 peer talking to a default V1 peer selects `now/1`. The removed
+`alpn` query is ignored under the normal unknown-parameter rule. Protocol
+version and Mux are independent settings. Portal's `mux` option controls only
+its `next` client. Inbound Portal connections accept a `0xff`-marked Mux carrier
+or an unmarked dedicated lane on the same listener.
 
 For `tls=2`, `crt` and `key` are native filesystem paths. Quote the complete
 URL when a Windows path, space, `&`, or another shell-significant character is
@@ -136,8 +136,8 @@ corresponding UDP limit shared by UoT and QUIC DATAGRAM. Excess flows fail
 without waiting for capacity. QUIC internally admits the sum of both limits as
 bidirectional streams; this derived capacity has no separate setting.
 
-Portal and Vector use the same QUIC profile regardless of ALPN or the client
-Mux setting.
+Portal and Vector use the same QUIC profile regardless of negotiated protocol
+version or the client Mux setting.
 The stream/connection/send windows are respectively 4/8/8 MiB for `memory`,
 8/16/16 MiB for `balanced`, and 16/32/32 MiB for `throughput`. These are
 flow-control ceilings, not eager allocations. Larger windows are useful only

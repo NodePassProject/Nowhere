@@ -10,7 +10,7 @@ The documentation has one source of truth for each concern:
 | Implement or inspect the wire format | [Protocol](protocol.md) |
 | Deploy and observe the processes | [Operations](operations.md) |
 | Review authentication and memory bounds | [Security](security.md) |
-| Understand ALPN and peer interoperability | [Interoperability](compatibility.md) |
+| Understand version negotiation and peer interoperability | [Interoperability](compatibility.md) |
 | Implement another client or integration | [Integrations](integrations.md) |
 
 `protocol.md` is normative. Portal and Vector share one internal bounded TLS
@@ -61,8 +61,9 @@ on one hop does not constrain the carrier choice on another hop.
 | `mux=0` | Dedicated lane per flow | Native streams/datagrams | One flow per carrier |
 | `mux=1` | Shared bounded Mux | Native streams/datagrams | Assigned flows close with the carrier |
 
-ALPN defaults to `now/1` and is configurable independently from Mux. Peers use
-the same exact ALPN. All four uplink/downlink carrier combinations use the same
-FlowHeader, Target, pairing, and relay semantics. Portal accepts dedicated and
-`0xff`-marked Mux connections on the same TLS listener. The client setting is
-available on Vector and on Portal when `next` is enabled.
+V2 peers negotiate the fixed `nw2` ALPN and fall back to the default V1 value
+`now/1` for compatibility. All four uplink/downlink carrier combinations use
+the same FlowHeader, Target, pairing, and relay semantics in this release.
+Portal accepts dedicated and `0xff`-marked Mux connections on the same TLS
+listener. The client Mux setting is available on Vector and on Portal when
+`next` is enabled.

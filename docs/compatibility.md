@@ -1,11 +1,21 @@
 # Interoperability
 
-## ALPN contract
+## Version negotiation
 
-Portal and Vector advertise one exact TLS 1.3 ALPN. The default is `now/1`;
-`alpn=<value>` selects another nonempty value up to 255 bytes. Peers must use
-the same value for TLS/TCP and QUIC/UDP. ALPN does not select a protocol version
-or enable Mux.
+Nowhere 2 uses ALPN as its data-plane version selector. Portal and Vector offer
+the fixed protocols `nw2` and `now/1`, in that order. A negotiated `nw2` carrier
+is V2; a negotiated `now/1` carrier is compatible V1. The `alpn` URL parameter
+has been removed and is ignored as an unknown parameter.
+
+| Client | Portal | Negotiated version |
+|---|---|---|
+| V2 | V2 | `nw2` / V2 |
+| V2 | default V1 | `now/1` / V1 |
+| default V1 | V2 | `now/1` / V1 |
+
+V1 installations using a custom ALPN cannot interoperate with V2. A V1 client
+that had already customized its ALPN to `nw2` is classified as V2; this rare
+collision has no compatibility exception.
 
 ## TLS lane contract
 
@@ -56,10 +66,10 @@ same authentication, FlowHeader, Target, setup result, pairing and limits.
 QUIC behavior is independent from the client Mux setting.
 
 Peers must also use matching credentials and reachable carrier families. A
-Portal with `next=` uses its configured ALPN and `mux=0|1` selection for the
-next hop. The upstream Mux selection defaults to `0` and is ignored without an
-enabled `next`.
+Portal with `next=` negotiates the upstream version independently and uses its
+`mux=0|1` selection for that hop. The upstream Mux selection defaults to `0`
+and is ignored without an enabled `next`.
 
 Interoperability tests exercise both peer roles: one endpoint as Portal and the
 other as client. A complete matrix includes all four `up`/`down` carrier
-combinations, the default and a custom ALPN, dedicated TLS, and marked Mux.
+combinations, both negotiated versions, dedicated TLS, and marked Mux.

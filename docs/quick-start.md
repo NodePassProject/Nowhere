@@ -53,8 +53,9 @@ automatically:
 nowhere 'vector://secret@127.0.0.1:2077?up=tcp&down=tcp&mux=1&socks=127.0.0.1:1080'
 ```
 
-ALPN defaults to `now/1`. Set the same `alpn=<value>` on Portal and Vector when
-a custom identifier is required. ALPN does not enable or disable Mux.
+Nowhere 2 negotiates `nw2` with another V2 peer and falls back to `now/1` when
+connecting to a default V1 peer. There is no configurable ALPN parameter; Mux
+selection remains independent from protocol version.
 
 ## 3. Use SOCKS5
 

@@ -21,9 +21,10 @@ otherwise.
 
 ## 1. Carrier model
 
-TLS/TCP and QUIC negotiate one exact ALPN. The default is `now/1`; a configured
-ALPN is 1–255 bytes and has no version or Mux semantics. Both transports use
-TLS 1.3.
+TLS/TCP and QUIC use TLS 1.3 and negotiate a data-plane version through ALPN.
+Nowhere 2 offers `nw2` first and the default V1 value `now/1` second. A selected
+`nw2` carrier is V2; every accepted non-`nw2` carrier is V1, which in this
+implementation means exactly `now/1`.
 
 One client session has one random 16-byte `session_id`. Every physical carrier
 is authenticated with that ID, so Portal can pair logical lanes belonging to
@@ -153,7 +154,8 @@ tag       = first 16 bytes of
 ```
 
 The 32-byte exporter uses label `EXPORTER-Nowhere-Auth` and empty context. The
-fixed derivation labels do not change when a custom ALPN is configured.
+fixed derivation labels are shared by the compatible V1 and V2 paths in this
+release; the negotiated version does not change authentication bytes.
 Authentication is bound to the current TLS connection; replaying a captured
 AuthFrame on another connection fails.
 
