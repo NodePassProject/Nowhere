@@ -21,7 +21,6 @@ fn help_text_documents_usage_and_configuration_surface() {
         "next=<portal>",
         "sni=<name|none>",
         "pin=<sha256|none>",
-        "alpn=<value>",
         "mux=0|1",
         "Use TLS Mux for the native upstream.",
         "UDP ASSOCIATE",
@@ -47,7 +46,7 @@ fn help_text_documents_usage_and_configuration_surface() {
             "missing help text: {expected}"
         );
     }
-    for removed in ["pool=<number>", "NOW_QUIC_MAX_UDP_FLOWS"] {
+    for removed in ["alpn=<value>", "pool=<number>", "NOW_QUIC_MAX_UDP_FLOWS"] {
         assert!(
             !HELP_TEXT.contains(removed),
             "removed help option: {removed}"

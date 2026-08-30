@@ -22,8 +22,8 @@ use crate::common::socks::{
 use crate::common::{LatencyGuard, flow_setup_timeout, handshake_timeout, tcp_read_timeout};
 use crate::protocol::{
     AUTH_FRAME_LEN, AuthFrame, Carrier, FLOW_HEADER_LEN, FlowHeader, FlowKind, FlowResult,
-    FlowRole, SetupResult, TARGET_MAX_ENCODED_LEN, Target, encode_target_into, read_flow_result,
-    write_flow_header,
+    FlowRole, ProtocolVersion, SetupResult, TARGET_MAX_ENCODED_LEN, Target, encode_target_into,
+    read_flow_result, write_flow_header,
 };
 use crate::telemetry::{AccessOutcome, AccessSpan, RuntimeEvent, RuntimeKind, RuntimeLevel};
 
@@ -47,6 +47,7 @@ pub(super) struct PhysicalLane {
     _link: Option<LinkGuard>,
     _latency: Option<LatencyGuard>,
     pub(super) _quic: Option<Arc<QuicSession>>,
+    pub(super) version: ProtocolVersion,
 }
 
 impl PhysicalLane {
@@ -100,7 +101,7 @@ pub(super) async fn open_lane(
                     error
                 })?;
             match opened {
-                OpenedTls::Mux(stream) => {
+                OpenedTls::Mux(stream, version) => {
                     let (reader, writer) = stream.into_split();
                     Ok(PhysicalLane {
                         reader: Some(Box::pin(reader)),
@@ -110,6 +111,7 @@ pub(super) async fn open_lane(
                         _link: None,
                         _latency: None,
                         _quic: None,
+                        version,
                     })
                 }
                 OpenedTls::Dedicated(lane) => {
@@ -122,6 +124,7 @@ pub(super) async fn open_lane(
                         _link: Some(parts.link),
                         _latency: Some(parts.latency),
                         _quic: None,
+                        version: parts.version,
                     })
                 }
             }
@@ -150,6 +153,7 @@ pub(super) async fn open_lane(
                 }
             };
             let pending_quic_auth = pending_auth.is_some();
+            let version = session.version;
             Ok(PhysicalLane {
                 reader: Some(Box::pin(reader)),
                 writer: Some(Box::pin(writer)),
@@ -158,6 +162,7 @@ pub(super) async fn open_lane(
                 _link: None,
                 _latency: None,
                 _quic: Some(session),
+                version,
             })
         }
     }

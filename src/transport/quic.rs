@@ -1,7 +1,7 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Shared QUIC flow-control budgets for every ALPN and Mux setting.
+//! Shared QUIC flow-control budgets for every protocol version and Mux setting.
 
 use anyhow::{Result, bail};
 

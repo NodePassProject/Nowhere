@@ -28,14 +28,14 @@ use crate::common::{
 use crate::mux::{MUX_IDLE_TIMEOUT, MuxConfig, MuxHandle, MuxStream};
 use crate::protocol::{
     AuthFrame, AuthKey, AuthTransport, Credentials, DatagramReassembler, FlowId, OwnedUdpFragment,
-    OwnedUdpFrame, ReassemblyConfig, ReassemblyOutcome, SessionId, decode_udp_frame_owned,
-    encode_auth_frame, encode_udp_close,
+    OwnedUdpFrame, ProtocolVersion, ReassemblyConfig, ReassemblyOutcome, SessionId,
+    decode_udp_frame_owned, encode_auth_frame, encode_udp_close,
 };
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel, TelemetryHub};
 use crate::transport::{Stats, quic_flow_control};
 
 use super::config::PortalClientConfig;
-use super::tls::{ClientTls, EXPORTER_LABEL};
+use super::tls::{ClientTls, EXPORTER_LABEL, quic_protocol_version};
 
 const QUIC_DATAGRAM_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 const TLS_MUX_FLOWS_PER_SHARD: usize = 4;
@@ -63,6 +63,7 @@ impl ClientSignals {
 
 pub(super) struct TlsLane {
     pub(super) stream: TlsStream<tokio::net::TcpStream>,
+    pub(super) version: ProtocolVersion,
     pending_auth: Option<AuthFrame>,
     _link: LinkGuard,
     latency: LatencyGuard,
@@ -74,12 +75,14 @@ pub(super) struct TlsLaneParts {
     pub(super) pending_auth: Option<AuthFrame>,
     pub(super) link: LinkGuard,
     pub(super) latency: LatencyGuard,
+    pub(super) version: ProtocolVersion,
 }
 
 impl TlsLane {
     pub(super) fn into_parts(self) -> TlsLaneParts {
         let Self {
             stream,
+            version,
             pending_auth,
             _link,
             latency,
@@ -91,6 +94,7 @@ impl TlsLane {
             pending_auth,
             link: _link,
             latency,
+            version,
         }
     }
 }

@@ -13,7 +13,7 @@ mod network;
 pub(crate) mod socks;
 mod tls;
 
-pub(crate) use alpn::{MUX_MARKER, parse_alpn};
+pub(crate) use alpn::MUX_MARKER;
 pub(crate) use config::first_raw_query_value;
 pub use config::{
     DEFAULT_DIALER_IP, DEFAULT_MAX_TCP_FLOWS, DEFAULT_MAX_UDP_FLOWS, DEFAULT_RATE_LIMIT,

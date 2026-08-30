@@ -12,6 +12,7 @@ pub(crate) struct TcpTunnel {
     _lease: Option<FlowLease>,
     uplink: Carrier,
     downlink: Carrier,
+    version: ProtocolVersion,
     _flow_permit: Option<OwnedSemaphorePermit>,
 }
 
@@ -30,6 +31,10 @@ impl TcpTunnel {
         (self.uplink, self.downlink)
     }
 
+    pub(crate) fn protocol_version(&self) -> ProtocolVersion {
+        self.version
+    }
+
     pub(crate) fn into_parts(self) -> (BoxReader, BoxWriter, TcpTunnelGuard) {
         let Self {
             reader,
@@ -38,6 +43,7 @@ impl TcpTunnel {
             _lease,
             uplink: _,
             downlink: _,
+            version: _,
             _flow_permit,
         } = self;
         (
@@ -113,6 +119,7 @@ pub(crate) async fn open_tcp(
             downlink,
             hops,
         };
+        let version = lane.version;
         let pending_auth = lane.take_pending_auth();
         write_open_request(
             lane.writer.as_mut().expect("lane writer"),
@@ -135,6 +142,7 @@ pub(crate) async fn open_tcp(
             _lease: Some(lease),
             uplink,
             downlink,
+            version,
             _flow_permit: Some(flow_permit),
         });
     }
@@ -150,6 +158,12 @@ pub(crate) async fn open_tcp(
     );
     let mut uplink_lane = uplink_result.map_err(OpenFlowError::Transport)?;
     let mut downlink_lane = downlink_result.map_err(OpenFlowError::Transport)?;
+    if uplink_lane.version != downlink_lane.version {
+        return Err(OpenFlowError::Protocol(anyhow!(
+            "vector::flow::open_tcp: split carriers negotiated different protocol versions"
+        )));
+    }
+    let version = uplink_lane.version;
     let open_header = FlowHeader {
         role: FlowRole::Open,
         flow_id,
@@ -194,6 +208,7 @@ pub(crate) async fn open_tcp(
         _lease: Some(lease),
         uplink,
         downlink,
+        version,
         _flow_permit: Some(flow_permit),
     })
 }

@@ -186,11 +186,10 @@ impl Vector {
         let credentials =
             Credentials::new(&parsed_url).context("vector::Vector::new: invalid shared key")?;
         let telemetry_summary = format!(
-            "portal={} up={} down={} alpn={} mux={} socks={}",
+            "portal={} up={} down={} mux={} socks={}",
             config.portal_endpoint(),
             config.up,
             config.down,
-            config.alpn,
             config.mux,
             config.socks.endpoint(),
         );

@@ -19,7 +19,6 @@ fn certificate_sha256_uses_lowercase_hex() {
 fn server_tls_config_explicitly_disables_early_data() {
     let (_, tls, _quic) = new_server_configs(
         &Url::parse("portal://secret@127.0.0.1:2077?tls=1").unwrap(),
-        "now/1",
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -29,13 +28,12 @@ fn server_tls_config_explicitly_disables_early_data() {
 }
 
 #[test]
-fn server_offers_only_the_configured_alpn() {
+fn server_prefers_v2_and_accepts_default_v1() {
     let (_, tls, _) = new_server_configs(
         &Url::parse("portal://secret@127.0.0.1:2077?tls=1&alpn=private/2&pool=8").unwrap(),
-        "private/2",
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
 
-    assert_eq!(tls.alpn_protocols, [b"private/2".to_vec()]);
+    assert_eq!(tls.alpn_protocols, [b"nw2".to_vec(), b"now/1".to_vec()]);
 }

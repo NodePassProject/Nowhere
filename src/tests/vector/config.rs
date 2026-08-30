@@ -9,7 +9,6 @@ fn defaults_to_quic_both_directions() {
     let config = parse("vector://secret@example.com:2077?socks=:1080").unwrap();
     assert_eq!(config.up, CarrierMode::Udp);
     assert_eq!(config.down, CarrierMode::Udp);
-    assert_eq!(config.alpn, "now/1");
     assert_eq!(config.mux, MuxMode::Disabled);
     assert_eq!(config.sni, None);
     assert_eq!(config.pin, None);
@@ -50,9 +49,8 @@ fn ignores_unknown_values_and_keeps_the_first_duplicate() {
     .unwrap();
     assert_eq!(config.up, CarrierMode::Tcp);
     assert_eq!(config.down, CarrierMode::Tcp);
-    assert_eq!(config.alpn, "private/2");
     assert_eq!(config.socks.port, 1080);
-    assert!(config.effective_url().contains("alpn=private/2"));
+    assert!(!config.effective_url().contains("alpn="));
     assert!(!config.effective_url().contains("pool="));
 }
 
@@ -89,14 +87,13 @@ fn effective_url_uses_canonical_order_and_prints_identity_options() {
     .unwrap();
     assert_eq!(
         config.effective_url(),
-        "vector://example.com:2077?up=tcp&down=tcp&alpn=private&mux=1&sni=relay.example&pin=abc&rate=1&etar=2&socks=:1080"
+        "vector://example.com:2077?up=tcp&down=tcp&mux=1&sni=relay.example&pin=abc&rate=1&etar=2&socks=:1080"
     );
 }
 
 #[test]
-fn validates_alpn_and_mux_inputs() {
+fn ignores_removed_alpn_and_validates_mux_inputs() {
     for raw in [
-        "vector://secret@example.com:2077?socks=:1080&alpn=",
         "vector://secret@example.com:2077?socks=:1080&mux=",
         "vector://secret@example.com:2077?socks=:1080&mux=2",
         "vector://secret@example.com:2077?socks=:1080&mux=true",
@@ -104,13 +101,13 @@ fn validates_alpn_and_mux_inputs() {
     ] {
         assert!(parse(raw).is_err(), "URL unexpectedly accepted: {raw}");
     }
-    let oversized = "a".repeat(256);
-    assert!(
-        parse(&format!(
-            "vector://secret@example.com:2077?socks=:1080&alpn={oversized}"
+    for alpn in [String::new(), "a".repeat(256)] {
+        let config = parse(&format!(
+            "vector://secret@example.com:2077?socks=:1080&alpn={alpn}"
         ))
-        .is_err()
-    );
+        .unwrap();
+        assert!(!config.effective_url().contains("alpn="));
+    }
 }
 
 #[test]

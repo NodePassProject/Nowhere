@@ -15,6 +15,8 @@ use quinn::crypto::rustls::QuicServerConfig;
 use rustls::crypto::ring;
 use url::Url;
 
+use crate::protocol::SUPPORTED_ALPNS;
+
 pub(crate) use self::tls_cert::certificate_sha256;
 use self::tls_cert::{ReloadingCertResolver, new_self_signed_cert};
 use super::{Logger, query_first, reload_interval};
@@ -44,18 +46,16 @@ impl fmt::Display for TLSMode {
     }
 }
 
-/// Builds rustls and QUIC TLS server configuration for the configured ALPN.
+/// Builds rustls and QUIC TLS server configuration for supported protocol versions.
 pub fn new_server_configs(
     parsed_url: &Url,
-    alpn: &str,
     logger: Logger,
 ) -> Result<(TLSMode, Arc<rustls::ServerConfig>, quinn::ServerConfig)> {
-    new_server_configs_with_reload_interval(parsed_url, alpn, reload_interval(), logger)
+    new_server_configs_with_reload_interval(parsed_url, reload_interval(), logger)
 }
 
 pub(crate) fn new_server_configs_with_reload_interval(
     parsed_url: &Url,
-    alpn: &str,
     reload_interval: Duration,
     logger: Logger,
 ) -> Result<(TLSMode, Arc<rustls::ServerConfig>, quinn::ServerConfig)> {
@@ -109,7 +109,7 @@ pub(crate) fn new_server_configs_with_reload_interval(
 
     server_crypto.max_early_data_size = 0;
     server_crypto.send_half_rtt_data = false;
-    server_crypto.alpn_protocols = vec![alpn.as_bytes().to_vec()];
+    server_crypto.alpn_protocols = SUPPORTED_ALPNS.iter().map(|alpn| alpn.to_vec()).collect();
     let quic_crypto = QuicServerConfig::try_from(server_crypto.clone())
         .map_err(|e| anyhow!("common::tls::new_server_configs: QUIC TLS config failed: {e}"))?;
     logger.event(format_args!("CERT_SHA256|{cert_sha256}"));

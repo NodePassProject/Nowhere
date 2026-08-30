@@ -4,6 +4,13 @@
 use super::*;
 use tokio::io::AsyncReadExt;
 
+fn shard(handle: MuxHandle) -> TlsMux {
+    TlsMux {
+        handle,
+        version: ProtocolVersion::V2,
+    }
+}
+
 #[tokio::test]
 async fn shard_selection_stops_at_four_active_flows() {
     let (left, right) = tokio::io::duplex(1 << 20);
@@ -16,9 +23,11 @@ async fn shard_selection_stops_at_four_active_flows() {
         streams.push(handle.open_stream(flow_id).await.unwrap());
         peers.push(incoming.accept().await.unwrap().unwrap());
     }
+    let shard = shard(handle.clone());
     assert!(
-        select_available_mux(std::slice::from_ref(&handle))
+        select_available_mux(std::slice::from_ref(&shard))
             .unwrap()
+            .handle
             .same_carrier(&handle)
     );
 
@@ -29,7 +38,7 @@ async fn shard_selection_stops_at_four_active_flows() {
             .unwrap(),
     );
     peers.push(incoming.accept().await.unwrap().unwrap());
-    assert!(select_available_mux(std::slice::from_ref(&handle)).is_none());
+    assert!(select_available_mux(std::slice::from_ref(&shard)).is_none());
 }
 
 #[tokio::test]
@@ -48,8 +57,8 @@ async fn shard_selection_uses_the_least_loaded_carrier() {
     let _stream_b = handle_b.open_stream(3).await.unwrap();
     let _peer_b = incoming_b.accept().await.unwrap().unwrap();
 
-    let selected = select_available_mux(&[handle_a, handle_b.clone()]).unwrap();
-    assert!(selected.same_carrier(&handle_b));
+    let selected = select_available_mux(&[shard(handle_a), shard(handle_b.clone())]).unwrap();
+    assert!(selected.handle.same_carrier(&handle_b));
 }
 
 #[tokio::test]

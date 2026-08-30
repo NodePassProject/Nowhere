@@ -7,7 +7,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
-use quinn::crypto::rustls::QuicClientConfig;
+use quinn::Connection;
+use quinn::crypto::rustls::{HandshakeData, QuicClientConfig};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{
     WebPkiSupportedAlgorithms, ring, verify_tls12_signature, verify_tls13_signature,
@@ -19,7 +20,7 @@ use tokio::time::timeout;
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
 use crate::common::{certificate_sha256, dial_tcp_from_local_ip, handshake_timeout};
-use crate::protocol::{TLS_EXPORTER_LEN, TlsExporter};
+use crate::protocol::{ProtocolVersion, SUPPORTED_ALPNS, TLS_EXPORTER_LEN, TlsExporter};
 
 use super::config::PortalClientConfig;
 
@@ -30,7 +31,6 @@ pub(super) const EXPORTER_LABEL: &[u8] = b"EXPORTER-Nowhere-Auth";
 pub(super) struct ClientTls {
     rustls: Arc<rustls::ClientConfig>,
     server_name: ServerName<'static>,
-    alpn: Vec<u8>,
 }
 
 impl ClientTls {
@@ -75,8 +75,7 @@ impl ClientTls {
                 }))
                 .with_no_client_auth()
         };
-        let alpn = config.alpn.as_bytes().to_vec();
-        client.alpn_protocols = vec![alpn.clone()];
+        client.alpn_protocols = SUPPORTED_ALPNS.iter().map(|alpn| alpn.to_vec()).collect();
         client.enable_early_data = false;
 
         let server_name = ServerName::try_from(
@@ -90,7 +89,6 @@ impl ClientTls {
         Ok(Self {
             rustls: Arc::new(client),
             server_name,
-            alpn,
         })
     }
 
@@ -112,7 +110,7 @@ impl ClientTls {
         &self,
         endpoint: &str,
         dialer_ip: &str,
-    ) -> Result<(TlsStream<TcpStream>, TlsExporter)> {
+    ) -> Result<(TlsStream<TcpStream>, TlsExporter, ProtocolVersion)> {
         let stream = dial_tcp_from_local_ip(dialer_ip, endpoint, handshake_timeout())
             .await
             .with_context(|| format!("vector::tls::connect_tcp: failed to dial {endpoint}"))?;
@@ -132,11 +130,20 @@ impl ClientTls {
             .1
             .export_keying_material(&mut exporter, EXPORTER_LABEL, Some(&[]))
             .context("vector::tls::connect_tcp: TLS exporter failed")?;
-        if tls.get_ref().1.alpn_protocol() != Some(self.alpn.as_slice()) {
-            bail!("vector::tls::connect_tcp: Portal did not negotiate the configured ALPN");
-        }
-        Ok((tls, exporter))
+        let version = ProtocolVersion::from_alpn(tls.get_ref().1.alpn_protocol())
+            .context("vector::tls::connect_tcp: invalid negotiated protocol")?;
+        Ok((tls, exporter, version))
     }
+}
+
+pub(super) fn quic_protocol_version(connection: &Connection) -> Result<ProtocolVersion> {
+    let handshake = connection
+        .handshake_data()
+        .ok_or_else(|| anyhow!("vector::tls: QUIC handshake data unavailable"))?
+        .downcast::<HandshakeData>()
+        .map_err(|_| anyhow!("vector::tls: unexpected QUIC handshake data"))?;
+    ProtocolVersion::from_alpn(handshake.protocol.as_deref())
+        .context("vector::tls: invalid QUIC negotiated protocol")
 }
 
 #[derive(Clone)]

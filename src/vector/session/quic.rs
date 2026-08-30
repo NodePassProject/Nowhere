@@ -130,6 +130,7 @@ impl QuicManager {
             .await
             .map_err(|_| anyhow!("vector::session::QuicManager: QUIC handshake timeout"))?
             .context("vector::session::QuicManager: QUIC handshake failed")?;
+        let version = quic_protocol_version(&connection)?;
         let mut exporter = [0u8; crate::protocol::TLS_EXPORTER_LEN];
         connection
             .export_keying_material(&mut exporter, EXPORTER_LABEL, b"")
@@ -160,6 +161,7 @@ impl QuicManager {
             queue_budget: Arc::new(Semaphore::new(self.queue_bytes)),
             _link: LinkGuard::new(self.stats.clone(), self.telemetry.clone(), true),
             latency,
+            version,
         });
         spawn_datagram_loop(Arc::downgrade(&session), self.shutdown.clone());
         Ok(session)
@@ -188,6 +190,7 @@ pub(in crate::vector) struct QuicSession {
     queue_budget: Arc<Semaphore>,
     _link: LinkGuard,
     latency: LatencyGuard,
+    pub(in crate::vector) version: ProtocolVersion,
 }
 
 pub(in crate::vector) type QueuedDatagram = BudgetedDatagram;

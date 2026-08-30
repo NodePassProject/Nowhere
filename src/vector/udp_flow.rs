@@ -14,7 +14,9 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use crate::common::{UdpDatagramSend, handshake_timeout};
-use crate::protocol::{Carrier, FlowHeader, FlowKind, FlowRole, Target, write_udp_packet};
+use crate::protocol::{
+    Carrier, FlowHeader, FlowKind, FlowRole, ProtocolVersion, Target, write_udp_packet,
+};
 
 use super::PortalClient;
 use super::config::CarrierMode;
@@ -29,6 +31,7 @@ pub(crate) struct UdpTunnel {
     quic: Option<Arc<QuicSession>>,
     pub(super) uplink: Carrier,
     pub(super) downlink: Carrier,
+    version: ProtocolVersion,
     sender: UdpTunnelSender,
     receiver: UdpTunnelReceiver,
     _lanes: Vec<PhysicalLane>,
@@ -40,6 +43,9 @@ pub(crate) struct UdpTunnel {
 impl UdpTunnel {
     pub(crate) fn carriers(&self) -> (Carrier, Carrier) {
         (self.uplink, self.downlink)
+    }
+    pub(crate) fn protocol_version(&self) -> ProtocolVersion {
+        self.version
     }
     pub(crate) async fn send(&mut self, payload: &[u8]) -> Result<bool> {
         self.sender.send(payload).await
@@ -223,6 +229,12 @@ pub(crate) async fn open_udp(
     };
 
     let quic = lanes.iter().find_map(|lane| lane._quic.clone());
+    let version = lanes[0].version;
+    if lanes.iter().any(|lane| lane.version != version) {
+        return Err(OpenFlowError::Protocol(anyhow::anyhow!(
+            "vector::udp_flow::open_udp: split carriers negotiated different protocol versions"
+        )));
+    }
     let mut down_datagrams = if client.config.down == CarrierMode::Udp {
         Some(
             quic.as_ref()
@@ -281,6 +293,7 @@ pub(crate) async fn open_udp(
         flow_id,
         uplink,
         downlink,
+        version,
         sender: UdpTunnelSender {
             flow_id,
             writer,

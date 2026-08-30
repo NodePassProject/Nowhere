@@ -62,7 +62,6 @@ Portal parameters:
                    tls=0 is not supported.
   crt=<path>       PEM certificate chain for tls=2.
   key=<path>       PEM private key for tls=2.
-  alpn=<value>     Exact TLS/QUIC ALPN. Default: now/1.
   rate=<mbps>      Client-to-target traffic limit. 0 disables it.
   etar=<mbps>      Target-to-client traffic limit. 0 disables it.
   dial=<ip|auto>   Local source IP for outbound target connections. Default: auto.
@@ -81,7 +80,6 @@ Portal parameters:
 Vector parameters:
   up=tcp|udp       Upload carrier. Default: udp.
   down=tcp|udp     Download carrier. Default: udp.
-  alpn=<value>     Exact TLS/QUIC ALPN. Default: now/1.
   mux=0|1          Use TLS Mux for TLS/TCP carriers. Default: 0.
   sni=<name|none>  Verify the certificate for a DNS name. Empty, omitted, or
                    none disables certificate validation. Default: none.

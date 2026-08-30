@@ -12,10 +12,10 @@ use url::Url;
 use crate::common::socks::{
     SocksCredentials, first_raw_socks_value, format_host_port, parse_host_port, parse_socks_value,
 };
-use crate::common::{DEFAULT_DIALER_IP, parse_alpn, query_first};
+use crate::common::{DEFAULT_DIALER_IP, query_first};
 
 const VECTOR_QUERY_KEYS: &[&str] = &[
-    "up", "down", "alpn", "mux", "sni", "pin", "rate", "etar", "socks", "log",
+    "up", "down", "mux", "sni", "pin", "rate", "etar", "socks", "log",
 ];
 
 /// Whether a client originates dedicated or Mux TLS carriers.
@@ -70,7 +70,6 @@ pub(crate) struct PortalClientConfig {
     pub(crate) remote_port: u16,
     pub(crate) up: CarrierMode,
     pub(crate) down: CarrierMode,
-    pub(crate) alpn: String,
     pub(crate) mux: MuxMode,
     pub(crate) sni: Option<String>,
     pub(crate) pin: Option<String>,
@@ -92,8 +91,6 @@ impl PortalClientConfig {
             .ok_or_else(|| anyhow!("vector::config: missing Portal port"))?;
         let up = CarrierMode::parse(query.get("up").map(String::as_str), "up")?;
         let down = CarrierMode::parse(query.get("down").map(String::as_str), "down")?;
-        let alpn = parse_alpn(query.get("alpn").map(String::as_str))
-            .map_err(|error| anyhow!("vector::config: {error}"))?;
         let mux = MuxMode::parse(query.get("mux").map(String::as_str))
             .map_err(|error| anyhow!("vector::config: {error}"))?;
         let sni = query
@@ -119,7 +116,6 @@ impl PortalClientConfig {
             remote_port,
             up,
             down,
-            alpn,
             mux,
             sni,
             pin,
@@ -219,7 +215,6 @@ pub(crate) struct VectorConfig {
     pub(super) remote_port: u16,
     pub(super) up: CarrierMode,
     pub(super) down: CarrierMode,
-    pub(super) alpn: String,
     pub(super) mux: MuxMode,
     pub(super) sni: Option<String>,
     pub(super) pin: Option<String>,
@@ -257,7 +252,6 @@ impl VectorConfig {
             remote_port: portal.remote_port,
             up: portal.up,
             down: portal.down,
-            alpn: portal.alpn,
             mux: portal.mux,
             sni: portal.sni,
             pin: portal.pin,
@@ -273,7 +267,6 @@ impl VectorConfig {
             remote_port: self.remote_port,
             up: self.up,
             down: self.down,
-            alpn: self.alpn.clone(),
             mux: self.mux,
             sni: self.sni.clone(),
             pin: self.pin.clone(),
@@ -296,11 +289,10 @@ impl VectorConfig {
 
     pub(super) fn effective_url(&self) -> String {
         format!(
-            "vector://{}?up={}&down={}&alpn={}&mux={}&sni={}&pin={}&rate={}&etar={}&socks={}",
+            "vector://{}?up={}&down={}&mux={}&sni={}&pin={}&rate={}&etar={}&socks={}",
             self.portal_endpoint(),
             self.up,
             self.down,
-            self.alpn,
             self.mux,
             self.sni.as_deref().unwrap_or("none"),
             self.pin.as_deref().unwrap_or("none"),
