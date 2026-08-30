@@ -10,6 +10,7 @@ mod request;
 mod result;
 mod uot;
 mod util;
+mod version;
 
 pub use auth::{
     AUTH_FRAME_LEN, AUTH_TAG_LEN, AuthFrame, AuthKey, AuthTransport, Credentials, TLS_EXPORTER_LEN,
@@ -42,3 +43,4 @@ pub use uot::{
     UOT_HEADER_LEN, UOT_PACKET_MAX, encode_udp_packet, encode_udp_packet_header, read_udp_packet,
     read_udp_packet_into, write_udp_packet,
 };
+pub use version::{ProtocolVersion, SUPPORTED_ALPNS, V1_ALPN, V2_ALPN};
