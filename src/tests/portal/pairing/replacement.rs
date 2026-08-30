@@ -234,7 +234,7 @@ async fn stale_open_after_map_lock_leaves_exact_rejection_for_tcp_attach() {
             .await
     });
     tokio::time::timeout(Duration::from_secs(1), async {
-        while registry.active_quic_generation(session_id) == Some(old_generation) {
+        while registry.active_quic_generation(session_id.into()) == Some(old_generation) {
             tokio::task::yield_now().await;
         }
     })

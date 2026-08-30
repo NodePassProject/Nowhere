@@ -11,8 +11,8 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::PairingRegistry;
+use super::SessionKey;
 use super::state::{ActiveQuic, BoxReader, BoxWriter};
-use crate::protocol::SessionId;
 use crate::transport::Stats;
 
 struct GuardedReader<R> {
@@ -76,7 +76,7 @@ pub(in crate::portal) fn guarded_writer<W: AsyncWrite + Send + Unpin + 'static>(
 pub(in crate::portal) struct LinkGuard {
     registry: Arc<PairingRegistry>,
     stats: Arc<Stats>,
-    session_id: SessionId,
+    session_id: SessionKey,
     carrier: crate::protocol::Carrier,
     quic_generation: Option<u64>,
 }
@@ -130,11 +130,12 @@ impl Drop for LinkGuard {
 }
 
 impl PairingRegistry {
-    pub(in crate::portal) fn register_tcp_link(
+    pub(in crate::portal) fn register_tcp_link<S: Into<SessionKey>>(
         self: &Arc<Self>,
-        session_id: SessionId,
+        session_id: S,
         stats: Arc<Stats>,
     ) -> LinkGuard {
+        let session_id = session_id.into();
         let mut links = self.links.lock().expect("link registry poisoned");
         let counts = links
             .entry(session_id)
@@ -152,12 +153,13 @@ impl PairingRegistry {
     }
 
     /// Registers the latest authenticated QUIC carrier for a transport bundle.
-    pub(in crate::portal) async fn register_quic_link(
+    pub(in crate::portal) async fn register_quic_link<S: Into<SessionKey>>(
         self: &Arc<Self>,
-        session_id: SessionId,
+        session_id: S,
         stats: Arc<Stats>,
         replacement: tokio_util::sync::CancellationToken,
     ) -> LinkGuard {
+        let session_id = session_id.into();
         let generation = self.next_quic_generation.fetch_add(1, Ordering::Relaxed);
         let previous = {
             let mut links = self.links.lock().expect("link registry poisoned");

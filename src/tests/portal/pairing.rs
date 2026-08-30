@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::protocol::{
-    Carrier, FlowKind, FlowResult, FlowRole, SESSION_ID_LEN, Target, encode_flow_result,
+    Carrier, FlowKind, FlowResult, FlowRole, SESSION_ID_LEN, SessionId, Target, encode_flow_result,
     read_flow_result,
 };
 use crate::transport::Stats;
@@ -65,6 +65,7 @@ fn target(value: &str) -> Target {
 
 fn path(label: &str) -> LinkPath {
     LinkPath {
+        version: crate::protocol::ProtocolVersion::V2,
         peer: format!("{label}.client:1234"),
         local: "portal.test:2077".into(),
     }
@@ -83,7 +84,7 @@ fn available_udp_permits(registry: &PairingRegistry, session_id: SessionId) -> u
         .links
         .lock()
         .expect("link registry poisoned")
-        .get(&session_id)
+        .get(&session_id.into())
         .expect("registered session")
         .udp_flow_budget
         .available_permits()
@@ -130,3 +131,5 @@ mod rejection;
 mod replacement;
 #[path = "pairing/udp.rs"]
 mod udp;
+#[path = "pairing/version.rs"]
+mod version;

@@ -14,6 +14,8 @@ use crate::protocol::{AuthTransport, read_auth_frame};
 
 use super::session::PortalSession;
 use crate::portal::PortalInner;
+use crate::portal::pairing::SessionKey;
+use crate::protocol::ProtocolVersion;
 
 const AUTH_EXPORTER_LABEL: &[u8] = b"EXPORTER-Nowhere-Auth";
 
@@ -42,6 +44,7 @@ pub(super) enum AuthenticationOutcome {
 pub(super) async fn authenticate_connection(
     portal: Arc<PortalInner>,
     conn: Connection,
+    version: ProtocolVersion,
     deadline: Instant,
     shutdown: &CancellationToken,
 ) -> AuthenticationOutcome {
@@ -109,7 +112,7 @@ pub(super) async fn authenticate_connection(
                             session: Arc::new(PortalSession::new(
                                 portal.clone(),
                                 conn.clone(),
-                                session_id,
+                                SessionKey::new(version, session_id),
                             )),
                             first_send,
                             first_recv,

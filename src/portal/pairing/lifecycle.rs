@@ -18,7 +18,7 @@ impl PairingRegistry {
 
     pub(in crate::portal) fn cancel_quic_generation(
         self: &Arc<Self>,
-        session_id: SessionId,
+        session_id: SessionKey,
         generation: u64,
     ) {
         self.cancel_active_quic_generation(session_id, generation);
@@ -32,14 +32,14 @@ impl PairingRegistry {
 
     pub(in crate::portal) async fn replace_quic_generation(
         self: &Arc<Self>,
-        session_id: SessionId,
+        session_id: SessionKey,
         generation: u64,
     ) {
         self.cancel_active_quic_generation(session_id, generation);
         self.purge_quic_generation(session_id, generation).await;
     }
 
-    fn cancel_active_quic_generation(&self, session_id: SessionId, generation: u64) {
+    fn cancel_active_quic_generation(&self, session_id: SessionKey, generation: u64) {
         let claims = self.claims.lock().expect("flow claim registry poisoned");
         for (key, claim) in claims.iter() {
             if key.session_id == session_id
@@ -87,7 +87,7 @@ impl PairingRegistry {
         self.accepting.store(false, Ordering::Release);
     }
 
-    async fn purge_quic_generation(self: &Arc<Self>, session_id: SessionId, generation: u64) {
+    async fn purge_quic_generation(self: &Arc<Self>, session_id: SessionKey, generation: u64) {
         let mut stale = self
             .tcp
             .lock()

@@ -12,14 +12,32 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::protocol::{FlowKind, SessionId, Target};
+use crate::protocol::{FlowKind, ProtocolVersion, SessionId, Target};
 
 pub(in crate::portal) type BoxReader = Pin<Box<dyn AsyncRead + Send>>;
 pub(in crate::portal) type BoxWriter = Pin<Box<dyn AsyncWrite + Send>>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(in crate::portal) struct SessionKey {
+    pub(in crate::portal) version: ProtocolVersion,
+    pub(in crate::portal) id: SessionId,
+}
+
+impl SessionKey {
+    pub(in crate::portal) const fn new(version: ProtocolVersion, id: SessionId) -> Self {
+        Self { version, id }
+    }
+}
+
+impl From<SessionId> for SessionKey {
+    fn from(id: SessionId) -> Self {
+        Self::new(ProtocolVersion::V2, id)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(in crate::portal) struct FlowKey {
-    pub(in crate::portal) session_id: SessionId,
+    pub(in crate::portal) session_id: SessionKey,
     pub(in crate::portal) flow_id: u32,
 }
 
@@ -48,6 +66,7 @@ pub(in crate::portal) struct PendingTcp {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::portal) struct LinkPath {
+    pub(in crate::portal) version: ProtocolVersion,
     pub(in crate::portal) peer: String,
     pub(in crate::portal) local: String,
 }

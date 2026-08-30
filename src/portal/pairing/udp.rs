@@ -16,14 +16,15 @@ enum UdpInstallOutcome {
 }
 
 impl PairingRegistry {
-    pub(in crate::portal) async fn submit_udp(
+    pub(in crate::portal) async fn submit_udp<S: Into<SessionKey>>(
         self: &Arc<Self>,
-        session_id: SessionId,
+        session_id: S,
         header: FlowHeader,
         target: Option<Target>,
         link: LinkHalf,
         mut half: UdpHalf,
     ) -> Result<Option<PairedUdp>, PairingError> {
+        let session_id = session_id.into();
         if let Err(err) =
             self.validate_header_and_link(session_id, header, FlowKind::Udp, target.as_ref(), &link)
         {
@@ -394,7 +395,12 @@ impl PairingRegistry {
         });
     }
 
-    pub(in crate::portal) async fn cancel_udp(&self, session_id: SessionId, flow_id: u32) {
+    pub(in crate::portal) async fn cancel_udp<S: Into<SessionKey>>(
+        &self,
+        session_id: S,
+        flow_id: u32,
+    ) {
+        let session_id = session_id.into();
         let key = FlowKey {
             session_id,
             flow_id,

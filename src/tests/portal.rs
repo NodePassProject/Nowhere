@@ -33,7 +33,7 @@ fn empty_host_listens_on_both_wildcard_families() {
     assert_eq!(portal.inner.network_mode, NetworkMode::Mix);
     assert_eq!(
         portal.effective_url(),
-        "portal://:2077?net=mix&tls=1&alpn=now/1&rate=0&etar=0&dial=127.0.0.1&socks=none&next=none"
+        "portal://:2077?net=mix&tls=1&rate=0&etar=0&dial=127.0.0.1&socks=none&next=none"
     );
 }
 
@@ -153,8 +153,6 @@ fn native_next_reuses_transport_identity_and_source_binding() {
         test_logger(),
     )
     .unwrap();
-    assert_eq!(portal.inner.alpn, "private/2");
-
     assert_eq!(portal.inner.outbound.dialer_ip(), "127.0.0.2");
     assert_eq!(portal.inner.outbound.next_endpoint(), "[::1]:2080");
     assert_eq!(
@@ -300,7 +298,6 @@ fn portal_url_contract_rejects_invalid_structure_and_selected_values() {
         "portal://secret@127.0.0.1:2077/path",
         "portal://secret@127.0.0.1:2077#fragment",
         "portal://secret@127.0.0.1:2077?net=",
-        "portal://secret@127.0.0.1:2077?alpn=",
         "portal://secret@127.0.0.1:2077?socks=",
         "portal://secret@127.0.0.1:2077?rate=-1",
         "portal://secret@127.0.0.1:2077?dial=not-an-ip",
@@ -326,9 +323,8 @@ fn portal_ignores_unknown_parameters_and_keeps_first_duplicate() {
     .unwrap();
     assert_eq!(portal.inner.network_mode, NetworkMode::Tcp);
     assert_eq!(portal.inner.rate_limit, 1);
-    assert_eq!(portal.inner.alpn, "private/2");
     assert!(portal.effective_url().contains("?net=tcp&tls=1&"));
-    assert!(portal.effective_url().contains("alpn=private/2"));
+    assert!(!portal.effective_url().contains("alpn="));
     assert!(!portal.effective_url().contains("mux="));
     assert!(!portal.effective_url().contains("pool="));
 }
@@ -344,7 +340,7 @@ fn portal_mux_is_ignored_without_next() {
             test_logger(),
         )
         .unwrap();
-        assert_eq!(portal.inner.alpn, "private/2");
+        assert!(!portal.effective_url().contains("alpn="));
         assert!(!portal.effective_url().contains("mux="));
     }
 }

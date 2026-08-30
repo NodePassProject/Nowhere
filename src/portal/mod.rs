@@ -44,7 +44,6 @@ pub struct Portal {
 
 struct PortalInner {
     credentials: Credentials,
-    alpn: String,
     tls_mode: TLSMode,
     network_mode: NetworkMode,
     endpoint_addr: String,

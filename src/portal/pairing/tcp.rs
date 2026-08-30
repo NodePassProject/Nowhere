@@ -20,9 +20,9 @@ impl PairingRegistry {
         clippy::too_many_arguments,
         reason = "the registry boundary keeps each owned stream half explicit"
     )]
-    pub(in crate::portal) async fn submit_tcp(
+    pub(in crate::portal) async fn submit_tcp<S: Into<SessionKey>>(
         self: &Arc<Self>,
-        session_id: SessionId,
+        session_id: S,
         header: FlowHeader,
         target: Option<Target>,
         link: LinkHalf,
@@ -30,6 +30,7 @@ impl PairingRegistry {
         mut writer: Option<BoxWriter>,
         downlink_liveness: Option<BoxReader>,
     ) -> Result<Option<PairedTcp>, PairingError> {
+        let session_id = session_id.into();
         if let Err(err) =
             self.validate_header_and_link(session_id, header, FlowKind::Tcp, target.as_ref(), &link)
         {

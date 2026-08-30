@@ -293,11 +293,10 @@ impl Portal {
     /// Returns the effective startup URL that is logged for operators.
     pub(super) fn effective_url(&self) -> String {
         let base = format!(
-            "portal://{}?net={}&tls={}&alpn={}&rate={}&etar={}&dial={}&socks={}&next={}",
+            "portal://{}?net={}&tls={}&rate={}&etar={}&dial={}&socks={}&next={}",
             self.inner.endpoint_addr,
             self.inner.network_mode,
             self.inner.tls_mode,
-            self.inner.alpn,
             self.inner.rate_limit,
             self.inner.etar_limit,
             self.inner.outbound.dialer_ip(),

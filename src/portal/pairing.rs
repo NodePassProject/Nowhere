@@ -14,8 +14,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, OwnedSemaphorePermit};
 
 use crate::protocol::{
-    Carrier, FlowErrorCode, FlowHeader, FlowKind, FlowResult, FlowRole, SessionId, Target,
-    write_flow_result,
+    Carrier, FlowErrorCode, FlowHeader, FlowKind, FlowResult, FlowRole, Target, write_flow_result,
 };
 
 mod lifecycle;
@@ -28,7 +27,7 @@ pub(in crate::portal) use self::link::LinkGuard;
 pub(super) use self::link::{guarded_reader, guarded_writer};
 pub(super) use self::state::{
     BoxReader, BoxWriter, FlowLease, LinkHalf, LinkPath, PairedTcp, PairedUdp, QuicUdpReceiver,
-    UdpDown, UdpHalf, UdpUp,
+    SessionKey, UdpDown, UdpHalf, UdpUp,
 };
 use self::state::{FlowClaim, FlowKey, LinkCounts, Metadata, PendingTcp, PendingUdp};
 use self::tcp::reject_tcp_writer;
@@ -69,7 +68,7 @@ impl std::error::Error for PairingError {}
 pub(super) struct PairingRegistry {
     pub(super) tcp: Mutex<HashMap<FlowKey, PendingTcp>>,
     pub(super) udp: Mutex<HashMap<FlowKey, PendingUdp>>,
-    pub(super) links: StdMutex<HashMap<SessionId, LinkCounts>>,
+    pub(super) links: StdMutex<HashMap<SessionKey, LinkCounts>>,
     claims: StdMutex<HashMap<FlowKey, FlowClaim>>,
     rejections: StdMutex<HashMap<FlowKey, TerminalRejection>>,
     accepting: AtomicBool,
@@ -104,7 +103,7 @@ impl PairingRegistry {
         }
     }
 
-    fn active_quic_generation(&self, session_id: SessionId) -> Option<u64> {
+    fn active_quic_generation(&self, session_id: SessionKey) -> Option<u64> {
         self.links
             .lock()
             .expect("link registry poisoned")
@@ -114,9 +113,9 @@ impl PairingRegistry {
 
     fn validate_current_link_locked(
         &self,
-        session_id: SessionId,
+        session_id: SessionKey,
         link: &LinkHalf,
-        links: &HashMap<SessionId, LinkCounts>,
+        links: &HashMap<SessionKey, LinkCounts>,
     ) -> Result<(), PairingError> {
         let current = links.get(&session_id);
         let valid = match link.quic_generation {
@@ -137,12 +136,18 @@ impl PairingRegistry {
 
     fn validate_header_and_link(
         &self,
-        session_id: SessionId,
+        session_id: SessionKey,
         header: FlowHeader,
         expected_kind: FlowKind,
         target: Option<&Target>,
         link: &LinkHalf,
     ) -> Result<(), PairingError> {
+        if link.path.version != session_id.version {
+            return Err(PairingError::new(
+                FlowErrorCode::MetadataConflict,
+                "portal::pairing: carrier protocol version mismatch",
+            ));
+        }
         if header.kind != expected_kind {
             return Err(PairingError::new(
                 FlowErrorCode::InvalidRequest,
@@ -346,7 +351,7 @@ impl PairingRegistry {
 
     fn acquire_udp_permit(
         &self,
-        session_id: SessionId,
+        session_id: SessionKey,
     ) -> Result<Arc<OwnedSemaphorePermit>, PairingError> {
         let budget = self
             .links
@@ -385,12 +390,13 @@ impl PairingRegistry {
     /// Terminates a setup attempt and delivers the exact failure to an already
     /// selected downlink.  If OPEN failed before ATTACH arrived, retain a short
     /// tombstone so the later selected downlink receives the same result.
-    pub(super) async fn reject_flow_setup(
+    pub(super) async fn reject_flow_setup<S: Into<SessionKey>>(
         self: &Arc<Self>,
-        session_id: SessionId,
+        session_id: S,
         flow_id: u32,
         code: FlowErrorCode,
     ) {
+        let session_id = session_id.into();
         let key = FlowKey {
             session_id,
             flow_id,
