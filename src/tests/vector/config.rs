@@ -25,6 +25,61 @@ fn tcp_pair_defaults_to_dedicated_lanes() {
 }
 
 #[test]
+fn parses_all_route_policies_and_preserves_checkpoint_modes() {
+    let cases = [
+        ("tcp", "tcp", 0),
+        ("tcp", "udp", 1),
+        ("udp", "tcp", 2),
+        ("udp", "udp", 3),
+        ("mix", "tcp", 4),
+        ("mix", "udp", 5),
+        ("tcp", "mix", 6),
+        ("udp", "mix", 7),
+        ("mix", "mix", 8),
+    ];
+    for (up, down, mode) in cases {
+        let config = parse(&format!(
+            "vector://secret@example.com:2077?up={up}&down={down}&socks=:1080"
+        ))
+        .unwrap();
+        assert_eq!(config.up.to_string(), up);
+        assert_eq!(config.down.to_string(), down);
+        assert_eq!(config.checkpoint_mode(), mode);
+        assert!(
+            config
+                .effective_url()
+                .contains(&format!("up={up}&down={down}"))
+        );
+    }
+}
+
+#[test]
+fn mux_is_available_for_tcp_or_mix_and_normalized_for_pure_udp() {
+    for (up, down) in [
+        ("tcp", "tcp"),
+        ("tcp", "udp"),
+        ("udp", "tcp"),
+        ("mix", "tcp"),
+        ("mix", "udp"),
+        ("tcp", "mix"),
+        ("udp", "mix"),
+        ("mix", "mix"),
+    ] {
+        let config = parse(&format!(
+            "vector://secret@example.com:2077?up={up}&down={down}&mux=1&socks=:1080"
+        ))
+        .unwrap();
+        assert_eq!(config.mux, MuxMode::Enabled, "up={up} down={down}");
+    }
+
+    let config =
+        parse("vector://secret@example.com:2077?up=udp&down=udp&mux=1&socks=:1080").unwrap();
+    assert_eq!(config.mux, MuxMode::Disabled);
+    assert!(config.effective_url().contains("up=udp&down=udp"));
+    assert!(config.effective_url().contains("&mux=0&"));
+}
+
+#[test]
 fn parses_authenticated_socks_and_preserves_plus() {
     let config = parse(
         "vector://secret@example.com:2077?socks=user%2Bname:p%40ss%3Aword@%5B%3A%3A1%5D:1080",
@@ -56,7 +111,7 @@ fn ignores_unknown_values_and_keeps_the_first_duplicate() {
 
 #[test]
 fn rejects_invalid_selected_values_but_accepts_disabled_identity_options() {
-    assert!(parse("vector://secret@example.com:2077?socks=:1080&up=mix").is_err());
+    assert!(parse("vector://secret@example.com:2077?socks=:1080&up=auto").is_err());
     assert!(parse("vector://secret@example.com:2077?socks=:1080&rate=-1").is_err());
     for sni in ["", "none"] {
         let config = parse(&format!(

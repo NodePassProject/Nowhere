@@ -66,10 +66,15 @@ same authentication, FlowHeader, Target, setup result, pairing and limits.
 QUIC behavior is independent from the client Mux setting.
 
 Peers must also use matching credentials and reachable carrier families. A
-Portal with `next=` negotiates the upstream version independently and uses its
-`mux=0|1` selection for that hop. The upstream Mux selection defaults to `0`
-and is ignored without an enabled `next`.
+Portal with `next=` negotiates the upstream version independently and applies
+the same `tcp|udp|mix` policy as Vector for that hop. Mix resolves locally
+before transmission, and the peer receives a standard TT, TQ, QT, or QQ
+FlowHeader. Portal compatibility is independent of whether the client policy
+is fixed or mixed.
+The upstream Mux selection defaults to `0`, is ignored without an enabled
+`next`, and canonicalizes to `0` for a fixed `udp/udp` route.
 
 Interoperability tests exercise both peer roles: one endpoint as Portal and the
-other as client. A complete matrix includes all four `up`/`down` carrier
-combinations, both negotiated versions, dedicated TLS, and marked Mux.
+other as client. The complete 3×3 `up`/`down` policy matrix covers all four
+concrete routes and all five policies containing `mix`, together with both
+negotiated versions, dedicated TLS, and marked Mux.

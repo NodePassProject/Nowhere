@@ -19,13 +19,13 @@ use crate::protocol::{
 };
 
 use super::PortalClient;
-use super::config::CarrierMode;
 use super::flow::{
-    BoxReader, BoxWriter, OpenFlowError, PhysicalLane, SessionGuard, carrier, open_lane,
-    read_ready, write_header, write_open_request,
+    BoxReader, BoxWriter, OpenFlowError, PhysicalLane, SessionGuard, prepare_lanes,
+    prepare_with_fallback, read_ready, write_header, write_open_request,
 };
 use super::flow_id::FlowLease;
-use super::session::{MuxDirection, QueuedDatagram, QuicSession};
+use super::route::{ResolvedRoute, plan_route};
+use super::session::{QueuedDatagram, QuicSession};
 pub(crate) struct UdpTunnel {
     flow_id: u32,
     quic: Option<Arc<QuicSession>>,
@@ -201,63 +201,29 @@ pub(crate) async fn open_udp(
         .flow_ids
         .allocate()
         .map_err(OpenFlowError::Protocol)?;
+    let plan = plan_route(
+        client.config.up,
+        client.config.down,
+        client.route_seed,
+        lease.id(),
+    );
+    let prepare_client = client.clone();
+    let (prepared, lease, route) =
+        prepare_with_fallback(&client, lease, plan, move |flow_id, route| {
+            prepare_udp_attempt(prepare_client.clone(), flow_id, route)
+        })
+        .await?;
     let flow_id = lease.id();
-    let uplink = carrier(client.config.up);
-    let downlink = carrier(client.config.down);
-
-    let split_lanes = uplink != downlink;
-    let mut lanes = if !split_lanes {
-        vec![
-            open_lane(client.clone(), client.config.up, flow_id, MuxDirection::Up)
-                .await
-                .map_err(OpenFlowError::Transport)?,
-        ]
-    } else {
-        let (uplink_lane, downlink_lane) = tokio::join!(
-            open_lane(client.clone(), client.config.up, flow_id, MuxDirection::Up,),
-            open_lane(
-                client.clone(),
-                client.config.down,
-                flow_id,
-                MuxDirection::Down,
-            ),
-        );
-        vec![
-            uplink_lane.map_err(OpenFlowError::Transport)?,
-            downlink_lane.map_err(OpenFlowError::Transport)?,
-        ]
-    };
-
-    let quic = lanes.iter().find_map(|lane| lane._quic.clone());
+    let uplink = route.uplink;
+    let downlink = route.downlink;
+    let split_lanes = route.split();
+    let PreparedUdpAttempt {
+        mut lanes,
+        quic,
+        mut down_datagrams,
+    } = prepared;
     let version = lanes[0].version;
-    if lanes.iter().any(|lane| lane.version != version) {
-        return Err(OpenFlowError::Protocol(anyhow::anyhow!(
-            "vector::udp_flow::open_udp: split carriers negotiated different protocol versions"
-        )));
-    }
-    let mut down_datagrams = if client.config.down == CarrierMode::Udp {
-        Some(
-            quic.as_ref()
-                .expect("QUIC downlink has session")
-                .register_udp(flow_id)
-                .map_err(OpenFlowError::Transport)?,
-        )
-    } else {
-        None
-    };
-
-    if let Err(error) = setup_udp_lanes(
-        &client,
-        &mut lanes,
-        flow_id,
-        uplink,
-        downlink,
-        split_lanes,
-        target,
-        hops,
-    )
-    .await
-    {
+    if let Err(error) = setup_udp_lanes(&mut lanes, flow_id, route, target, hops).await {
         if let Some(quic) = &quic {
             quic.remove_udp(flow_id);
         }
@@ -275,13 +241,13 @@ pub(crate) async fn open_udp(
         return Err(OpenFlowError::Transport(error));
     }
 
-    let writer = if client.config.up == CarrierMode::Tcp {
+    let writer = if uplink == Carrier::TlsTcp {
         Some(lanes[0].take_writer())
     } else {
         None
     };
     let down_index = usize::from(split_lanes);
-    let reader = if client.config.down == CarrierMode::Tcp {
+    let reader = if downlink == Carrier::TlsTcp {
         Some(lanes[down_index].take_reader())
     } else {
         None
@@ -316,6 +282,35 @@ pub(crate) async fn open_udp(
         _flow_permit: Some(flow_permit),
         _lanes: lanes,
         _lease: Some(lease),
+    })
+}
+
+struct PreparedUdpAttempt {
+    lanes: Vec<PhysicalLane>,
+    quic: Option<Arc<QuicSession>>,
+    down_datagrams: Option<mpsc::Receiver<QueuedDatagram>>,
+}
+
+async fn prepare_udp_attempt(
+    client: Arc<PortalClient>,
+    flow_id: u32,
+    route: ResolvedRoute,
+) -> Result<PreparedUdpAttempt> {
+    let lanes = prepare_lanes(client, route, flow_id).await?;
+    let quic = lanes.iter().find_map(|lane| lane._quic.clone());
+    let down_datagrams = if route.downlink == Carrier::Quic {
+        Some(
+            quic.as_ref()
+                .expect("QUIC downlink has session")
+                .register_udp(flow_id)?,
+        )
+    } else {
+        None
+    };
+    Ok(PreparedUdpAttempt {
+        lanes,
+        quic,
+        down_datagrams,
     })
 }
 
@@ -377,15 +372,15 @@ impl UotReadState {
     reason = "setup keeps the wire header fields and lane shape explicit"
 )]
 async fn setup_udp_lanes(
-    client: &PortalClient,
     lanes: &mut [PhysicalLane],
     flow_id: u32,
-    uplink: Carrier,
-    downlink: Carrier,
-    split_lanes: bool,
+    route: ResolvedRoute,
     target: &crate::protocol::Target,
     hops: u8,
 ) -> std::result::Result<(), OpenFlowError> {
+    let uplink = route.uplink;
+    let downlink = route.downlink;
+    let split_lanes = route.split();
     let open = FlowHeader {
         role: if split_lanes {
             FlowRole::Open
@@ -422,7 +417,7 @@ async fn setup_udp_lanes(
         .map_err(OpenFlowError::Transport)?;
         lanes[1].mark_auth_sent();
     }
-    if client.config.up == CarrierMode::Udp {
+    if uplink == Carrier::Quic {
         timeout(
             handshake_timeout(),
             lanes[0]
@@ -440,7 +435,7 @@ async fn setup_udp_lanes(
         .map_err(|error| OpenFlowError::Transport(error.into()))?;
     }
     let down_index = usize::from(split_lanes);
-    if client.config.down == CarrierMode::Udp && down_index != 0 {
+    if downlink == Carrier::Quic && down_index != 0 {
         timeout(
             handshake_timeout(),
             lanes[down_index]

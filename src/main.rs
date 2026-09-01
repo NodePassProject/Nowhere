@@ -69,18 +69,20 @@ Portal parameters:
                    Omit or use none to disable.
   next=<portal>    Native upstream Portal: shared-key@host:port. Omit or use
                    none to disable. Mutually exclusive with socks.
-  up=tcp|udp       Native upstream upload carrier. Default: udp.
-  down=tcp|udp     Native upstream download carrier. Default: udp.
-  mux=0|1          Use TLS Mux for the native upstream. Default: 0.
+  up=tcp|udp|mix   Native upstream upload carrier. Mix chooses per flow.
+                   Default: udp.
+  down=tcp|udp|mix Native upstream download carrier. Mix chooses per flow.
+                   Default: udp.
+  mux=0|1          Use TLS Mux when the native route can select TCP. Default: 0.
   sni=<name|none>  Native upstream certificate DNS name. Default: none.
   pin=<sha256|none> Native upstream certificate fingerprint. Default: none.
                    These five options are ignored unless next is enabled.
   log=<level>      none, debug, info, warn, error, event. Default: info.
 
 Vector parameters:
-  up=tcp|udp       Upload carrier. Default: udp.
-  down=tcp|udp     Download carrier. Default: udp.
-  mux=0|1          Use TLS Mux for TLS/TCP carriers. Default: 0.
+  up=tcp|udp|mix   Upload carrier. Mix chooses per flow. Default: udp.
+  down=tcp|udp|mix Download carrier. Mix chooses per flow. Default: udp.
+  mux=0|1          Use TLS Mux when either direction can select TCP. Default: 0.
   sni=<name|none>  Verify the certificate for a DNS name. Empty, omitted, or
                    none disables certificate validation. Default: none.
   pin=<sha256|none> Pin the server certificate SHA-256 fingerprint. Empty,
@@ -117,6 +119,7 @@ Environment:
   NOW_MAX_PENDING_PAIRS     Maximum pending logical-flow IDs per session.
   NOW_FLOW_PAIR_TIMEOUT     Timeout for completing a split logical flow.
   NOW_FLOW_SETUP_TIMEOUT    Timeout for waiting for a logical flow to become ready.
+  NOW_MIX_FALLBACK_TIMEOUT  Primary Mix route preparation budget. Default: 1s.
   NOW_TCP_DATA_BUF_SIZE     TCP relay buffer size.
   NOW_UDP_DATA_BUF_SIZE     UDP target receive buffer size.
   NOW_TCP_DIAL_TIMEOUT      TCP target dial timeout.

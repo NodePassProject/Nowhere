@@ -12,6 +12,11 @@ fn vector_constructs_for_each_carrier_pair() {
         ("tcp", "udp"),
         ("udp", "tcp"),
         ("udp", "udp"),
+        ("mix", "tcp"),
+        ("mix", "udp"),
+        ("tcp", "mix"),
+        ("udp", "mix"),
+        ("mix", "mix"),
     ] {
         let url = Url::parse(&format!(
             "vector://secret@127.0.0.1:2077?up={up}&down={down}&socks=127.0.0.1:1080"

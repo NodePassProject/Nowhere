@@ -76,10 +76,21 @@ When a physical carrier closes, its logical flows close. SSH, download, and
 WebSocket clients reconnect according to their application policy after
 Wi-Fi/5G changes, NAT rebuilds, or TCP resets.
 
-Failure domains remain carrier-local: one dedicated TLS lane owns one logical
+Failure domains are carrier-local: one dedicated TLS lane owns one logical
 lane; one Mux Shard owns its assigned streams; one QUIC connection owns all of
 its reliable streams and DATAGRAM routes. Closing one Shard does not close a
 sibling Shard from the same authenticated session.
+
+For a policy containing `mix`, the primary route must acquire every lane within
+`NOW_MIX_FALLBACK_TIMEOUT` (default `1s`). Failure or timeout closes its local
+resources and attempts the other allowed route with a new flow ID. The runtime
+carrier event records both routes and the first error. Selection has no
+cross-flow health state or carrier race, and READY or payload failures do not
+trigger fallback. The fallback route uses normal transport deadlines.
+
+Vector CHECK_POINT reports the configured policy rather than an individual
+flow decision: `0..8` map to `tcp/tcp`, `tcp/udp`, `udp/tcp`, `udp/udp`,
+`mix/tcp`, `mix/udp`, `tcp/mix`, `udp/mix`, and `mix/mix`.
 
 ## Shutdown
 
@@ -102,6 +113,8 @@ Functional validation belongs on every deployment platform:
 - Portal reaches `READY` on every configured listener;
 - Vector accepts SOCKS5 CONNECT and UDP ASSOCIATE;
 - every configured uplink/downlink carrier combination reaches a target;
+- every Mix policy resolves only to its documented concrete pairs and cleans
+  up a failed pre-commit attempt;
 - negotiated protocol version, credentials, certificate verification, and
   native chains match at both ends;
 - flow limits fail promptly instead of waiting for capacity;

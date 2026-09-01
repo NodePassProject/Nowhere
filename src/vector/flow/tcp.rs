@@ -103,14 +103,24 @@ pub(crate) async fn open_tcp(
         .flow_ids
         .allocate()
         .map_err(OpenFlowError::Protocol)?;
+    let plan = crate::vector::route::plan_route(
+        client.config.up,
+        client.config.down,
+        client.route_seed,
+        lease.id(),
+    );
+    let prepare_client = client.clone();
+    let (mut lanes, lease, route) =
+        prepare_with_fallback(&client, lease, plan, move |flow_id, route| {
+            prepare_lanes(prepare_client.clone(), route, flow_id)
+        })
+        .await?;
     let flow_id = lease.id();
-    let uplink = carrier(client.config.up);
-    let downlink = carrier(client.config.down);
+    let uplink = route.uplink;
+    let downlink = route.downlink;
 
-    if uplink == downlink {
-        let mut lane = open_lane(client.clone(), client.config.up, flow_id, MuxDirection::Up)
-            .await
-            .map_err(OpenFlowError::Transport)?;
+    if !route.split() {
+        let mut lane = lanes.pop().expect("duplex lane");
         let header = FlowHeader {
             role: FlowRole::Duplex,
             flow_id,
@@ -147,22 +157,8 @@ pub(crate) async fn open_tcp(
         });
     }
 
-    let (uplink_result, downlink_result) = tokio::join!(
-        open_lane(client.clone(), client.config.up, flow_id, MuxDirection::Up,),
-        open_lane(
-            client.clone(),
-            client.config.down,
-            flow_id,
-            MuxDirection::Down,
-        ),
-    );
-    let mut uplink_lane = uplink_result.map_err(OpenFlowError::Transport)?;
-    let mut downlink_lane = downlink_result.map_err(OpenFlowError::Transport)?;
-    if uplink_lane.version != downlink_lane.version {
-        return Err(OpenFlowError::Protocol(anyhow!(
-            "vector::flow::open_tcp: split carriers negotiated different protocol versions"
-        )));
-    }
+    let mut downlink_lane = lanes.pop().expect("downlink lane");
+    let mut uplink_lane = lanes.pop().expect("uplink lane");
     let version = uplink_lane.version;
     let open_header = FlowHeader {
         role: FlowRole::Open,

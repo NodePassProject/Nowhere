@@ -206,8 +206,8 @@ fn disabled_next_ignores_all_native_upstream_options() {
 #[test]
 fn enabled_next_validates_only_effective_upstream_options() {
     for suffix in [
-        "up=mix",
-        "down=mix",
+        "up=auto",
+        "down=tls",
         "mux=",
         "mux=2",
         "mux=true",
@@ -221,6 +221,36 @@ fn enabled_next_validates_only_effective_upstream_options() {
             test_logger(),
         );
         assert!(result.is_err(), "upstream options accepted: {suffix}");
+    }
+}
+
+#[test]
+fn native_next_accepts_mix_and_normalizes_pure_udp_mux() {
+    for (up, down, mux) in [
+        ("mix", "tcp", 1),
+        ("mix", "udp", 1),
+        ("tcp", "mix", 1),
+        ("udp", "mix", 1),
+        ("mix", "mix", 1),
+        ("udp", "udp", 0),
+    ] {
+        let portal = Portal::new(
+            Url::parse(&format!(
+                "portal://relay-key@127.0.0.1:2077?next=secret@origin.example:2080&up={up}&down={down}&mux=1"
+            ))
+            .unwrap(),
+            test_logger(),
+        )
+        .unwrap();
+        assert_eq!(
+            portal.inner.outbound.next_transport().as_deref(),
+            Some(format!("up={up} down={down} mux={mux} sni=none pin=none").as_str()),
+        );
+        assert!(
+            portal
+                .effective_url()
+                .contains(&format!("&up={up}&down={down}&mux={mux}"))
+        );
     }
 }
 

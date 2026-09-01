@@ -74,17 +74,20 @@ operator wants only one carrier family.
 
 ### One flow, two transport decisions
 
-Vector's `up` and `down` parameters form four first-class modes:
+Vector's `up` and `down` parameters accept `tcp`, `udp`, or `mix`:
 
-| Mode | Uplink | Downlink |
-| --- | --- | --- |
-| `tcp/tcp` | TLS/TCP | TLS/TCP |
-| `tcp/udp` | TLS/TCP | QUIC/UDP |
-| `udp/tcp` | QUIC/UDP | TLS/TCP |
-| `udp/udp` | QUIC/UDP | QUIC/UDP |
+| `up` ↓ / `down` → | `tcp` | `udp` | `mix` |
+|---|---|---|---|
+| `tcp` | TT | TQ | TT ↔ TQ |
+| `udp` | QT | QQ | QT ↔ QQ |
+| `mix` | TT ↔ QT | TQ ↔ QQ | TT ↔ QQ |
 
-TCP and UDP share the same authenticated flow identity across all four modes.
-See the [wire protocol](docs/protocol.md) for carrier framing and pairing.
+T means TLS/TCP and Q means QUIC/UDP, with uplink first. Each mixed cell makes
+one stateless 50/50 choice per flow; `mix/mix` produces only TT or QQ. The
+primary route has a `NOW_MIX_FALLBACK_TIMEOUT` budget (default `1s`), then the
+other route is attempted once with a new flow ID. FlowHeader carries only the
+resolved concrete pair, and no fallback occurs after its write begins. Portal
+`next=` applies the same policy independently per hop.
 
 ## Engineered for a small data path
 

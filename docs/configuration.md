@@ -19,8 +19,8 @@ portal://shared-key@host:port?net=mix&tls=1&log=info
 | `dial` | `auto` or local IP | `auto` |
 | `socks` | outbound SOCKS5 configuration | disabled |
 | `next` | `shared-key@host:port` | disabled |
-| `up`, `down` | native next-hop carrier: `tcp` or `udp` | `udp` |
-| `mux` | native next-hop TLS: `0` dedicated lanes, `1` Mux | `0` |
+| `up`, `down` | native next-hop policy: `tcp`, `udp`, or `mix` | `udp` |
+| `mux` | native next-hop TLS: `0` dedicated lanes, `1` Mux when TCP is possible | `0` |
 | `sni` | native next-hop verified DNS name, or `none` | `none` |
 | `pin` | native next-hop certificate SHA-256 pin, or `none` | `none` |
 | `log` | `none`, `debug`, `info`, `warn`, `error`, `event` | `info` |
@@ -38,7 +38,7 @@ vector://shared-key@host:port?up=tcp&down=tcp&socks=127.0.0.1:1080
 
 | Query | Values | Default |
 |---|---|---|
-| `up`, `down` | `tcp` or `udp` | `udp` |
+| `up`, `down` | `tcp`, `udp`, or `mix` | `udp` |
 | `mux` | `0` dedicated TLS lanes, `1` TLS Mux | `0` |
 | `sni` | verified DNS name, or `none` | `none` |
 | `pin` | certificate SHA-256 pin, or `none` | `none` |
@@ -68,13 +68,40 @@ Vector URL
 ```
 
 `rate` limits client-to-target traffic and `etar` limits target-to-client
-traffic. The direction names retain the same meaning through a native Portal
+traffic. The direction names have the same meaning through a native Portal
 chain.
+
+`mix` is a per-flow client policy. A single mixed direction randomly selects
+TLS/TCP or QUIC/UDP; a fixed direction always uses its configured carrier.
+`mix/mix` uses one correlated choice and resolves only to `tcp/tcp` or
+`udp/udp`. The resolved pair is fixed for the flow and is the only value
+written to FlowHeader. Each native Portal hop resolves its policy
+independently.
+
+| `up` ↓ / `down` → | `tcp` | `udp` | `mix` |
+|---|---|---|---|
+| `tcp` | TT | TQ | TT ↔ TQ |
+| `udp` | QT | QQ | QT ↔ QQ |
+| `mix` | TT ↔ QT | TQ ↔ QQ | TT ↔ QQ |
+
+T means TLS/TCP and Q means QUIC/UDP; uplink is written first. `↔` marks the
+two routes eligible for the initial random choice and the single pre-commit
+fallback.
+
+The primary route must acquire all lanes within `NOW_MIX_FALLBACK_TIMEOUT`
+(default `1s`). Failure or timeout discards its local resources and starts the
+other allowed route once with a new flow ID. READY failures, target dial
+failures, and established payload failures do not trigger fallback. The policy
+has no health score or circuit breaker. `net=mix` is the recommended upstream;
+a single-family listener may consume the budget on each affected flow or leave
+no legal route for a fixed direction.
 
 With `mux=1`, Shards open lazily according to active flow pressure. New flows
 use the least-loaded shard; a shard carries 4 active flows before another
 opens and closes after 30 seconds fully idle. With `mux=0`, every TLS-carried
-Flow owns one on-demand lane that closes with the Flow.
+Flow owns one on-demand lane that closes with the Flow. Mux applies when at
+least one direction is `tcp` or `mix`. `udp/udp&mux=1` canonicalizes to
+`mux=0`.
 
 Portal and Vector offer fixed ALPNs in the order `nw2`, `now/1`. V2 peers select
 `nw2`; a V2 peer talking to a default V1 peer selects `now/1`. The removed
@@ -113,6 +140,7 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 | `NOW_MAX_PENDING_PAIRS` | `1024` | Pending split-flow pairs per Portal session |
 | `NOW_FLOW_PAIR_TIMEOUT` | `15s` | Portal split-flow pairing deadline |
 | `NOW_FLOW_SETUP_TIMEOUT` | `20s` | Client wait for `SetupResult` |
+| `NOW_MIX_FALLBACK_TIMEOUT` | `1s` | Primary Mix route preparation budget before fallback |
 | `NOW_TCP_DATA_BUF_SIZE` | `32 KiB` | Per-direction TCP relay buffer size |
 | `NOW_UDP_DATA_BUF_SIZE` | `64 KiB` | UDP target receive buffer size |
 | `NOW_TCP_DIAL_TIMEOUT` | `15s` | Portal TCP target dial deadline |

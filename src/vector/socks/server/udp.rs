@@ -335,17 +335,17 @@ pub(super) fn start_access(
     client: Option<String>,
     target: &SocksAddress,
 ) -> AccessSpan {
-    let uplink = carrier(vector.config.up);
-    let downlink = carrier(vector.config.down);
+    let uplink = configured_carrier(vector.config.up);
+    let downlink = configured_carrier(vector.config.down);
     vector.telemetry.start_access(|| {
         let client_path = client.as_deref().unwrap_or("<unknown>");
         let target = target.to_string();
         let path = format!(
             "UP[{}] {client_path} -> {} -> {} -> {target} | DOWN[{}] {target} -> {} -> {} -> {client_path}",
-            carrier_name(uplink),
+            configured_carrier_name(vector.config.up),
             vector.config.socks.endpoint(),
             vector.config.portal_endpoint(),
-            carrier_name(downlink),
+            configured_carrier_name(vector.config.down),
             vector.config.portal_endpoint(),
             vector.config.socks.endpoint(),
         );
@@ -360,8 +360,8 @@ pub(super) fn start_access(
             client,
             path_peers,
             target: target.clone(),
-            initial_uplink: Some(uplink),
-            initial_downlink: Some(downlink),
+            initial_uplink: uplink,
+            initial_downlink: downlink,
             path: Some(path),
         }
     })

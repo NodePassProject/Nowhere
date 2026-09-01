@@ -30,7 +30,9 @@ use crate::telemetry::{
 };
 
 use super::super::VectorInner;
-use super::super::flow::{carrier, carrier_name, open_tcp, relay_tcp, to_target};
+use super::super::flow::{
+    carrier_name, configured_carrier, configured_carrier_name, open_tcp, relay_tcp, to_target,
+};
 use super::super::udp_flow::{UdpTunnel, open_udp};
 
 #[path = "server/udp.rs"]

@@ -3,6 +3,7 @@
 
 //! End-to-end Portal/Vector carrier matrix through Vector's SOCKS5 ingress.
 
+use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -18,15 +19,22 @@ use url::Url;
 
 use crate::common::{LogLevel, Logger};
 use crate::portal::Portal;
+use crate::protocol::{Carrier, Target};
+use crate::telemetry::{InstanceRole, TelemetryHub};
 use crate::transport::Stats;
-use crate::vector::Vector;
+use crate::vector::{PortalClient, PortalClientConfig, Vector};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
-const CARRIER_MATRIX: [(&str, &str); 4] = [
+const ROUTE_POLICY_MATRIX: [(&str, &str); 9] = [
     ("tcp", "tcp"),
     ("tcp", "udp"),
     ("udp", "tcp"),
     ("udp", "udp"),
+    ("mix", "tcp"),
+    ("mix", "udp"),
+    ("tcp", "mix"),
+    ("udp", "mix"),
+    ("mix", "mix"),
 ];
 
 struct TestRuntime {
@@ -427,9 +435,40 @@ async fn read_ipv4_reply_code(stream: &mut TcpStream) -> u8 {
     reply[1]
 }
 
+fn mix_test_client(
+    portal_port: u16,
+    session_id: [u8; crate::protocol::SESSION_ID_LEN],
+) -> Arc<PortalClient> {
+    let query = HashMap::from([
+        ("up".to_owned(), "mix".to_owned()),
+        ("down".to_owned(), "mix".to_owned()),
+    ]);
+    let (config, credentials) = PortalClientConfig::from_upstream_authority(
+        &format!("secret@127.0.0.1:{portal_port}"),
+        &query,
+        "auto",
+    )
+    .unwrap();
+    PortalClient::with_session_id(
+        config,
+        &credentials,
+        Arc::new(Stats::default()),
+        false,
+        TelemetryHub::for_current_process(
+            InstanceRole::Vector,
+            "test",
+            "up=mix down=mix",
+            Duration::from_secs(1),
+        ),
+        CancellationToken::new(),
+        session_id,
+    )
+    .unwrap()
+}
+
 #[tokio::test]
-async fn vector_tcp_relays_every_carrier_pair() {
-    for (up, down) in CARRIER_MATRIX {
+async fn vector_tcp_relays_every_route_policy() {
+    for (up, down) in ROUTE_POLICY_MATRIX {
         let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let target_address = target.local_addr().unwrap();
         let echo = tokio::spawn(async move {
@@ -461,8 +500,8 @@ async fn vector_tcp_relays_every_carrier_pair() {
 }
 
 #[tokio::test]
-async fn vector_udp_associate_relays_every_carrier_pair() {
-    for (up, down) in CARRIER_MATRIX {
+async fn vector_udp_associate_relays_every_route_policy() {
+    for (up, down) in ROUTE_POLICY_MATRIX {
         let target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let target_address = target.local_addr().unwrap();
         let payload = vec![0x40 | (up == "udp") as u8 | (((down == "udp") as u8) << 1); 4_000];
@@ -500,8 +539,154 @@ async fn vector_udp_associate_relays_every_carrier_pair() {
 }
 
 #[tokio::test]
-async fn native_portal_chain_relays_tcp_and_udp_for_every_upstream_carrier_pair() {
-    for (up, down) in CARRIER_MATRIX {
+async fn mix_mix_retries_quic_after_tls_fails_before_commit() {
+    let (portal_port, tcp_reservation, udp_reservation) = reserve_mixed_port().await;
+    let portal = Portal::new(
+        Url::parse(&format!(
+            "portal://secret@127.0.0.1:{portal_port}?log=none&net=udp"
+        ))
+        .unwrap(),
+        Logger::new(LogLevel::None, false),
+    )
+    .unwrap();
+    drop(udp_reservation);
+    let endpoint = portal.listen_endpoints().unwrap().pop().unwrap();
+    drop(tcp_reservation);
+    let shutdown = CancellationToken::new();
+    let portal_task = tokio::spawn(crate::portal::listener::accept_endpoint_loop(
+        portal.inner.clone(),
+        endpoint.clone(),
+        shutdown.clone(),
+        shutdown.clone(),
+    ));
+
+    let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target_address = target.local_addr().unwrap();
+    let echo = tokio::spawn(async move {
+        let (mut stream, _) = target.accept().await.unwrap();
+        let mut ping = [0u8; 4];
+        stream.read_exact(&mut ping).await.unwrap();
+        stream.write_all(b"pong").await.unwrap();
+    });
+
+    // seed=3 and initial flow_id=1 produce the TLS-first SplitMix64 bit.
+    let mut session_id = [0u8; crate::protocol::SESSION_ID_LEN];
+    session_id[0] = 3;
+    let client = mix_test_client(portal_port, session_id);
+
+    let mut tunnel = timeout(
+        TEST_TIMEOUT,
+        client.open_tcp(&Target::ip(target_address).unwrap(), 0),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(tunnel.carriers(), (Carrier::Quic, Carrier::Quic));
+    tunnel.write_all(b"ping").await.unwrap();
+    let mut pong = [0u8; 4];
+    tunnel.read_exact(&mut pong).await.unwrap();
+    assert_eq!(&pong, b"pong");
+
+    drop(tunnel);
+    echo.await.unwrap();
+    client
+        .close(tokio::time::Instant::now() + TEST_TIMEOUT)
+        .await;
+
+    let udp_target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let udp_target_address = udp_target.local_addr().unwrap();
+    let udp_echo = tokio::spawn(async move {
+        let mut packet = [0u8; 4];
+        let (size, peer) = udp_target.recv_from(&mut packet).await.unwrap();
+        assert_eq!(&packet[..size], b"ping");
+        udp_target.send_to(b"pong", peer).await.unwrap();
+    });
+    let mut session_id = [0u8; crate::protocol::SESSION_ID_LEN];
+    session_id[0] = 3;
+    let udp_client = mix_test_client(portal_port, session_id);
+    let mut udp_tunnel = timeout(
+        TEST_TIMEOUT,
+        udp_client.open_udp(&Target::ip(udp_target_address).unwrap(), 0),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(udp_tunnel.carriers(), (Carrier::Quic, Carrier::Quic));
+    assert!(udp_tunnel.send(b"ping").await.unwrap());
+    let mut payload = Vec::new();
+    let packet = udp_tunnel.recv_into(&mut payload).await.unwrap().unwrap();
+    assert_eq!(packet.payload(&payload), b"pong");
+    udp_tunnel.close().await;
+    udp_echo.await.unwrap();
+    udp_client
+        .close(tokio::time::Instant::now() + TEST_TIMEOUT)
+        .await;
+
+    shutdown.cancel();
+    endpoint.close(quinn::VarInt::from_u32(0), b"");
+    portal_task.abort();
+    let _ = portal_task.await;
+}
+
+#[tokio::test]
+async fn mix_mix_retries_tls_after_quic_fails_before_commit() {
+    let (portal_port, tcp_reservation, udp_reservation) = reserve_mixed_port().await;
+    let portal = Portal::new(
+        Url::parse(&format!(
+            "portal://secret@127.0.0.1:{portal_port}?log=none&net=tcp"
+        ))
+        .unwrap(),
+        Logger::new(LogLevel::None, false),
+    )
+    .unwrap();
+    drop(tcp_reservation);
+    let listener = portal.listen_tcp_listeners().unwrap().pop().unwrap();
+    drop(udp_reservation);
+    let shutdown = CancellationToken::new();
+    let portal_task = tokio::spawn(crate::portal::listener::accept_tcp_loop(
+        portal.inner.clone(),
+        listener,
+        shutdown.clone(),
+        shutdown.clone(),
+    ));
+
+    let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target_address = target.local_addr().unwrap();
+    let echo = tokio::spawn(async move {
+        let (mut stream, _) = target.accept().await.unwrap();
+        let mut ping = [0u8; 4];
+        stream.read_exact(&mut ping).await.unwrap();
+        stream.write_all(b"pong").await.unwrap();
+    });
+
+    // seed=0 and initial flow_id=1 produce the QUIC-first SplitMix64 bit.
+    let client = mix_test_client(portal_port, [0; crate::protocol::SESSION_ID_LEN]);
+    let mut tunnel = timeout(
+        TEST_TIMEOUT,
+        client.open_tcp(&Target::ip(target_address).unwrap(), 0),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(tunnel.carriers(), (Carrier::TlsTcp, Carrier::TlsTcp));
+    tunnel.write_all(b"ping").await.unwrap();
+    let mut pong = [0u8; 4];
+    tunnel.read_exact(&mut pong).await.unwrap();
+    assert_eq!(&pong, b"pong");
+
+    drop(tunnel);
+    echo.await.unwrap();
+    client
+        .close(tokio::time::Instant::now() + TEST_TIMEOUT)
+        .await;
+    shutdown.cancel();
+    portal_task.abort();
+    let _ = portal_task.await;
+}
+
+#[tokio::test]
+async fn native_portal_chain_relays_tcp_and_udp_for_every_upstream_route_policy() {
+    for (up, down) in ROUTE_POLICY_MATRIX {
         let tcp_target = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let tcp_address = tcp_target.local_addr().unwrap();
         let tcp_echo = tokio::spawn(async move {

@@ -62,8 +62,16 @@ on one hop does not constrain the carrier choice on another hop.
 | `mux=1` | Shared bounded Mux | Native streams/datagrams | Assigned flows close with the carrier |
 
 V2 peers negotiate the fixed `nw2` ALPN and fall back to the default V1 value
-`now/1` for compatibility. All four uplink/downlink carrier combinations use
-the same FlowHeader, Target, pairing, and relay semantics in this release.
-Portal accepts dedicated and `0xff`-marked Mux connections on the same TLS
-listener. The client Mux setting is available on Vector and on Portal when
-`next` is enabled.
+`now/1` for compatibility. The client-side route-policy matrix is:
+
+| `up` ↓ / `down` → | `tcp` | `udp` | `mix` |
+|---|---|---|---|
+| `tcp` | TT | TQ | TT ↔ TQ |
+| `udp` | QT | QQ | QT ↔ QQ |
+| `mix` | TT ↔ QT | TQ ↔ QQ | TT ↔ QQ |
+
+T means TLS/TCP and Q means QUIC/UDP, with uplink first. All four concrete
+routes use the same FlowHeader, Target, pairing, and relay semantics. `mix` is
+a local Vector or Portal-`next` policy; FlowHeader contains only the resolved
+concrete route. Portal accepts dedicated and `0xff`-marked Mux connections on
+the same TLS listener.

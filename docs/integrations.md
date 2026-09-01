@@ -44,9 +44,15 @@ An alternate client provides:
 - matching OPEN and ATTACH metadata for split-carrier flows;
 - bounded retry and reconnection behavior after carrier failure.
 
+The `mix` URL policy is client-side only and resolves once to TT, TQ, QT, or QQ.
+The primary pair has a one-second preparation budget by default. Failure or
+timeout selects the other allowed pair once with a new flow ID. A client never
+replays a request after any FlowHeader or Target bytes may have been accepted.
+
 ## Chained Portal
 
 `next=shared-key@host:port` creates the same transport-only client engine used
-by Vector. `mux=0|1` selects dedicated or Mux TLS for that upstream client and
-defaults to `0`; it has no effect without `next`. Authentication, flow setup,
-bounds, and failure semantics remain identical at every hop.
+by Vector, including `up/down=mix` and pre-commit fallback. `mux=0|1` selects
+dedicated or Mux TLS when TCP can be selected and defaults to `0`; it has no
+effect without `next` and canonicalizes to `0` for `udp/udp`. Authentication,
+flow setup, bounds, and failure semantics are identical at every hop.

@@ -119,8 +119,10 @@ reliable control stream has received `READY`.
 
 Client `mux=0` originates dedicated TLS lanes. Client `mux=1` originates Mux
 TLS carriers. This client setting is available on Vector and on Portal when
-`next` is enabled; it defaults to `0`. Portal accepts both TLS forms on the
-same listener and selects the decoder from the first byte after AuthFrame.
+`next` is enabled; it defaults to `0` and applies only when the configured
+policy can select TLS/TCP. A fixed `udp/udp&mux=1` URL is canonicalized to
+`mux=0`. Portal accepts both TLS forms on the same listener and selects the
+decoder from the first byte after AuthFrame.
 
 ## 2. Connection authentication
 
@@ -303,6 +305,21 @@ Role semantics:
 When `up` and `down` select the same carrier, one DUPLEX lane is used. When
 they differ, Portal pairs OPEN and ATTACH by `(session_id, flow_id)`. Their
 kind, carrier selection, and hop metadata must agree.
+
+FlowHeader has no `mix` carrier value. Vector and a Portal `next` client resolve
+the command-URL policy locally before opening a logical flow.
+
+| `up` ↓ / `down` → | `tcp` | `udp` | `mix` |
+|---|---|---|---|
+| `tcp` | TT | TQ | TT ↔ TQ |
+| `udp` | QT | QQ | QT ↔ QQ |
+| `mix` | TT ↔ QT | TQ ↔ QQ | TT ↔ QQ |
+
+T means TLS/TCP and Q means QUIC/UDP, with uplink first. `mix/mix` therefore
+resolves only to TT or QQ. The primary pair must acquire all physical lanes
+within `NOW_MIX_FALLBACK_TIMEOUT` (default `1s`). Failure or timeout discards
+the attempt and starts the other allowed pair with a new flow ID. Starting the
+FlowHeader or Target write commits the flow and disables fallback.
 
 ```text
 Same carrier

@@ -57,6 +57,7 @@ impl FlowIdAllocator {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct FlowLease {
     id: FlowId,
     allocator: Arc<FlowIdAllocator>,

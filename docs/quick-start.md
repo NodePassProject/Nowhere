@@ -44,7 +44,27 @@ QUIC in both directions:
 nowhere 'vector://secret@127.0.0.1:2077?up=udp&down=udp&socks=127.0.0.1:1080'
 ```
 
-Asymmetric examples use `up=tcp&down=udp` or `up=udp&down=tcp`.
+The full route-policy matrix is:
+
+| `up` ↓ / `down` → | `tcp` | `udp` | `mix` |
+|---|---|---|---|
+| `tcp` | TT | TQ | TT ↔ TQ |
+| `udp` | QT | QQ | QT ↔ QQ |
+| `mix` | TT ↔ QT | TQ ↔ QQ | TT ↔ QQ |
+
+T means TLS/TCP and Q means QUIC/UDP, with uplink first. A `↔` cell chooses one
+route per flow and can use the other once if primary preparation fails.
+
+Stateless per-flow selection across full-duplex TLS and QUIC uses:
+
+```text
+nowhere 'vector://secret@127.0.0.1:2077?up=mix&down=mix&socks=127.0.0.1:1080'
+```
+
+`mix/mix` chooses `tcp/tcp` or `udp/udp` once per flow. A single mixed
+direction can resolve to a split carrier pair. `net=mix` makes every matrix
+cell reachable. The primary choice has a `NOW_MIX_FALLBACK_TIMEOUT` budget
+(default `1s`).
 
 TLS Mux is enabled on Vector. Portal recognizes the marked carrier
 automatically:
@@ -55,7 +75,8 @@ nowhere 'vector://secret@127.0.0.1:2077?up=tcp&down=tcp&mux=1&socks=127.0.0.1:10
 
 Nowhere 2 negotiates `nw2` with another V2 peer and falls back to `now/1` when
 connecting to a default V1 peer. There is no configurable ALPN parameter; Mux
-selection remains independent from protocol version.
+selection is independent from protocol version.
+`udp/udp&mux=1` is canonicalized to `mux=0` because no TLS lane can use it.
 
 ## 3. Use SOCKS5
 

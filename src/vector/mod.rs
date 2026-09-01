@@ -7,6 +7,7 @@ mod config;
 mod event;
 pub(crate) mod flow;
 mod flow_id;
+mod route;
 mod session;
 mod socks;
 mod tls;
@@ -69,6 +70,7 @@ pub(crate) struct PortalClient {
     udp_flow_permits: Arc<Semaphore>,
     tls_manager: Arc<TlsManager>,
     quic: Arc<QuicManager>,
+    route_seed: u64,
     shutdown: CancellationToken,
 }
 
@@ -81,14 +83,35 @@ impl PortalClient {
         telemetry: Arc<TelemetryHub>,
         shutdown: CancellationToken,
     ) -> Result<Arc<Self>> {
-        let tls = ClientTls::new(&config)
-            .context("vector::PortalClient::new: failed to build client TLS policy")?;
         let mut session_id = [0u8; SESSION_ID_LEN];
         getrandom::fill(&mut session_id).map_err(|error| {
             anyhow::anyhow!(
                 "vector::PortalClient::new: failed to generate logical session ID: {error}"
             )
         })?;
+        Self::with_session_id(
+            config,
+            credentials,
+            stats,
+            account_stats,
+            telemetry,
+            shutdown,
+            session_id,
+        )
+    }
+
+    pub(crate) fn with_session_id(
+        config: PortalClientConfig,
+        credentials: &Credentials,
+        stats: Arc<Stats>,
+        account_stats: bool,
+        telemetry: Arc<TelemetryHub>,
+        shutdown: CancellationToken,
+        session_id: [u8; SESSION_ID_LEN],
+    ) -> Result<Arc<Self>> {
+        let tls = ClientTls::new(&config)
+            .context("vector::PortalClient::new: failed to build client TLS policy")?;
+        let route_seed = route::seed_from_session(session_id);
         let latency = LatencyTracker::new();
         let signals = ClientSignals::new(stats.clone(), telemetry.clone(), latency.clone());
         let tls_manager = TlsManager::new(
@@ -119,6 +142,7 @@ impl PortalClient {
             udp_flow_permits: Arc::new(Semaphore::new(udp_limit)),
             tls_manager,
             quic,
+            route_seed,
             shutdown,
         }))
     }

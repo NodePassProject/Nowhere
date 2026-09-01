@@ -3,6 +3,7 @@
 
 //! Logical TCP flow setup across every carrier combination.
 
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -19,7 +20,9 @@ use crate::common::socks::{
     REPLY_CONNECTION_NOT_ALLOWED, REPLY_GENERAL_FAILURE, REPLY_HOST_UNREACHABLE,
     REPLY_NETWORK_UNREACHABLE, REPLY_SUCCEEDED, REPLY_TTL_EXPIRED, SocksAddress,
 };
-use crate::common::{LatencyGuard, flow_setup_timeout, handshake_timeout, tcp_read_timeout};
+use crate::common::{
+    LatencyGuard, flow_setup_timeout, handshake_timeout, mix_fallback_timeout, tcp_read_timeout,
+};
 use crate::protocol::{
     AUTH_FRAME_LEN, AuthFrame, Carrier, FLOW_HEADER_LEN, FlowHeader, FlowKind, FlowResult,
     FlowRole, ProtocolVersion, SetupResult, TARGET_MAX_ENCODED_LEN, Target, encode_target_into,
@@ -29,6 +32,7 @@ use crate::telemetry::{AccessOutcome, AccessSpan, RuntimeEvent, RuntimeKind, Run
 
 use super::config::CarrierMode;
 use super::flow_id::FlowLease;
+use super::route::{ResolvedRoute, RoutePlan};
 use super::session::{LinkGuard, MuxDirection, OpenedTls, QuicSession};
 use super::{PortalClient, VectorInner};
 mod tcp;
@@ -82,12 +86,12 @@ impl Drop for PhysicalLane {
 
 pub(super) async fn open_lane(
     client: Arc<PortalClient>,
-    mode: CarrierMode,
+    carrier: Carrier,
     flow_id: u32,
     direction: MuxDirection,
 ) -> Result<PhysicalLane> {
-    match mode {
-        CarrierMode::Tcp => {
+    match carrier {
+        Carrier::TlsTcp => {
             let opened = client
                 .tls_manager
                 .open(flow_id, direction)
@@ -129,7 +133,7 @@ pub(super) async fn open_lane(
                 }
             }
         }
-        CarrierMode::Udp => {
+        Carrier::Quic => {
             let session = match client.quic.get().await {
                 Ok(session) => session,
                 Err(error) => {
@@ -164,6 +168,119 @@ pub(super) async fn open_lane(
                 _quic: Some(session),
                 version,
             })
+        }
+    }
+}
+
+pub(super) async fn prepare_lanes(
+    client: Arc<PortalClient>,
+    route: ResolvedRoute,
+    flow_id: u32,
+) -> Result<Vec<PhysicalLane>> {
+    if !route.split() {
+        return Ok(vec![
+            open_lane(client, route.uplink, flow_id, MuxDirection::Up).await?,
+        ]);
+    }
+
+    let (uplink, downlink) = tokio::join!(
+        open_lane(client.clone(), route.uplink, flow_id, MuxDirection::Up,),
+        open_lane(client, route.downlink, flow_id, MuxDirection::Down),
+    );
+    match (uplink, downlink) {
+        (Ok(uplink), Ok(downlink)) if uplink.version == downlink.version => {
+            Ok(vec![uplink, downlink])
+        }
+        (Ok(uplink), Ok(downlink)) => Err(anyhow!(
+            "split carriers negotiated different protocol versions: uplink={}, downlink={}",
+            uplink.version,
+            downlink.version,
+        )),
+        (Err(error), Ok(downlink)) => {
+            drop(downlink);
+            Err(error)
+        }
+        (Ok(uplink), Err(error)) => {
+            drop(uplink);
+            Err(error)
+        }
+        (Err(uplink), Err(downlink)) => Err(anyhow!(
+            "both {} route lanes failed before commit: uplink: {uplink:#}; downlink: {downlink:#}",
+            route.label(),
+        )),
+    }
+}
+
+pub(super) async fn prepare_with_fallback<T, F, Fut>(
+    client: &Arc<PortalClient>,
+    initial_lease: FlowLease,
+    plan: RoutePlan,
+    prepare: F,
+) -> std::result::Result<(T, FlowLease, ResolvedRoute), OpenFlowError>
+where
+    F: FnMut(u32, ResolvedRoute) -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    prepare_with_fallback_timeout(client, initial_lease, plan, mix_fallback_timeout(), prepare)
+        .await
+}
+
+async fn prepare_with_fallback_timeout<T, F, Fut>(
+    client: &Arc<PortalClient>,
+    initial_lease: FlowLease,
+    plan: RoutePlan,
+    primary_timeout: Duration,
+    mut prepare: F,
+) -> std::result::Result<(T, FlowLease, ResolvedRoute), OpenFlowError>
+where
+    F: FnMut(u32, ResolvedRoute) -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let initial_id = initial_lease.id();
+    let primary = if plan.fallback.is_some() {
+        timeout(primary_timeout, prepare(initial_id, plan.primary))
+            .await
+            .unwrap_or_else(|_| {
+                Err(anyhow!(
+                    "route {} preparation timed out after {}",
+                    plan.primary.label(),
+                    humantime::format_duration(primary_timeout),
+                ))
+            })
+    } else {
+        prepare(initial_id, plan.primary).await
+    };
+    match primary {
+        Ok(prepared) => Ok((prepared, initial_lease, plan.primary)),
+        Err(primary_error) => {
+            let Some(fallback) = plan.fallback else {
+                return Err(OpenFlowError::Transport(primary_error));
+            };
+            client.telemetry.emit_runtime(RuntimeEvent::new(
+                RuntimeLevel::Warn,
+                RuntimeKind::Carrier,
+                format!(
+                    "route {} failed before commit; retrying {}: {primary_error:#}",
+                    plan.primary.label(),
+                    fallback.label(),
+                ),
+            ));
+            drop(initial_lease);
+            let fallback_lease = client.flow_ids.allocate().map_err(|error| {
+                OpenFlowError::Protocol(anyhow!(
+                    "route {} failed before commit: {primary_error:#}; failed to allocate fallback flow ID: {error:#}",
+                    plan.primary.label(),
+                ))
+            })?;
+            let fallback_id = fallback_lease.id();
+            match prepare(fallback_id, fallback).await {
+                Ok(prepared) => Ok((prepared, fallback_lease, fallback)),
+                Err(fallback_error) => Err(OpenFlowError::Transport(anyhow!(
+                    "route {} failed before commit: {primary_error:#}; fallback route {} failed before commit: {fallback_error:#}",
+                    plan.primary.label(),
+                    fallback.label(),
+                ))),
+            }
         }
     }
 }
@@ -250,17 +367,26 @@ pub(super) fn to_target(address: &SocksAddress) -> Result<Target> {
     }
 }
 
-pub(super) fn carrier(mode: CarrierMode) -> Carrier {
-    match mode {
-        CarrierMode::Tcp => Carrier::TlsTcp,
-        CarrierMode::Udp => Carrier::Quic,
-    }
-}
-
 pub(super) fn carrier_name(carrier: Carrier) -> &'static str {
     match carrier {
         Carrier::TlsTcp => "TCP",
         Carrier::Quic => "UDP",
+    }
+}
+
+pub(super) const fn configured_carrier(mode: CarrierMode) -> Option<Carrier> {
+    match mode {
+        CarrierMode::Tcp => Some(Carrier::TlsTcp),
+        CarrierMode::Udp => Some(Carrier::Quic),
+        CarrierMode::Mix => None,
+    }
+}
+
+pub(super) const fn configured_carrier_name(mode: CarrierMode) -> &'static str {
+    match mode {
+        CarrierMode::Tcp => "TCP",
+        CarrierMode::Udp => "UDP",
+        CarrierMode::Mix => "MIX",
     }
 }
 
@@ -277,6 +403,7 @@ pub(super) fn carrier_counter(
     }
 }
 
+#[derive(Debug)]
 pub(crate) enum OpenFlowError {
     Setup(SetupResult),
     Transport(anyhow::Error),

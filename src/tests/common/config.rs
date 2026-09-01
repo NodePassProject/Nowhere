@@ -72,6 +72,16 @@ fn flow_setup_timeout_defaults_and_accepts_override() {
 }
 
 #[test]
+fn mix_fallback_timeout_defaults_and_accepts_override() {
+    unsafe { std::env::remove_var("NOW_MIX_FALLBACK_TIMEOUT") };
+    assert_eq!(mix_fallback_timeout(), Duration::from_secs(1));
+
+    unsafe { std::env::set_var("NOW_MIX_FALLBACK_TIMEOUT", "125ms") };
+    assert_eq!(mix_fallback_timeout(), Duration::from_millis(125));
+    unsafe { std::env::remove_var("NOW_MIX_FALLBACK_TIMEOUT") };
+}
+
+#[test]
 fn telemetry_interval_is_strictly_bounded() {
     assert_eq!(
         parse_telemetry_interval(None).unwrap(),

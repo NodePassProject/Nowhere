@@ -160,6 +160,11 @@ pub fn flow_setup_timeout() -> Duration {
     env_duration("NOW_FLOW_SETUP_TIMEOUT", Duration::from_secs(20))
 }
 
+/// Deadline for preparing the primary route selected by a mixed carrier policy.
+pub fn mix_fallback_timeout() -> Duration {
+    env_duration("NOW_MIX_FALLBACK_TIMEOUT", Duration::from_secs(1))
+}
+
 /// Interval between event checkpoint log lines.
 pub fn report_interval() -> Duration {
     env_duration("NOW_REPORT_INTERVAL", Duration::from_secs(5))
