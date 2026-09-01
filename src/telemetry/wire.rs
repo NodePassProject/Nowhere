@@ -12,8 +12,8 @@ use crate::protocol::{Carrier, ProtocolVersion};
 
 use super::process::{now_unix_ms, process_incarnation, process_uid};
 
-/// Version of the local telemetry protocol. It is not a data-plane wire version.
-pub(crate) const PROTOCOL_VERSION: u16 = 3;
+/// Local telemetry generation, aligned with the Nowhere application major version.
+pub(crate) const TELEMETRY_VERSION: u16 = 2;
 /// Maximum accepted JSON payload, excluding the four-byte length prefix.
 pub(crate) const MAX_FRAME_SIZE: usize = 64 * 1024;
 
@@ -27,7 +27,7 @@ pub(crate) enum InstanceRole {
 /// Non-secret metadata identifying a single process incarnation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct InstanceDescriptor {
-    pub(crate) protocol_version: u16,
+    pub(crate) telemetry_version: u16,
     pub(crate) id: String,
     pub(crate) role: InstanceRole,
     pub(crate) pid: u32,
@@ -50,7 +50,7 @@ impl InstanceDescriptor {
         let uid = process_uid();
         let incarnation = process_incarnation(pid)?;
         Ok(Self {
-            protocol_version: PROTOCOL_VERSION,
+            telemetry_version: TELEMETRY_VERSION,
             id: format!("{uid}:{pid}:{incarnation}"),
             role,
             pid,
@@ -65,8 +65,8 @@ impl InstanceDescriptor {
 
     pub(crate) fn registry_name(&self) -> String {
         format!(
-            "nowhere.v{}.{}.{}.{}",
-            PROTOCOL_VERSION, self.uid, self.pid, self.incarnation
+            "nowhere.{}.{}.{}.{}",
+            TELEMETRY_VERSION, self.uid, self.pid, self.incarnation
         )
     }
 
@@ -79,7 +79,7 @@ impl InstanceDescriptor {
         let pid = std::process::id();
         let uid = process_uid();
         Self {
-            protocol_version: PROTOCOL_VERSION,
+            telemetry_version: TELEMETRY_VERSION,
             id: format!("{uid}:{pid}:unavailable"),
             role,
             pid,

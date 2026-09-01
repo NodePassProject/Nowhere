@@ -1,11 +1,11 @@
 use super::*;
 use crate::telemetry::wire::{InstanceDescriptor, LifecycleSnapshot};
-use crate::telemetry::{AccessOutcome, InstanceRole as WireRole, PROTOCOL_VERSION};
+use crate::telemetry::{AccessOutcome, InstanceRole as WireRole, TELEMETRY_VERSION};
 
 fn hello() -> Hello {
     Hello {
         instance: InstanceDescriptor {
-            protocol_version: PROTOCOL_VERSION,
+            telemetry_version: TELEMETRY_VERSION,
             id: "0:42:7".to_owned(),
             role: WireRole::Portal,
             pid: 42,

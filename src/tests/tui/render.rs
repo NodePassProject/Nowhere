@@ -25,7 +25,7 @@ fn app_with_instance() -> App {
             endpoint: "0.0.0.0:2077".to_owned(),
             config_summary: "net=mix tls=1".to_owned(),
             telemetry_interval_ms: 1_000,
-            telemetry_protocol_version: 3,
+            telemetry_version: 2,
         },
         lifecycle: Lifecycle::Ready,
         snapshot: Some(TelemetrySnapshot {
@@ -279,7 +279,7 @@ fn full_sidebar_keeps_long_lifecycle_labels_visible() {
             endpoint: "[::1]:1082".to_owned(),
             config_summary: "portal=relay.example:2077".to_owned(),
             telemetry_interval_ms: 1_000,
-            telemetry_protocol_version: 3,
+            telemetry_version: 2,
         },
         lifecycle: Lifecycle::Starting,
         snapshot: None,

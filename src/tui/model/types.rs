@@ -85,7 +85,7 @@ pub struct InstanceMeta {
     pub endpoint: String,
     pub config_summary: String,
     pub telemetry_interval_ms: u64,
-    pub telemetry_protocol_version: u16,
+    pub telemetry_version: u16,
 }
 
 /// Runtime event severity.

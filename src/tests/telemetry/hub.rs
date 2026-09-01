@@ -3,14 +3,14 @@ use std::sync::atomic::Ordering;
 use crate::protocol::Carrier;
 use crate::telemetry::wire::InstanceDescriptor;
 use crate::telemetry::{
-    AccessOutcome, AccessStart, InstanceRole, PROTOCOL_VERSION, ServerMessage, TelemetryHub,
+    AccessOutcome, AccessStart, InstanceRole, ServerMessage, TELEMETRY_VERSION, TelemetryHub,
     TrafficProtocol,
 };
 use crate::transport::Stats;
 
 fn descriptor() -> InstanceDescriptor {
     InstanceDescriptor {
-        protocol_version: PROTOCOL_VERSION,
+        telemetry_version: TELEMETRY_VERSION,
         id: "1:2:3".to_owned(),
         role: InstanceRole::Portal,
         pid: 2,

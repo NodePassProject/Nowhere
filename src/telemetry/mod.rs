@@ -19,6 +19,6 @@ pub(crate) use ipc::{DiscoveredInstance, TelemetryClient, TelemetryServer, disco
 pub(crate) use process::now_unix_ms;
 pub(crate) use wire::{
     AccessFinished, AccessOutcome, AccessStart, AccessStarted, ClientMessage, Hello, InstanceRole,
-    MAX_FRAME_SIZE, PROTOCOL_VERSION, RuntimeEvent, RuntimeKind, RuntimeLevel, ServerMessage,
-    Subscription, TelemetrySnapshot, TrafficProtocol,
+    MAX_FRAME_SIZE, RuntimeEvent, RuntimeKind, RuntimeLevel, ServerMessage, Subscription,
+    TELEMETRY_VERSION, TelemetrySnapshot, TrafficProtocol,
 };

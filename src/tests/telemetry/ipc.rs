@@ -10,7 +10,7 @@ use crate::transport::Stats;
 
 fn parse_registry_name(name: &str) -> Option<DiscoveredInstance> {
     let mut components = name.split('.');
-    if components.next()? != "nowhere" || components.next()? != "v3" {
+    if components.next()? != "nowhere" || components.next()? != "2" {
         return None;
     }
     let uid = components.next()?.parse().ok()?;
@@ -28,23 +28,23 @@ fn parse_registry_name(name: &str) -> Option<DiscoveredInstance> {
 }
 
 #[test]
-fn parses_only_exact_v3_registry_names() {
+fn parses_only_nowhere_2_registry_names() {
     assert_eq!(
-        parse_registry_name("nowhere.v3.1000.42.900"),
+        parse_registry_name("nowhere.2.1000.42.900"),
         Some(DiscoveredInstance {
-            registry_name: "nowhere.v3.1000.42.900".to_owned(),
+            registry_name: "nowhere.2.1000.42.900".to_owned(),
             uid: 1000,
             pid: 42,
             incarnation: 900,
         })
     );
     assert!(parse_registry_name("nowhere.v2.1000.42.900").is_none());
-    assert!(parse_registry_name("nowhere.v3.1000.42").is_none());
-    assert!(parse_registry_name("nowhere.v3.1000.42.900.extra").is_none());
+    assert!(parse_registry_name("nowhere.2.1000.42").is_none());
+    assert!(parse_registry_name("nowhere.2.1000.42.900.extra").is_none());
 }
 
 #[test]
-fn v3_snapshot_round_trips_transport_counters() {
+fn nowhere_2_snapshot_round_trips_transport_counters() {
     let snapshot = TelemetrySnapshot {
         tls_carriers_active: 2,
         quic_carriers_active: 3,

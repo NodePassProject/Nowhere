@@ -20,7 +20,7 @@ pub(super) fn hello_ui_event(hello: &Hello) -> UiEvent {
             endpoint: descriptor.endpoint.clone(),
             config_summary: descriptor.config_summary.clone(),
             telemetry_interval_ms: descriptor.telemetry_interval_ms,
-            telemetry_protocol_version: descriptor.protocol_version,
+            telemetry_version: descriptor.telemetry_version,
         },
         lifecycle: Lifecycle::from_label(&hello.lifecycle),
         snapshot: None,
