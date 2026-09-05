@@ -37,16 +37,16 @@ Vector URL:
   vector://<shared-key>@<portal-host>/<carrier>:<port>[/<carrier>:<port>]?socks=...
 
 Examples:
-  nowhere 'portal://secret@:2077'
-  nowhere 'portal://secret@*/tcp4:2077?log=info'
-  nowhere 'portal://secret@*/tcp:2077/udp:3088'
-  nowhere 'portal://secret@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
-  nowhere 'portal://secret@:2077?socks=user:pass@127.0.0.1:1080'
-  nowhere 'portal://relay-key@:2077?next=upstream-key@origin.example:2077'
-  nowhere 'portal://relay-key@:2077?next=upstream-key@origin.example:2077&up=tcp&down=tcp'
-  nowhere 'portal://secret@:2077?rate=100&etar=200'
-  nowhere 'vector://secret@relay.example:2077?sni=relay.example&socks=127.0.0.1:1080'
-  nowhere 'vector://secret@127.0.0.1:2077?up=tcp&down=tcp&socks=:1080'
+  nowhere 'portal://secret@:2000'
+  nowhere 'portal://secret@*/tcp4:2006?log=info'
+  nowhere 'portal://secret@*/tcp:2006/udp:2017'
+  nowhere 'portal://secret@:2000?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
+  nowhere 'portal://secret@:2000?socks=user:pass@127.0.0.1:1080'
+  nowhere 'portal://relay-key@:2000?next=upstream-key@origin.example:2000'
+  nowhere 'portal://relay-key@:2000?next=upstream-key@origin.example:2000&up=tcp&down=tcp'
+  nowhere 'portal://secret@:2000?rate=100&etar=200'
+  nowhere 'vector://secret@relay.example:2000?sni=relay.example&socks=127.0.0.1:1080'
+  nowhere 'vector://secret@127.0.0.1:2000?up=tcp&down=tcp&socks=:1080'
 
 Required URL parts:
   shared-key       Non-empty URL username. Percent-encode reserved characters.
@@ -71,7 +71,7 @@ Portal parameters:
   socks=<proxy>    SOCKS5 outbound proxy: host:port or user:pass@host:port.
                    Omit or use none to disable.
   next=<portal>    Native upstream Portal using the same endpoint grammar.
-                   Example: shared-key@host/tcp:2077/udp6:3088. Omit or use
+                   Example: shared-key@host/tcp:2006/udp6:2017. Omit or use
                    none to disable. Mutually exclusive with socks.
   up=tcp|udp|mix   Native upstream upload carrier. Mix chooses per flow.
                    Defaults to the only declared carrier, or UDP.

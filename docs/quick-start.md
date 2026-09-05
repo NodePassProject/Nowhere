@@ -24,24 +24,25 @@ observer and does not start, stop, or reconfigure either process.
 ## 1. Start Portal
 
 ```text
-nowhere 'portal://secret@:2077?log=info'
+nowhere 'portal://secret@:2000?log=info'
 ```
 
-Portal listens for TLS/TCP and QUIC on the same numeric port when `net=mix`
-(the default).
+The compact endpoint listens for TLS/TCP and QUIC on the same numeric port.
+Use `portal://secret@*/tcp4:2006` for a TCP-only IPv4 listener, or
+`portal://secret@*/tcp:2006/udp:2017` to use separate ports.
 
 ## 2. Start Vector
 
 Dedicated TLS lanes in both directions:
 
 ```text
-nowhere 'vector://secret@127.0.0.1:2077?up=tcp&down=tcp&socks=127.0.0.1:1080'
+nowhere 'vector://secret@127.0.0.1:2000?up=tcp&down=tcp&socks=127.0.0.1:1080'
 ```
 
 QUIC in both directions:
 
 ```text
-nowhere 'vector://secret@127.0.0.1:2077?up=udp&down=udp&socks=127.0.0.1:1080'
+nowhere 'vector://secret@127.0.0.1:2000?up=udp&down=udp&socks=127.0.0.1:1080'
 ```
 
 The full route-policy matrix is:
@@ -58,19 +59,19 @@ route per flow and can use the other once if primary preparation fails.
 Stateless per-flow selection across full-duplex TLS and QUIC uses:
 
 ```text
-nowhere 'vector://secret@127.0.0.1:2077?up=mix&down=mix&socks=127.0.0.1:1080'
+nowhere 'vector://secret@127.0.0.1:2000?up=mix&down=mix&socks=127.0.0.1:1080'
 ```
 
 `mix/mix` chooses `tcp/tcp` or `udp/udp` once per flow. A single mixed
-direction can resolve to a split carrier pair. `net=mix` makes every matrix
-cell reachable. The primary choice has a `NOW_MIX_FALLBACK_TIMEOUT` budget
+direction can resolve to a split carrier pair. Declaring both carriers makes
+every matrix cell reachable. The primary choice has a `NOW_MIX_FALLBACK_TIMEOUT` budget
 (default `1s`).
 
 TLS Mux is enabled on Vector. Portal recognizes the marked carrier
 automatically:
 
 ```text
-nowhere 'vector://secret@127.0.0.1:2077?up=tcp&down=tcp&mux=1&socks=127.0.0.1:1080'
+nowhere 'vector://secret@127.0.0.1:2000?up=tcp&down=tcp&mux=1&socks=127.0.0.1:1080'
 ```
 
 Nowhere 2 negotiates `nw2` with another V2 peer and falls back to `now/1` when

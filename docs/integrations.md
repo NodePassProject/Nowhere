@@ -51,7 +51,8 @@ replays a request after any FlowHeader or Target bytes may have been accepted.
 
 ## Chained Portal
 
-`next=shared-key@host:port` creates the same transport-only client engine used
+`next=shared-key@host:port` or an explicit endpoint such as
+`next=shared-key@host/tcp:2006/udp:2017` creates the same client engine used
 by Vector, including `up/down=mix` and pre-commit fallback. `mux=0|1` selects
 dedicated or Mux TLS when TCP can be selected and defaults to `0`; it has no
 effect without `next` and canonicalizes to `0` for `udp/udp`. Authentication,

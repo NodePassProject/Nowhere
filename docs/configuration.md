@@ -7,19 +7,34 @@ see [Platforms](platforms.md).
 ## Portal URL
 
 ```text
-portal://shared-key@host:port?net=mix&tls=1&log=info
+portal://shared-key@host:port?tls=1&log=info
+portal://shared-key@host/tcp4:2006/udp6:2017?tls=1&log=info
 ```
+
+The compact `host:port` form enables TLS/TCP and QUIC/UDP on the same port.
+The explicit path enables only the listed carriers. `tcp` and `udp` accept
+either address family; suffix `4` or `6` to restrict that carrier. Each carrier
+may appear at most once.
+
+Both carriers share the host; their ports and address families are independent.
+The wildcard `*` expands to separate IPv4 and IPv6 sockets, with IPv6 sockets
+set to `V6ONLY`. Hostnames resolve at startup to all matching, deduplicated
+addresses; listeners do not refresh DNS while running.
+
+An unrestricted wildcard listener can omit an unavailable address family with
+a warning. Each declared carrier must bind at least one address. Explicit
+address families, concrete addresses, occupied ports, and permission failures
+cause startup to fail and release the listeners already opened.
 
 | Query | Values | Default |
 |---|---|---|
-| `net` | `mix`, `tcp`, `udp` | `mix` |
 | `tls` | `1` generated certificate, `2` supplied certificate | `1` |
 | `crt`, `key` | PEM paths, required with `tls=2` | — |
 | `rate`, `etar` | Mbps, `0` disables limit | `0` |
 | `dial` | `auto` or local IP | `auto` |
 | `socks` | outbound SOCKS5 configuration | disabled |
-| `next` | `shared-key@host:port` | disabled |
-| `up`, `down` | native next-hop policy: `tcp`, `udp`, or `mix` | `udp` |
+| `next` | `shared-key@host:port` or explicit carrier endpoint | disabled |
+| `up`, `down` | native next-hop policy: `tcp`, `udp`, or `mix` | only carrier, otherwise `udp` |
 | `mux` | native next-hop TLS: `0` dedicated lanes, `1` Mux when TCP is possible | `0` |
 | `sni` | native next-hop verified DNS name, or `none` | `none` |
 | `pin` | native next-hop certificate SHA-256 pin, or `none` | `none` |
@@ -34,11 +49,12 @@ Portal. These upstream options are ignored when `next` is absent or `none`.
 
 ```text
 vector://shared-key@host:port?up=tcp&down=tcp&socks=127.0.0.1:1080
+vector://shared-key@host/tcp:2006/udp:2017?up=tcp&down=udp&socks=127.0.0.1:1080
 ```
 
 | Query | Values | Default |
 |---|---|---|
-| `up`, `down` | `tcp`, `udp`, or `mix` | `udp` |
+| `up`, `down` | `tcp`, `udp`, or `mix` | only carrier, otherwise `udp` |
 | `mux` | `0` dedicated TLS lanes, `1` TLS Mux | `0` |
 | `sni` | verified DNS name, or `none` | `none` |
 | `pin` | certificate SHA-256 pin, or `none` | `none` |
@@ -51,7 +67,7 @@ vector://shared-key@host:port?up=tcp&down=tcp&socks=127.0.0.1:1080
 ```text
 Portal URL
     |
-    +-- listener: net, tls, crt, key
+    +-- listener: endpoint path, tls, crt, key
     +-- relay:    rate, etar, dial, log
     |
     +-- outbound path
@@ -92,9 +108,9 @@ The primary route must acquire all lanes within `NOW_MIX_FALLBACK_TIMEOUT`
 (default `1s`). Failure or timeout discards its local resources and starts the
 other allowed route once with a new flow ID. READY failures, target dial
 failures, and established payload failures do not trigger fallback. The policy
-has no health score or circuit breaker. `net=mix` is the recommended upstream;
-a single-family listener may consume the budget on each affected flow or leave
-no legal route for a fixed direction.
+has no health score or circuit breaker. Both carriers must be declared for
+`mix`; a single-carrier endpoint rejects a policy that selects the absent
+carrier.
 
 With `mux=1`, Shards open lazily according to active flow pressure. New flows
 use the least-loaded shard; a shard carries 4 active flows before another
@@ -104,7 +120,7 @@ least one direction is `tcp` or `mix`. `udp/udp&mux=1` canonicalizes to
 `mux=0`.
 
 Portal and Vector offer fixed ALPNs in the order `nw2`, `now/1`. V2 peers select
-`nw2`; a V2 peer talking to a default V1 peer selects `now/1`. The removed
+`nw2`; a V2 peer talking to a default V1 peer selects `now/1`. The
 `alpn` query is ignored under the normal unknown-parameter rule. Protocol
 version and Mux are independent settings. Portal's `mux` option controls only
 its `next` client. Inbound Portal connections accept a `0xff`-marked Mux carrier
@@ -116,14 +132,23 @@ present.
 
 ## URL parsing rules
 
-- The shared key occupies the URL username. Password userinfo, URL paths, and
-  fragments are invalid.
+- The shared key occupies the URL username. Password userinfo and fragments are
+  invalid.
+- Endpoints use either `HOST:PORT` or
+  `HOST/CARRIER:PORT[/CARRIER:PORT]`; the forms cannot be combined. Empty path
+  segments, trailing slashes, unknown or duplicate carriers, and zero ports are
+  invalid.
+- Portal allows `*` as the wildcard listen host. The compact
+  `portal://key@:port` form is equivalent to `*`; explicit
+  carrier paths require a host. Vector and `next` reject `*`.
+- IP literals must agree with an explicit `4` or `6` carrier suffix. Hostnames
+  are filtered to the selected address family.
 - Reserved bytes in shared keys, nested credentials, and query values use
   percent encoding.
 - Recognized query keys use their first occurrence. Later duplicates and
   unknown keys are ignored.
-- A Portal with an empty listen host binds wildcard addresses. Vector requires
-  a Portal host and a `socks` listener.
+- The `net` query is an unknown parameter and has no effect. `/tcp:PORT` and
+  `/udp:PORT` select a single carrier; compact endpoints enable both carriers.
 - `socks=user:pass@host:port` enables RFC 1929 authentication. Omitting the
   credentials enables SOCKS5 no-auth.
 

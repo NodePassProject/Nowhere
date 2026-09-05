@@ -5,7 +5,7 @@
 Nowhere 2 uses ALPN as its data-plane version selector. Portal and Vector offer
 the fixed protocols `nw2` and `now/1`, in that order. A negotiated `nw2` carrier
 is V2; a negotiated `now/1` carrier is compatible V1. The `alpn` URL parameter
-has been removed and is ignored as an unknown parameter.
+is ignored as an unknown parameter.
 
 | Client | Portal | Negotiated version |
 |---|---|---|
@@ -16,6 +16,26 @@ has been removed and is ignored as an unknown parameter.
 V1 installations using a custom ALPN cannot interoperate with V2. A V1 client
 that had already customized its ALPN to `nw2` is classified as V2; this rare
 collision has no compatibility exception.
+
+## Endpoint configuration
+
+The compact `portal://key@host:port`, `vector://key@host:port`, and
+`next=key@host:port` forms declare TCP and UDP on the same port. The empty
+Portal host in `portal://key@:port` is an alias for the wildcard host `*`.
+
+Carrier paths select the enabled carriers. The `net` query follows the
+unknown-parameter rule and has no effect on carrier selection:
+
+```text
+portal://key@*/tcp:2006
+portal://key@*/udp:2017
+```
+
+Use `/tcp4:PORT`, `/tcp6:PORT`, `/udp4:PORT`, and `/udp6:PORT` when the address
+family must also be fixed. URL compatibility is separate from wire
+compatibility: default V1 and V2 peers communicate using the version negotiation
+described above. Compatible compact address syntax does not imply identical
+query semantics across versions.
 
 ## TLS lane contract
 

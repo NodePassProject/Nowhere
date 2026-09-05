@@ -36,22 +36,22 @@ Start a Portal with its generated certificate:
 
 ```text
 docker run -d --rm --name nowhere-portal \
-  -p 2077:2077/tcp \
-  -p 2077:2077/udp \
+  -p 2000:2000/tcp \
+  -p 2000:2000/udp \
   ghcr.io/nodepassproject/nowhere:latest \
-  'portal://change-me@:2077'
+  'portal://change-me@:2000'
 ```
 
 For `tls=2`, mount the CA-issued PEM certificate chain and private key:
 
 ```text
 docker run -d --rm --name nowhere-portal \
-  -p 2077:2077/tcp \
-  -p 2077:2077/udp \
+  -p 2000:2000/tcp \
+  -p 2000:2000/udp \
   -v /path/fullchain.pem:/cert.pem:ro \
   -v /path/private-key.pem:/key.pem:ro \
   ghcr.io/nodepassproject/nowhere:latest \
-  'portal://change-me@:2077?tls=2&crt=/cert.pem&key=/key.pem'
+  'portal://change-me@:2000?tls=2&crt=/cert.pem&key=/key.pem'
 ```
 
 `crt` is the full certificate chain and `key` is its private key. A Vector
@@ -76,13 +76,13 @@ Bourne-compatible shells and PowerShell accept the documented single-quoted
 URLs:
 
 ```text
-nowhere 'vector://secret@portal.example:2077?up=tcp&down=udp&socks=127.0.0.1:1080'
+nowhere 'vector://secret@portal.example:2000?up=tcp&down=udp&socks=127.0.0.1:1080'
 ```
 
 In Windows Command Prompt, use double quotes and the `.exe` name:
 
 ```text
-nowhere.exe "vector://secret@portal.example:2077?up=tcp&down=udp&socks=127.0.0.1:1080"
+nowhere.exe "vector://secret@portal.example:2000?up=tcp&down=udp&socks=127.0.0.1:1080"
 ```
 
 Certificate and key values accept native filesystem paths. Relative paths are

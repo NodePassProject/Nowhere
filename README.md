@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>One port. Two transports. Split directions.</strong>
+  <strong>Two-transport encrypted relay with independently split directions</strong>
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@ downlink independently instead of forcing both directions onto one transport.
 
 | Core property | What it means |
 | --- | --- |
-| One service edge | TLS/TCP and QUIC/UDP share one address, port number, credential, and lifecycle |
+| One service edge | TLS/TCP and QUIC/UDP share one host, credential, and lifecycle, with independent ports and address families |
 | Split directions | Uplink and downlink independently select TLS/TCP or QUIC/UDP |
 | Complete ingress | SOCKS5 CONNECT carries TCP; UDP ASSOCIATE carries UDP |
 | Native chaining | A Portal can forward directly to another Portal without a loopback SOCKS5 conversion |
@@ -68,9 +68,9 @@ nowhere tui
                                   +------------+                          +------------+
 ```
 
-Portal defaults to `net=mix`, accepting both carrier families on the same port
-number. `net=tcp` and `net=udp` intentionally restrict the listener when an
-operator wants only one carrier family.
+The compact Portal endpoint accepts TLS/TCP and QUIC/UDP on the same port.
+Carrier paths select one transport, separate their ports, or restrict address
+families, for example `@*/tcp4:2006/udp6:2017`.
 
 ### One flow, two transport decisions
 
@@ -104,7 +104,7 @@ Nowhere flow directly with the same transport engine used by Vector:
 
 ```bash
 nowhere \
-  'portal://relay-key@:2077?next=origin-key@origin.example:2077&up=udp&down=udp'
+  'portal://relay-key@:2000?next=origin-key@origin.example:2000&up=udp&down=udp'
 ```
 
 `next` is lazy and mutually exclusive with outbound `socks`. Portal forwarding
@@ -122,10 +122,10 @@ cargo build --release --locked
 
 ### 2. Start Portal
 
-The default `net=mix` mode accepts TLS/TCP and QUIC/UDP on port `2077`:
+The compact endpoint accepts TLS/TCP and QUIC/UDP on port `2000`:
 
 ```bash
-./target/release/nowhere 'portal://change-me@127.0.0.1:2077'
+./target/release/nowhere 'portal://change-me@127.0.0.1:2000'
 ```
 
 ### 3. Start Vector
@@ -134,7 +134,7 @@ This Vector exposes SOCKS5 on `127.0.0.1:1080`:
 
 ```bash
 ./target/release/nowhere \
-  'vector://change-me@127.0.0.1:2077?up=tcp&down=tcp&socks=127.0.0.1:1080'
+  'vector://change-me@127.0.0.1:2000?up=tcp&down=tcp&socks=127.0.0.1:1080'
 ```
 
 Mux, split-carrier, certificate, and chaining examples are in the
@@ -155,8 +155,8 @@ The local examples omit `sni`, which disables certificate verification. A
 public Portal should use a CA-trusted certificate with strict verification:
 
 ```bash
-nowhere 'portal://change-me@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
-nowhere 'vector://change-me@relay.example:2077?sni=relay.example&socks=127.0.0.1:1080'
+nowhere 'portal://change-me@:2000?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
+nowhere 'vector://change-me@relay.example:2000?sni=relay.example&socks=127.0.0.1:1080'
 ```
 
 Certificate pinning is also available. Review the

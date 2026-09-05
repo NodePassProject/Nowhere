@@ -2,7 +2,7 @@
 name = "nowhere"
 version = "2.0.0-dev"
 edition = "2024"
-description = "One-port, two-transport encrypted relay with independently split directions"
+description = "Two-transport encrypted relay with independently split directions"
 license = "GPL-3.0-only"
 repository = "https://github.com/NodePassProject/Nowhere"
 readme = "README.md"
