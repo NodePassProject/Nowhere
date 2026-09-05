@@ -24,6 +24,15 @@ fn descriptor() -> InstanceDescriptor {
 }
 
 #[test]
+fn listener_summary_uses_bound_addresses_without_inventing_a_second_family() {
+    let hub = TelemetryHub::new(descriptor());
+    hub.set_listening_addresses("0.0.0.0:2077", "none");
+    let summary = &hub.descriptor().config_summary;
+    assert!(summary.ends_with("tcp=0.0.0.0:2077 udp=none"));
+    assert!(!summary.contains("[::]"));
+}
+
+#[test]
 fn access_span_finishes_only_once() {
     let hub = TelemetryHub::new(descriptor());
     let mut events = hub.event_receiver();

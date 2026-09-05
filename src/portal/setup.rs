@@ -11,19 +11,20 @@ use url::Url;
 
 use crate::common::{
     DEFAULT_RATE_LIMIT, LifeMode, LifeReason, LifeState, Lifecycle, Logger, OutboundDialer,
-    SocksConfig, bind_udp_addrs, first_raw_query_value, init_dialer_ip,
+    ServiceEndpoint, SocksConfig, first_raw_query_value, init_dialer_ip,
     new_server_configs_with_reload_interval, query_first, rate_limit_bytes_per_second,
+    resolve_bind_addrs,
 };
 use crate::protocol::Credentials;
 use crate::telemetry::{InstanceRole, TelemetryHub};
 use crate::transport::{Buffers, RateLimiter, Stats};
 use crate::vector::{PortalClient, PortalClientConfig};
 
-use super::listener::{configure_transport, format_endpoint_addr};
+use super::listener::configure_transport;
 use super::{NetworkMode, Portal, PortalInner, UdpFlowLimits, admission, outbound::PortalOutbound};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
-    "net", "tls", "crt", "key", "rate", "etar", "dial", "socks", "next", "log",
+    "tls", "crt", "key", "rate", "etar", "dial", "socks", "next", "log",
 ];
 const PORTAL_UPSTREAM_PARAMETERS: &[&str] = &["up", "down", "mux", "sni", "pin"];
 
@@ -59,70 +60,75 @@ impl Portal {
         lifecycle: Arc<Lifecycle>,
     ) -> Result<Self> {
         if parsed_url.scheme() != "portal" {
-            anyhow::bail!("portal::new: URL scheme must be portal");
+            anyhow::bail!("Portal configuration: URL scheme must be portal");
         }
         if parsed_url.password().is_some() {
-            anyhow::bail!("portal::new: password userinfo is not supported");
+            anyhow::bail!("Portal configuration: password userinfo is not supported");
         }
         if parsed_url.fragment().is_some() {
-            anyhow::bail!("portal::new: URL fragments are not supported");
-        }
-        if !parsed_url.path().is_empty() {
-            anyhow::bail!("portal::new: URL paths are not supported");
+            anyhow::bail!("Portal configuration: URL fragments are not supported");
         }
         let mut query = query_first(&parsed_url, PORTAL_QUERY_PARAMETERS)
-            .map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
-        validate_query(&query).map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
-        let port = parsed_url
-            .port()
-            .ok_or_else(|| anyhow::anyhow!("portal::new: missing listen port"))?;
-        if port == 0 {
-            anyhow::bail!("portal::new: listen port must be non-zero");
+            .map_err(|e| anyhow::anyhow!("Portal configuration: invalid query: {e}"))?;
+        validate_query(&query).map_err(|e| anyhow::anyhow!("Portal configuration: {e}"))?;
+        let mut service_endpoint = ServiceEndpoint::parse(&parsed_url, true, "Portal endpoint")?;
+        let bind_host = listen_host
+            .unwrap_or(service_endpoint.host.as_str())
+            .to_owned();
+        if listen_host == Some("") {
+            service_endpoint.host = "*".to_owned();
         }
-        let credentials =
-            Credentials::new(&parsed_url).map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
+        let credentials = Credentials::new(&parsed_url)?;
         let runtime = super::config::PortalRuntimeConfig::from_env()
-            .map_err(|e| anyhow::anyhow!("portal::new: invalid runtime configuration: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("Portal configuration: invalid runtime setting: {e}"))?;
         let network_mode =
-            NetworkMode::from_url(&parsed_url).map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
+            NetworkMode::from_carriers(service_endpoint.has_tcp(), service_endpoint.has_udp());
+        let dialer_ip = init_dialer_ip(query.get("dial").map(String::as_str));
+        let socks = SocksConfig::from_url(&parsed_url)
+            .map_err(|e| anyhow::anyhow!("Portal configuration: invalid socks parameter: {e}"))?;
+        let next = match query.get("next").map(String::as_str) {
+            None | Some("none") => None,
+            Some("") => anyhow::bail!("Portal configuration: next must not be empty"),
+            Some(_) => {
+                query.extend(
+                    query_first(&parsed_url, PORTAL_UPSTREAM_PARAMETERS).map_err(|e| {
+                        anyhow::anyhow!("Portal configuration: invalid upstream query: {e}")
+                    })?,
+                );
+                let raw = first_raw_query_value(&parsed_url, "next")
+                    .expect("decoded next came from the raw query");
+                Some(PortalClientConfig::from_upstream_authority(
+                    raw, &query, &dialer_ip,
+                )?)
+            }
+        };
+        if socks.is_some() && next.is_some() {
+            anyhow::bail!("Portal configuration: socks and next are mutually exclusive");
+        }
+        let rate_limit = parse_rate(&query, "rate")?;
+        let etar_limit = parse_rate(&query, "etar")?;
+
         let (tls_mode, tls_server_config, mut quic_server_config) =
             new_server_configs_with_reload_interval(
                 &parsed_url,
                 runtime.reload_interval,
                 logger.clone(),
             )
-            .map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("Portal configuration: invalid TLS settings: {e}"))?;
 
-        let host = listen_host.unwrap_or_else(|| parsed_url.host_str().unwrap_or_default());
-        let endpoint_addr = format_endpoint_addr(host, port);
-        let bind_addrs = bind_udp_addrs(host, port)
-            .map_err(|e| anyhow::anyhow!("portal::new: failed to bind listen address: {e}"))?;
-
-        let dialer_ip = init_dialer_ip(query.get("dial").map(String::as_str));
-        let socks = SocksConfig::from_url(&parsed_url).map_err(|e| {
-            anyhow::anyhow!("portal::new: failed to parse socks configuration: {e}")
-        })?;
-        let next = match query.get("next").map(String::as_str) {
-            None | Some("none") => None,
-            Some("") => anyhow::bail!("portal::new: empty next parameter"),
-            Some(_) => {
-                query.extend(
-                    query_first(&parsed_url, PORTAL_UPSTREAM_PARAMETERS)
-                        .map_err(|e| anyhow::anyhow!("portal::new: {e}"))?,
-                );
-                let raw = first_raw_query_value(&parsed_url, "next")
-                    .expect("decoded next came from the raw query");
-                Some(
-                    PortalClientConfig::from_upstream_authority(raw, &query, &dialer_ip)
-                        .map_err(|error| anyhow::anyhow!("portal::new: {error}"))?,
-                )
-            }
-        };
-        if socks.is_some() && next.is_some() {
-            anyhow::bail!("portal::new: socks and next are mutually exclusive");
-        }
-        let rate_limit = parse_rate(&query, "rate")?;
-        let etar_limit = parse_rate(&query, "etar")?;
+        let endpoint_addr = service_endpoint.canonical();
+        let tcp_bind_addrs = service_endpoint
+            .tcp
+            .map(|endpoint| resolve_bind_addrs(&bind_host, endpoint))
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("Portal endpoint: failed to resolve TCP address: {e}"))?
+            .unwrap_or_default();
+        let udp_bind_addrs = service_endpoint
+            .udp
+            .map(|endpoint| resolve_bind_addrs(&bind_host, endpoint))
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("Portal endpoint: failed to resolve UDP address: {e}"))?
+            .unwrap_or_default();
 
         configure_transport(&mut quic_server_config, runtime.udp_idle_timeout, None)?;
 
@@ -142,7 +148,7 @@ impl Portal {
             |(config, _)| format!("next={} {}", config.endpoint(), config.effective_route()),
         );
         let telemetry_summary = format!(
-            "net={network_mode} tls={tls_mode} rate={rate_limit} etar={etar_limit} dial={dialer_ip} socks={socks_endpoint} {next_summary}",
+            "listen={endpoint_addr} tls={tls_mode} rate={rate_limit} etar={etar_limit} dial={dialer_ip} socks={socks_endpoint} {next_summary}",
         );
         let telemetry = TelemetryHub::for_current_process(
             InstanceRole::Portal,
@@ -168,8 +174,17 @@ impl Portal {
                 tls_mode,
                 network_mode,
                 endpoint_addr,
-                bind_addrs,
-                listen_port: port,
+                tcp_bind_addrs,
+                udp_bind_addrs,
+                allow_tcp_family_degrade: service_endpoint.host == "*"
+                    && service_endpoint.tcp.is_some_and(|endpoint| {
+                        endpoint.family == crate::common::AddressFamily::Any
+                    }),
+                allow_udp_family_degrade: service_endpoint.host == "*"
+                    && service_endpoint.udp.is_some_and(|endpoint| {
+                        endpoint.family == crate::common::AddressFamily::Any
+                    }),
+                udp_listen_port: service_endpoint.udp.map(|endpoint| endpoint.port),
                 outbound,
                 rate_limit,
                 etar_limit,
@@ -200,9 +215,7 @@ impl Portal {
 }
 
 fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<()> {
-    for name in [
-        "log", "tls", "crt", "key", "net", "rate", "etar", "dial", "socks",
-    ] {
+    for name in ["log", "tls", "crt", "key", "rate", "etar", "dial", "socks"] {
         if query.get(name).is_some_and(String::is_empty) {
             anyhow::bail!("empty {name} parameter");
         }
@@ -219,11 +232,6 @@ fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<(
         && !matches!(tls.as_str(), "1" | "2")
     {
         anyhow::bail!("tls=1 or tls=2 required");
-    }
-    if let Some(net) = query.get("net")
-        && !matches!(net.as_str(), "mix" | "tcp" | "udp")
-    {
-        anyhow::bail!("invalid net mode");
     }
     let tls_is_ca = query.get("tls").is_some_and(|value| value == "2");
     let has_crt = query.contains_key("crt");
@@ -246,6 +254,6 @@ fn parse_rate(query: &std::collections::HashMap<String, String>, name: &str) -> 
             .parse::<i32>()
             .ok()
             .filter(|value| *value >= 0)
-            .ok_or_else(|| anyhow::anyhow!("invalid {name} rate limit"))
+            .ok_or_else(|| anyhow::anyhow!("{name} must be a non-negative integer"))
     })
 }

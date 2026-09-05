@@ -61,7 +61,12 @@ impl PortalSession {
             peer: self.conn.remote_address().to_string(),
             local: self.conn.local_ip().map_or_else(
                 || self.portal.endpoint_addr.clone(),
-                |ip| std::net::SocketAddr::new(ip, self.portal.listen_port).to_string(),
+                |ip| {
+                    self.portal.udp_listen_port.map_or_else(
+                        || self.portal.endpoint_addr.clone(),
+                        |port| std::net::SocketAddr::new(ip, port).to_string(),
+                    )
+                },
             ),
         }
     }

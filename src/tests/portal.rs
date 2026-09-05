@@ -21,19 +21,20 @@ fn empty_host_listens_on_both_wildcard_families() {
     )
     .unwrap();
 
-    assert_eq!(portal.inner.endpoint_addr, ":2077");
+    assert_eq!(portal.inner.endpoint_addr, "*:2077");
     assert_eq!(
-        portal.inner.bind_addrs,
+        portal.inner.tcp_bind_addrs,
         vec![
             SocketAddr::from(([0, 0, 0, 0], 2077)),
             SocketAddr::from(([0u16; 8], 2077)),
         ]
     );
+    assert_eq!(portal.inner.udp_bind_addrs, portal.inner.tcp_bind_addrs);
     assert_eq!(portal.inner.outbound.dialer_ip(), "127.0.0.1");
     assert_eq!(portal.inner.network_mode, NetworkMode::Mix);
     assert_eq!(
         portal.effective_url(),
-        "portal://:2077?net=mix&tls=1&rate=0&etar=0&dial=127.0.0.1&socks=none&next=none"
+        "portal://*:2077?tls=1&rate=0&etar=0&dial=127.0.0.1&socks=none&next=none"
     );
 }
 
@@ -52,34 +53,50 @@ fn explicit_wildcard_host_selects_one_address_family() {
 
     assert_eq!(ipv4.inner.endpoint_addr, "0.0.0.0:2077");
     assert_eq!(
-        ipv4.inner.bind_addrs,
+        ipv4.inner.tcp_bind_addrs,
         vec![SocketAddr::from(([0, 0, 0, 0], 2077))]
     );
     assert_eq!(ipv4.inner.outbound.dialer_ip(), "auto");
 
     assert_eq!(ipv6.inner.endpoint_addr, "[::]:2077");
     assert_eq!(
-        ipv6.inner.bind_addrs,
+        ipv6.inner.tcp_bind_addrs,
         vec![SocketAddr::from(([0u16; 8], 2077))]
     );
     assert_eq!(ipv6.inner.outbound.dialer_ip(), "::1");
 }
 
 #[test]
-fn network_mode_accepts_supported_values_and_defaults_to_mix() {
+fn explicit_carriers_have_independent_ports_and_families() {
+    let portal = Portal::new(
+        Url::parse("portal://secret@*/tcp4:2077/udp6:3088").unwrap(),
+        test_logger(),
+    )
+    .unwrap();
+
+    assert_eq!(portal.inner.endpoint_addr, "*/tcp4:2077/udp6:3088");
+    assert_eq!(
+        portal.inner.tcp_bind_addrs,
+        vec![SocketAddr::from(([0, 0, 0, 0], 2077))]
+    );
+    assert_eq!(
+        portal.inner.udp_bind_addrs,
+        vec![SocketAddr::from(([0u16; 8], 3088))]
+    );
+    assert_eq!(portal.inner.network_mode, NetworkMode::Mix);
+}
+
+#[test]
+fn carrier_paths_select_network_mode_and_net_is_ignored() {
     let cases = [
-        ("", NetworkMode::Mix),
-        ("?net=mix", NetworkMode::Mix),
-        ("?net=tcp", NetworkMode::Tcp),
-        ("?net=udp", NetworkMode::Udp),
+        ("portal://secret@127.0.0.1:2077", NetworkMode::Mix),
+        ("portal://secret@127.0.0.1:2077?net=tcp", NetworkMode::Mix),
+        ("portal://secret@127.0.0.1/tcp:2077", NetworkMode::Tcp),
+        ("portal://secret@127.0.0.1/udp:2077", NetworkMode::Udp),
     ];
 
-    for (query, expected) in cases {
-        let portal = Portal::new(
-            Url::parse(&format!("portal://secret@127.0.0.1:2077{query}")).unwrap(),
-            test_logger(),
-        )
-        .unwrap();
+    for (raw, expected) in cases {
+        let portal = Portal::new(Url::parse(raw).unwrap(), test_logger()).unwrap();
         assert_eq!(portal.inner.network_mode, expected);
     }
 }
@@ -92,13 +109,15 @@ fn network_mode_checkpoint_values_match_listener_modes() {
 }
 
 #[test]
-fn network_mode_rejects_unknown_values() {
-    let error = Portal::new(
+fn net_is_an_ignored_unknown_parameter() {
+    let portal = Portal::new(
         Url::parse("portal://secret@127.0.0.1:2077?net=auto").unwrap(),
         test_logger(),
-    );
+    )
+    .unwrap();
 
-    assert!(error.is_err());
+    assert_eq!(portal.inner.network_mode, NetworkMode::Mix);
+    assert!(!portal.effective_url().contains("net="));
 }
 
 #[test]
@@ -141,6 +160,26 @@ fn native_next_defaults_to_quic_and_redacts_the_shared_key() {
     assert!(effective.contains("next=relay.example:2080"));
     assert!(!effective.contains("upstream"));
     assert_eq!(portal.inner.outbound.ping_ms(), 0);
+}
+
+#[test]
+fn native_next_uses_shared_endpoint_grammar_and_single_carrier_defaults() {
+    let portal = Portal::new(
+        Url::parse("portal://relay-key@*/tcp4:2077?next=upstream-key@relay.example/udp6:3088")
+            .unwrap(),
+        test_logger(),
+    )
+    .unwrap();
+
+    assert_eq!(portal.inner.network_mode, NetworkMode::Tcp);
+    assert_eq!(
+        portal.inner.outbound.next_endpoint(),
+        "relay.example/udp6:3088"
+    );
+    assert_eq!(
+        portal.inner.outbound.next_transport().as_deref(),
+        Some("up=udp down=udp mux=0 sni=none pin=none")
+    );
 }
 
 #[test]
@@ -298,17 +337,21 @@ fn all_network_modes_reject_tls_zero() {
 
 #[tokio::test]
 async fn network_mode_binds_only_selected_transports() {
-    for (query, expected_tcp, expected_udp) in [
-        ("", 1, 1),
-        ("?net=mix", 1, 1),
-        ("?net=tcp", 1, 0),
-        ("?net=udp", 0, 1),
-    ] {
+    for (path, expected_tcp, expected_udp) in [("", 1, 1), ("/tcp:PORT", 1, 0), ("/udp:PORT", 0, 1)]
+    {
         let reservation = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = reservation.local_addr().unwrap().port();
         drop(reservation);
         let portal = Portal::new(
-            Url::parse(&format!("portal://secret@127.0.0.1:{port}{query}")).unwrap(),
+            Url::parse(&if path.is_empty() {
+                format!("portal://secret@127.0.0.1:{port}")
+            } else {
+                format!(
+                    "portal://secret@127.0.0.1{}",
+                    path.replace("PORT", &port.to_string())
+                )
+            })
+            .unwrap(),
             test_logger(),
         )
         .unwrap();
@@ -325,9 +368,9 @@ fn portal_url_contract_rejects_invalid_structure_and_selected_values() {
     for raw in [
         "vector://secret@127.0.0.1:2077",
         "portal://secret:password@127.0.0.1:2077",
-        "portal://secret@127.0.0.1:2077/path",
+        "portal://secret@127.0.0.1:2077/tcp:2077",
+        "portal://secret@127.0.0.1/not-a-carrier:2077",
         "portal://secret@127.0.0.1:2077#fragment",
-        "portal://secret@127.0.0.1:2077?net=",
         "portal://secret@127.0.0.1:2077?socks=",
         "portal://secret@127.0.0.1:2077?rate=-1",
         "portal://secret@127.0.0.1:2077?dial=not-an-ip",
@@ -351,9 +394,10 @@ fn portal_ignores_unknown_parameters_and_keeps_first_duplicate() {
         test_logger(),
     )
     .unwrap();
-    assert_eq!(portal.inner.network_mode, NetworkMode::Tcp);
+    assert_eq!(portal.inner.network_mode, NetworkMode::Mix);
     assert_eq!(portal.inner.rate_limit, 1);
-    assert!(portal.effective_url().contains("?net=tcp&tls=1&"));
+    assert!(portal.effective_url().contains("?tls=1&"));
+    assert!(!portal.effective_url().contains("net="));
     assert!(!portal.effective_url().contains("alpn="));
     assert!(!portal.effective_url().contains("mux="));
     assert!(!portal.effective_url().contains("pool="));

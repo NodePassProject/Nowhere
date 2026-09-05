@@ -4,7 +4,7 @@
 //! In-process structured telemetry publisher.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{broadcast, watch};
@@ -23,6 +23,7 @@ const EVENT_CAPACITY: usize = 1_024;
 /// The in-process publisher shared by runtime orchestration and every flow.
 pub(crate) struct TelemetryHub {
     descriptor: InstanceDescriptor,
+    listening_descriptor: OnceLock<InstanceDescriptor>,
     lifecycle: watch::Sender<LifecycleSnapshot>,
     snapshots: watch::Sender<TelemetrySnapshot>,
     events: broadcast::Sender<ServerMessage>,
@@ -69,6 +70,7 @@ impl TelemetryHub {
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
         Arc::new(Self {
             descriptor,
+            listening_descriptor: OnceLock::new(),
             lifecycle,
             snapshots,
             events,
@@ -81,7 +83,16 @@ impl TelemetryHub {
     }
 
     pub(crate) fn descriptor(&self) -> &InstanceDescriptor {
-        &self.descriptor
+        self.listening_descriptor.get().unwrap_or(&self.descriptor)
+    }
+
+    /// Publishes actual bound addresses before the telemetry server starts.
+    pub(crate) fn set_listening_addresses(&self, tcp: &str, udp: &str) {
+        let mut descriptor = self.descriptor.clone();
+        descriptor
+            .config_summary
+            .push_str(&format!(" tcp={tcp} udp={udp}"));
+        let _ = self.listening_descriptor.set(descriptor);
     }
 
     pub(crate) fn unavailable_reason(&self) -> Option<&str> {

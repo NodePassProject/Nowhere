@@ -65,6 +65,45 @@ impl Portal {
             Ok(listeners) => listeners,
             Err(error) => return self.start_failed(error),
         };
+        for endpoint in &endpoints {
+            if let Ok(address) = endpoint.local_addr() {
+                self.inner
+                    .logger
+                    .info(format_args!("portal::run: listening on QUIC/UDP {address}"));
+            }
+        }
+        for listener in &tcp_listeners {
+            if let Ok(address) = listener.local_addr() {
+                self.inner
+                    .logger
+                    .info(format_args!("portal::run: listening on TLS/TCP {address}"));
+            }
+        }
+        let addresses = |addrs: Vec<std::net::SocketAddr>| {
+            if addrs.is_empty() {
+                "none".to_owned()
+            } else {
+                addrs
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            }
+        };
+        self.inner.telemetry.set_listening_addresses(
+            &addresses(
+                tcp_listeners
+                    .iter()
+                    .map(TcpListener::local_addr)
+                    .collect::<std::io::Result<_>>()?,
+            ),
+            &addresses(
+                endpoints
+                    .iter()
+                    .map(Endpoint::local_addr)
+                    .collect::<std::io::Result<_>>()?,
+            ),
+        );
         let telemetry_shutdown = CancellationToken::new();
         let mut telemetry_tasks: JoinSet<()> = JoinSet::new();
         match TelemetryServer::bind(self.inner.telemetry.clone()) {
@@ -293,9 +332,8 @@ impl Portal {
     /// Returns the effective startup URL that is logged for operators.
     pub(super) fn effective_url(&self) -> String {
         let base = format!(
-            "portal://{}?net={}&tls={}&rate={}&etar={}&dial={}&socks={}&next={}",
+            "portal://{}?tls={}&rate={}&etar={}&dial={}&socks={}&next={}",
             self.inner.endpoint_addr,
-            self.inner.network_mode,
             self.inner.tls_mode,
             self.inner.rate_limit,
             self.inner.etar_limit,
@@ -316,12 +354,14 @@ impl Portal {
         if !self.inner.network_mode.listens_udp() {
             return Ok(Vec::new());
         }
-        self.inner
-            .bind_addrs
-            .iter()
-            .copied()
-            .map(|addr| listen_endpoint(self.inner.quic_server_config.clone(), addr))
-            .collect()
+        bind_carrier(
+            &self.inner.udp_bind_addrs,
+            self.inner.allow_udp_family_degrade,
+            |addr| listen_endpoint(self.inner.quic_server_config.clone(), addr),
+            |addr, error| self.inner.logger.warn(format_args!(
+                "portal::listen_endpoints: UDP address family unavailable for {addr}; continuing: {error:#}"
+            )),
+        ).context("portal::listen_endpoints: failed to open UDP listeners")
     }
 
     /// Opens TLS/TCP listeners for network modes that accept TCP service.
@@ -329,13 +369,55 @@ impl Portal {
         if !self.inner.network_mode.listens_tcp() {
             return Ok(Vec::new());
         }
-        self.inner
-            .bind_addrs
-            .iter()
-            .copied()
-            .map(listen_tcp)
-            .collect()
+        bind_carrier(
+            &self.inner.tcp_bind_addrs,
+            self.inner.allow_tcp_family_degrade,
+            listen_tcp,
+            |addr, error| self.inner.logger.warn(format_args!(
+                "portal::listen_tcp_listeners: TCP address family unavailable for {addr}; continuing: {error:#}"
+            )),
+        ).context("portal::listen_tcp_listeners: failed to open TCP listeners")
     }
+}
+
+/// Owns every successful bind until the whole carrier has passed validation.
+fn bind_carrier<T>(
+    addresses: &[std::net::SocketAddr],
+    allow_degrade: bool,
+    mut bind: impl FnMut(std::net::SocketAddr) -> Result<T>,
+    mut warn: impl FnMut(std::net::SocketAddr, &anyhow::Error),
+) -> Result<Vec<T>> {
+    let mut listeners = Vec::new();
+    for &address in addresses {
+        match bind(address) {
+            Ok(listener) => listeners.push(listener),
+            Err(error) if allow_degrade && family_is_unavailable(&error) => warn(address, &error),
+            Err(error) => return Err(error),
+        }
+    }
+    if listeners.is_empty() {
+        anyhow::bail!("no declared address could be bound");
+    }
+    Ok(listeners)
+}
+
+fn family_is_unavailable(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(io_error_is_family_unavailable)
+    })
+}
+
+fn io_error_is_family_unavailable(error: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    const FAMILY_UNAVAILABLE: i32 = libc::EAFNOSUPPORT;
+    #[cfg(windows)]
+    const FAMILY_UNAVAILABLE: i32 = 10047; // WSAEAFNOSUPPORT
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported
+    ) || error.raw_os_error() == Some(FAMILY_UNAVAILABLE)
 }
 
 fn listener_exit_error(
@@ -350,3 +432,7 @@ fn listener_exit_error(
         None => anyhow::anyhow!("portal::run: {name} listener set became empty unexpectedly"),
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/portal/runtime.rs"]
+mod family_error_tests;

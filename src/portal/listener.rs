@@ -3,7 +3,7 @@
 
 //! QUIC endpoint and TCP listener setup plus accept loops.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -178,15 +178,6 @@ pub(super) fn listen_tcp(addr: SocketAddr) -> Result<TcpListener> {
         .with_context(|| format!("portal::listen_tcp: failed to listen for TLS/TCP on {addr}"))
 }
 
-/// Formats a visible endpoint address without adding brackets to empty hosts.
-pub(super) fn format_endpoint_addr(host: &str, port: u16) -> String {
-    match host.parse::<IpAddr>() {
-        Ok(ip) => SocketAddr::new(ip, port).to_string(),
-        Err(_) if host.is_empty() => format!(":{port}"),
-        Err(_) => format!("{host}:{port}"),
-    }
-}
-
 /// Applies transport limits that should be set before the config is shared.
 pub(super) fn configure_transport(
     server_config: &mut quinn::ServerConfig,
@@ -210,3 +201,7 @@ pub(super) fn configure_transport(
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../tests/portal/listener.rs"]
+mod socket_tests;
