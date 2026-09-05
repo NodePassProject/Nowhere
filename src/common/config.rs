@@ -67,7 +67,7 @@ fn decode_query_component(raw: &str, name: &str) -> Result<String> {
                 || !bytes[index + 1].is_ascii_hexdigit()
                 || !bytes[index + 2].is_ascii_hexdigit()
             {
-                bail!("common::config::query_first: invalid percent encoding in {name}");
+                bail!("invalid percent encoding in {name}");
             }
             index += 3;
         } else {
@@ -76,7 +76,7 @@ fn decode_query_component(raw: &str, name: &str) -> Result<String> {
     }
     percent_decode_str(raw)
         .decode_utf8()
-        .with_context(|| format!("common::config::query_first: invalid UTF-8 in {name}"))
+        .with_context(|| format!("invalid UTF-8 in {name}"))
         .map(|value| value.into_owned())
 }
 

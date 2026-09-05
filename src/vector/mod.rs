@@ -203,12 +203,10 @@ impl Vector {
     }
 
     fn build(parsed_url: Url, logger: Logger, lifecycle: Arc<Lifecycle>) -> Result<Self> {
-        let config = VectorConfig::from_url(&parsed_url)
-            .context("vector::Vector::new: invalid Vector configuration")?;
+        let config = VectorConfig::from_url(&parsed_url)?;
         let telemetry_interval =
             telemetry_interval().context("vector::Vector::new: invalid NOW_TELEMETRY_INTERVAL")?;
-        let credentials =
-            Credentials::new(&parsed_url).context("vector::Vector::new: invalid shared key")?;
+        let credentials = Credentials::new(&parsed_url)?;
         let telemetry_summary = format!(
             "portal={} up={} down={} mux={} socks={}",
             config.portal_endpoint(),

@@ -7,7 +7,7 @@ use std::env;
 use std::io::IsTerminal;
 
 use anyhow::{Context, Result, bail};
-use nowhere::common::{LogLevel, Logger, query_first};
+use nowhere::common::{LogLevel, Logger, query_first, validate_endpoint_url_input};
 use nowhere::portal::Portal;
 use nowhere::vector::Vector;
 use url::{ParseError, Url};
@@ -30,13 +30,16 @@ Commands:
 
 Portal URL:
   portal://<shared-key>@<listen-host>:<listen-port>[?<parameters>]
+  portal://<shared-key>@<listen-host>/<carrier>:<port>[/<carrier>:<port>]
 
 Vector URL:
   vector://<shared-key>@<portal-host>:<portal-port>?socks=<listen-endpoint>[&<parameters>]
+  vector://<shared-key>@<portal-host>/<carrier>:<port>[/<carrier>:<port>]?socks=...
 
 Examples:
   nowhere 'portal://secret@:2077'
-  nowhere 'portal://secret@0.0.0.0:2077?log=info&net=tcp'
+  nowhere 'portal://secret@*/tcp4:2077?log=info'
+  nowhere 'portal://secret@*/tcp:2077/udp:3088'
   nowhere 'portal://secret@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
   nowhere 'portal://secret@:2077?socks=user:pass@127.0.0.1:1080'
   nowhere 'portal://relay-key@:2077?next=upstream-key@origin.example:2077'
@@ -51,13 +54,13 @@ Required URL parts:
   Password credentials are not supported.
 
 Listen host:
-  empty            Bind IPv4 and IPv6 wildcard sockets.
+  *                Bind IPv4 and IPv6 wildcard sockets as allowed by carrier.
+  empty            Compact form only; equivalent to *.
   0.0.0.0          Bind IPv4 wildcard only.
   [::]             Bind IPv6 wildcard only.
-  IP or hostname   Bind the resolved listen address.
+  IP or hostname   Bind all matching resolved listen addresses.
 
 Portal parameters:
-  net=mix|tcp|udp  Listener mode. Default: mix.
   tls=1|2          TLS mode. 1 for RAM certificate; 2 for PEM files. Default: 1.
                    tls=0 is not supported.
   crt=<path>       PEM certificate chain for tls=2.
@@ -67,12 +70,13 @@ Portal parameters:
   dial=<ip|auto>   Local source IP for outbound target connections. Default: auto.
   socks=<proxy>    SOCKS5 outbound proxy: host:port or user:pass@host:port.
                    Omit or use none to disable.
-  next=<portal>    Native upstream Portal: shared-key@host:port. Omit or use
+  next=<portal>    Native upstream Portal using the same endpoint grammar.
+                   Example: shared-key@host/tcp:2077/udp6:3088. Omit or use
                    none to disable. Mutually exclusive with socks.
   up=tcp|udp|mix   Native upstream upload carrier. Mix chooses per flow.
-                   Default: udp.
+                   Defaults to the only declared carrier, or UDP.
   down=tcp|udp|mix Native upstream download carrier. Mix chooses per flow.
-                   Default: udp.
+                   Defaults to the only declared carrier, or UDP.
   mux=0|1          Use TLS Mux when the native route can select TCP. Default: 0.
   sni=<name|none>  Native upstream certificate DNS name. Default: none.
   pin=<sha256|none> Native upstream certificate fingerprint. Default: none.
@@ -80,8 +84,8 @@ Portal parameters:
   log=<level>      none, debug, info, warn, error, event. Default: info.
 
 Vector parameters:
-  up=tcp|udp|mix   Upload carrier. Mix chooses per flow. Default: udp.
-  down=tcp|udp|mix Download carrier. Mix chooses per flow. Default: udp.
+  up=tcp|udp|mix   Upload carrier. Defaults to the only declared carrier, or UDP.
+  down=tcp|udp|mix Download carrier. Defaults to the only declared carrier, or UDP.
   mux=0|1          Use TLS Mux when either direction can select TCP. Default: 0.
   sni=<name|none>  Verify the certificate for a DNS name. Empty, omitted, or
                    none disables certificate validation. Default: none.
@@ -96,6 +100,13 @@ Vector parameters:
 Query handling:
   Unknown parameters are ignored. If a parameter appears more than once, only
   its first value is used. Missing optional parameters use their defaults.
+  The net parameter is ignored; carrier paths select listeners.
+
+Carrier endpoint grammar:
+  tcp, udp          Do not restrict the address family.
+  tcp4, udp4        Use IPv4 only.
+  tcp6, udp6        Use IPv6 only.
+  host:port         Shorthand for TCP and UDP on the same port.
 
 Transport capabilities:
   TLS/TCP          TCP relay and UDP-over-TCP (UoT).
@@ -137,14 +148,13 @@ Environment:
 #[tokio::main]
 async fn main() {
     if let Err(err) = start(env::args().collect()).await {
-        eprintln!(
-            "nowhere-{VERSION} {}/{} pid={} error={err:#}",
-            env::consts::OS,
-            env::consts::ARCH,
-            std::process::id(),
-        );
+        eprintln!("{}", format_start_error(&err));
         std::process::exit(1);
     }
+}
+
+fn format_start_error(error: &anyhow::Error) -> String {
+    format!("error: {error:#}")
 }
 
 async fn start(args: Vec<String>) -> Result<()> {
@@ -152,7 +162,7 @@ async fn start(args: Vec<String>) -> Result<()> {
         return run_tui().await;
     }
     if args.len() > 2 {
-        bail!("main::start: expected exactly one configuration URL");
+        bail!("expected exactly one configuration URL; run 'nowhere --help' for usage");
     }
 
     match args[1].as_str() {
@@ -172,17 +182,16 @@ async fn start(args: Vec<String>) -> Result<()> {
         _ => {}
     }
 
-    let command_url =
-        parse_command_url(&args[1]).with_context(|| "main::start: failed to parse command URL")?;
+    let command_url = parse_command_url(&args[1]).with_context(|| "invalid configuration URL")?;
     let scheme = command_url.url.scheme().to_string();
     if !matches!(scheme.as_str(), "portal" | "vector") {
-        bail!("main::start: unknown URL scheme: {scheme}");
+        bail!("invalid configuration URL: scheme must be portal or vector, found {scheme:?}");
     }
     // Startup only needs `log` here. Each role parses its own configuration,
     // including Portal's intentionally ignored upstream options when `next`
     // is disabled.
     let query = query_first(&command_url.url, &["log"])
-        .with_context(|| "main::start: invalid URL query")?;
+        .with_context(|| "invalid configuration URL query")?;
     let logger = init_logger(query.get("log").map(String::as_str))?;
 
     match scheme.as_str() {
@@ -191,16 +200,14 @@ async fn start(args: Vec<String>) -> Result<()> {
                 command_url.url,
                 command_url.listen_host.as_deref(),
                 logger,
-            )
-            .with_context(|| "main::start: failed to create portal")?;
+            )?;
             portal.run().await
         }
         "vector" => {
-            let vector = Vector::new(command_url.url, logger)
-                .with_context(|| "main::start: failed to create vector")?;
+            let vector = Vector::new(command_url.url, logger)?;
             vector.run().await
         }
-        _ => bail!("main::start: unknown URL scheme: {}", scheme),
+        _ => unreachable!("scheme was validated above"),
     }
 }
 
@@ -225,6 +232,7 @@ struct CommandUrl {
 }
 
 fn parse_command_url(raw: &str) -> Result<CommandUrl> {
+    validate_endpoint_url_input(raw, "endpoint")?;
     match Url::parse(raw) {
         Ok(url) => Ok(CommandUrl {
             url,
@@ -285,7 +293,9 @@ fn init_logger(level: Option<&str>) -> Result<Logger> {
             logger.set_log_level(LogLevel::Event);
             logger.event(format_args!("main::init_logger: log level set to EVENT"));
         }
-        Some(value) => bail!("main::init_logger: invalid log level: {value}"),
+        Some(value) => {
+            bail!("log must be none, debug, info, warn, error, or event; found {value:?}")
+        }
     }
     Ok(logger)
 }

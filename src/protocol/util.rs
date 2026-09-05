@@ -20,7 +20,7 @@ pub(super) fn decode_url_username(parsed_url: &Url) -> Result<Vec<u8>> {
                 || !bytes[index + 1].is_ascii_hexdigit()
                 || !bytes[index + 2].is_ascii_hexdigit()
             {
-                bail!("protocol::auth::Credentials::new: malformed percent escape");
+                bail!("malformed percent escape in shared key");
             }
             index += 3;
         } else {
@@ -29,7 +29,7 @@ pub(super) fn decode_url_username(parsed_url: &Url) -> Result<Vec<u8>> {
     }
     let decoded = percent_decode_str(username)
         .decode_utf8()
-        .context("protocol::auth::Credentials::new: shared key is not valid UTF-8")?;
+        .context("shared key is not valid UTF-8")?;
     Ok(decoded.as_bytes().to_vec())
 }
 

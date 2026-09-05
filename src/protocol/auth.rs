@@ -51,7 +51,7 @@ impl Credentials {
     /// Parses the shared key from the URL username and derives its auth key.
     pub fn new(parsed_url: &Url) -> Result<Self> {
         if parsed_url.password().is_some() {
-            bail!("protocol::auth::Credentials::new: password credentials are not supported");
+            bail!("password credentials are not supported; put the shared key before '@'");
         }
         let shared_key = decode_url_username(parsed_url)?;
         Self::from_shared_key(&shared_key)
@@ -60,10 +60,10 @@ impl Credentials {
     /// Derives credentials directly from non-empty shared-key bytes.
     pub fn from_shared_key(shared_key: &[u8]) -> Result<Self> {
         if shared_key.is_empty() {
-            bail!("protocol::auth::Credentials::from_shared_key: missing shared key");
+            bail!("missing shared key before '@'");
         }
         if shared_key.len() > u8::MAX as usize {
-            bail!("protocol::auth::Credentials::from_shared_key: shared key exceeds 255 bytes");
+            bail!("shared key exceeds the 255-byte limit");
         }
         Ok(Self {
             auth_key: derive_auth_key(shared_key),
