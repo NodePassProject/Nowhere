@@ -13,8 +13,9 @@ The documentation has one source of truth for each concern:
 | Understand version negotiation and peer interoperability | [Interoperability](compatibility.md) |
 | Implement another client or integration | [Integrations](integrations.md) |
 
-`protocol.md` is normative. Portal and Vector share one internal bounded TLS
-Mux engine.
+`configuration.md` is authoritative for command URLs and runtime settings.
+`protocol.md` is normative for bytes exchanged between peers. Portal and
+Vector share one internal bounded TLS Mux engine.
 
 Portal and Vector have the same transport behavior on Linux, macOS, and
 Windows. Platform-specific packaging, process control, filesystem paths, and
@@ -53,6 +54,34 @@ the protocol.
 Each Portal chooses exactly one outbound path for a flow: direct target
 access, an outbound SOCKS5 proxy, or a native `next` Portal. The carrier choice
 on one hop does not constrain the carrier choice on another hop.
+
+## Endpoint summary
+
+Portal listeners, Vector remote endpoints, and Portal `next` endpoints use the
+same carrier grammar:
+
+```text
+HOST:PORT
+HOST/CARRIER:PORT[/CARRIER:PORT]
+```
+
+The compact form declares TLS/TCP and QUIC/UDP on one port. The explicit form
+declares only its listed carriers. `tcp` and `udp` accept IPv4 and IPv6;
+`tcp4`, `udp4`, `tcp6`, and `udp6` restrict the address family. Both carriers
+share `HOST`, while their ports and address families remain independent.
+
+| Role | Host rule | Endpoint result |
+|---|---|---|
+| Portal | `*`, IP literal, hostname, or compact empty host | Opens every declared listener |
+| Vector | IP literal or hostname | Dials only the declared remote carriers |
+| Portal `next` | IP literal or hostname | Uses the same client engine as Vector |
+
+`portal://key@:2000` is the compact alias for
+`portal://key@*:2000`. Vector and `next` reject `*`. A Portal resolves listener
+hostnames once at startup and binds every matching address; clients resolve and
+filter each carrier by its declared family. Configuration errors stop startup
+before service traffic is accepted. The full syntax and error rules are in
+[Configuration](configuration.md).
 
 ## Protocol summary
 

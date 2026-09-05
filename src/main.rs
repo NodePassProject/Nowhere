@@ -107,6 +107,22 @@ Carrier endpoint grammar:
   tcp4, udp4        Use IPv4 only.
   tcp6, udp6        Use IPv6 only.
   host:port         Shorthand for TCP and UDP on the same port.
+  Explicit paths enable only their listed carriers. TCP and UDP share the host
+  but may use independent ports and address families. Carrier order is ignored;
+  effective configuration prints TCP before UDP.
+  Do not combine an authority port with carrier paths. Empty or trailing path
+  segments, duplicate or unknown carriers, family conflicts, and port 0 fail.
+
+Portal binding:
+  An unrestricted * carrier opens separate IPv4 and IPv6 wildcard sockets.
+  IPv6 listeners are V6ONLY. Hostnames resolve once at startup and bind every
+  matching address. Each declared carrier must bind at least one address.
+  Only an unavailable family on unrestricted * may degrade with a warning.
+
+Vector and next dialing:
+  * is invalid. DNS results are filtered independently for each carrier family.
+  A single carrier is the default for both directions; with both, UDP is the
+  default. Explicit up/down must exist, and mix requires both carriers.
 
 Transport capabilities:
   TLS/TCP          TCP relay and UDP-over-TCP (UoT).

@@ -68,9 +68,23 @@ nowhere tui
                                   +------------+                          +------------+
 ```
 
-The compact Portal endpoint accepts TLS/TCP and QUIC/UDP on the same port.
-Carrier paths select one transport, separate their ports, or restrict address
-families, for example `@*/tcp4:2006/udp6:2017`.
+Every service URL has one shared host and either a compact or explicit
+endpoint. The compact form enables both carriers on one port. The explicit
+form enables only the listed carriers and gives each one its own port and
+address-family policy.
+
+| Endpoint | Meaning |
+|---|---|
+| `@*:2000` | TLS/TCP and QUIC/UDP wildcard candidates, port 2000 |
+| `@*/tcp:2006` | TLS/TCP only, IPv4 and IPv6 |
+| `@*/udp:2017` | QUIC/UDP only, IPv4 and IPv6 |
+| `@*/tcp4:2006/udp6:2017` | TLS/TCP on IPv4 and QUIC/UDP on IPv6 |
+
+`*` is a Portal listen host. Vector and `next` use a concrete IP address or
+hostname. The compact Portal form also accepts an empty host, so `@:2000` and
+`@*:2000` have the same meaning. See
+[Configuration](docs/configuration.md) for the complete grammar, validation
+rules, DNS behavior, family availability, and canonical output.
 
 ### One flow, two transport decisions
 

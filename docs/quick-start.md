@@ -31,6 +31,33 @@ The compact endpoint listens for TLS/TCP and QUIC on the same numeric port.
 Use `portal://secret@*/tcp4:2006` for a TCP-only IPv4 listener, or
 `portal://secret@*/tcp:2006/udp:2017` to use separate ports.
 
+On a host with IPv4 and IPv6 available, choose a listener form from the service
+edge you want to expose:
+
+| Portal endpoint | TCP listeners | UDP listeners |
+|---|---|---|
+| `@:2000` | `0.0.0.0:2000`, `[::]:2000` | `0.0.0.0:2000`, `[::]:2000` |
+| `@*:2000` | `0.0.0.0:2000`, `[::]:2000` | `0.0.0.0:2000`, `[::]:2000` |
+| `@*/tcp:2006/udp:2017` | `0.0.0.0:2006`, `[::]:2006` | `0.0.0.0:2017`, `[::]:2017` |
+| `@*/tcp4:2006` | `0.0.0.0:2006` | disabled |
+| `@*/udp6:2017` | disabled | `[::]:2017` |
+
+The IPv6 listeners are `V6ONLY`; the IPv4 and IPv6 rows represent separate
+sockets. A hostname or IP literal replaces `*` when the Portal should bind
+only selected interfaces. Hostnames are resolved once during startup.
+
+For independent carrier ports, start Portal with:
+
+```text
+nowhere 'portal://secret@*/tcp:2006/udp:2017?log=info'
+```
+
+Portal prints one listening line for each bound TCP or UDP address. The TUI
+shows the actual address lists after startup. A carrier must bind at least one
+address; explicit families, concrete addresses, permission errors, and occupied
+ports fail startup. Only an unrestricted `*` listener may continue when the
+operating system does not support one address family.
+
 ## 2. Start Vector
 
 Dedicated TLS lanes in both directions:
@@ -44,6 +71,28 @@ QUIC in both directions:
 ```text
 nowhere 'vector://secret@127.0.0.1:2000?up=udp&down=udp&socks=127.0.0.1:1080'
 ```
+
+When Portal uses independent ports, Vector declares the same endpoint:
+
+```text
+nowhere 'vector://secret@127.0.0.1/tcp:2006/udp:2017?up=tcp&down=udp&socks=127.0.0.1:1080'
+```
+
+The carrier path describes what can be dialed. `up` and `down` choose from
+those carriers for each logical direction. A single-carrier endpoint needs no
+explicit direction policy:
+
+```text
+nowhere 'vector://secret@127.0.0.1/tcp4:2006?socks=127.0.0.1:1080'
+nowhere 'vector://secret@[::1]/udp6:2017?socks=127.0.0.1:1080'
+```
+
+The first command defaults both directions to TCP; the second defaults both to
+UDP. Vector rejects `up`, `down`, or `mix` when the endpoint does not declare
+the required carrier. Vector resolves TCP and UDP independently and never
+ignores a `4` or `6` suffix. Check the Portal log, local firewall, container
+port publication, and the Vector endpoint together when one carrier is
+unreachable.
 
 The full route-policy matrix is:
 
@@ -64,8 +113,8 @@ nowhere 'vector://secret@127.0.0.1:2000?up=mix&down=mix&socks=127.0.0.1:1080'
 
 `mix/mix` chooses `tcp/tcp` or `udp/udp` once per flow. A single mixed
 direction can resolve to a split carrier pair. Declaring both carriers makes
-every matrix cell reachable. The primary choice has a `NOW_MIX_FALLBACK_TIMEOUT` budget
-(default `1s`).
+every matrix cell reachable. The primary choice has a
+`NOW_MIX_FALLBACK_TIMEOUT` budget (default `1s`).
 
 TLS Mux is enabled on Vector. Portal recognizes the marked carrier
 automatically:

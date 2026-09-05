@@ -4,10 +4,67 @@ URLs and environment variables have the same meaning on Linux, macOS, and
 Windows. Shell quoting and filesystem path syntax follow the host platform;
 see [Platforms](platforms.md).
 
+## Service endpoint grammar
+
+Portal, Vector, and native Portal chaining share one endpoint model:
+
+```text
+portal://KEY@HOST:PORT[?QUERY]
+portal://KEY@HOST/CARRIER:PORT[/CARRIER:PORT][?QUERY]
+
+vector://KEY@HOST:PORT?QUERY
+vector://KEY@HOST/CARRIER:PORT[/CARRIER:PORT]?QUERY
+
+next=KEY@HOST:PORT
+next=KEY@HOST/CARRIER:PORT[/CARRIER:PORT]
+```
+
+The outer URL remains a standard URL. `KEY` is URL userinfo, `HOST` is the URL
+host, and each `CARRIER:PORT` is a path segment. RFC 3986 defines the standard
+[authority](https://www.rfc-editor.org/rfc/rfc3986.html#section-3.2) and allows
+the colon in a [path segment](https://www.rfc-editor.org/rfc/rfc3986.html#section-3.3),
+so the explicit form does not replace or extend URL authority grammar.
+
+| Form | Enabled carriers | Ports | Address-family policy |
+|---|---|---|---|
+| `HOST:PORT` | TCP and UDP | Shared | Unrestricted |
+| `HOST/tcp:PORT` | TCP only | TCP port | Unrestricted |
+| `HOST/udp:PORT` | UDP only | UDP port | Unrestricted |
+| `HOST/tcp:PORT/udp:PORT` | TCP and UDP | Independent | Unrestricted |
+| `HOST/tcp4:PORT/udp6:PORT` | TCP and UDP | Independent | TCP IPv4, UDP IPv6 |
+
+Carrier names have the same meaning in every role:
+
+| Carrier | Transport | Accepted address family |
+|---|---|---|
+| `tcp` | TLS over TCP | IPv4 and IPv6 |
+| `tcp4` | TLS over TCP | IPv4 only |
+| `tcp6` | TLS over TCP | IPv6 only |
+| `udp` | QUIC over UDP | IPv4 and IPv6 |
+| `udp4` | QUIC over UDP | IPv4 only |
+| `udp6` | QUIC over UDP | IPv6 only |
+
+`tcp` and `udp` mean that the endpoint does not restrict the address family.
+They do not require both families to exist on the host. An IP literal narrows
+an unrestricted carrier naturally; an explicit suffix that conflicts with the
+literal is invalid.
+
+Both carriers always share `HOST`. Use separate service URLs when TCP and UDP
+must use different IP addresses or hostnames. The explicit path controls which
+carriers exist, so an omitted carrier is disabled rather than assigned a
+default port.
+
+Canonical output lists TCP before UDP regardless of input order. It uses the
+compact form when both carriers are unrestricted and use the same port;
+otherwise it prints the explicit path. Effective configuration, logs, and the
+TUI use this normalized endpoint and omit the shared key.
+
 ## Portal URL
 
 ```text
 portal://shared-key@host:port?tls=1&log=info
+portal://shared-key@*:2000?tls=1&log=info
+portal://shared-key@*/tcp:2006/udp:2017?tls=1&log=info
 portal://shared-key@host/tcp4:2006/udp6:2017?tls=1&log=info
 ```
 
@@ -25,6 +82,20 @@ An unrestricted wildcard listener can omit an unavailable address family with
 a warning. Each declared carrier must bind at least one address. Explicit
 address families, concrete addresses, occupied ports, and permission failures
 cause startup to fail and release the listeners already opened.
+
+The Portal host controls binding:
+
+| Host | Listener behavior |
+|---|---|
+| empty in compact form | Alias for `*` |
+| `*` | Separate wildcard sockets for every permitted address family |
+| IPv4 literal | Bind that IPv4 address |
+| bracketed IPv6 literal | Bind that IPv6 address |
+| hostname | Resolve once and bind every matching, deduplicated address |
+
+IPv6 TCP and UDP listeners set `V6ONLY`, including wildcard listeners. A
+dual-stack wildcard therefore consists of distinct `0.0.0.0` and `[::]`
+sockets instead of relying on an operating-system dual-stack default.
 
 | Query | Values | Default |
 |---|---|---|
@@ -49,8 +120,22 @@ Portal. These upstream options are ignored when `next` is absent or `none`.
 
 ```text
 vector://shared-key@host:port?up=tcp&down=tcp&socks=127.0.0.1:1080
+vector://shared-key@host/tcp:2006?socks=127.0.0.1:1080
+vector://shared-key@host/udp6:2017?socks=127.0.0.1:1080
 vector://shared-key@host/tcp:2006/udp:2017?up=tcp&down=udp&socks=127.0.0.1:1080
 ```
+
+Vector uses the TCP carrier port only for TLS and the UDP carrier port only for
+QUIC. Hostname results are filtered independently for each carrier. `tcp4` and
+`udp4` never fall through to IPv6, and `tcp6` and `udp6` never fall through to
+IPv4. If no resolved address matches the selected family, dialing fails with a
+configuration-specific address error.
+
+When an endpoint declares one carrier, omitted `up` and `down` both select that
+carrier. When both carriers exist, each omitted direction selects UDP. An
+explicit direction may select only a declared carrier, and `mix` requires both
+TCP and UDP. These checks run before the SOCKS listener begins accepting
+traffic.
 
 | Query | Values | Default |
 |---|---|---|
@@ -61,6 +146,30 @@ vector://shared-key@host/tcp:2006/udp:2017?up=tcp&down=udp&socks=127.0.0.1:1080
 | `rate`, `etar` | Mbps, `0` disables limit | `0` |
 | `socks` | required local listen address, optionally credentials | — |
 | `log` | logging threshold | `info` |
+
+## Native next endpoint
+
+The `next` value omits a scheme but otherwise uses the Vector endpoint grammar:
+
+```text
+portal://relay-key@*/tcp4:2006?next=origin-key@origin.example/udp6:2017
+portal://relay-key@:2000?next=origin-key@origin.example/tcp:2006/udp:2017&up=tcp&down=udp
+```
+
+The local Portal listener and upstream endpoint are independent. The first
+example accepts inbound TLS/TCP over IPv4 and opens the next hop with QUIC/UDP
+over IPv6. A carrier or family chosen locally does not constrain the next hop.
+
+`next` must contain exactly one encoded shared key, `@`, and one endpoint. Its
+host must be concrete; `*` is invalid. It has no inner query or fragment.
+`up`, `down`, `mux`, `sni`, and `pin` remain query parameters of the outer
+Portal URL. Reserved bytes in the nested key are percent-encoded once and are
+decoded once when the upstream credentials are built.
+
+The `dial` IP from the outer Portal URL also constrains native upstream
+connections. The selected endpoint family and the local `dial` family must
+both match a resolved upstream address. No connection crosses an explicit
+family boundary to recover from a failure.
 
 ## Option scope
 
@@ -151,6 +260,23 @@ present.
   `/udp:PORT` select a single carrier; compact endpoints enable both carriers.
 - `socks=user:pass@host:port` enables RFC 1929 authentication. Omitting the
   credentials enables SOCKS5 no-auth.
+
+The following inputs fail validation before a Portal or Vector reaches its
+running state:
+
+| Invalid shape | Reason |
+|---|---|
+| `host:2000/tcp:2006` | Compact authority port and carrier path are mutually exclusive |
+| `host/tcp:2006/` | Trailing slash creates an empty carrier segment |
+| `host/tcp:2006/tcp6:2006` | TCP is declared more than once |
+| `host/sctp:2000` | Carrier name is unknown |
+| `192.0.2.1/tcp6:2006` | IPv4 literal conflicts with IPv6-only TCP |
+| `host/tcp:0` | Carrier ports are limited to `1..=65535` |
+| `*/tcp:2006` on Vector or `next` | Wildcard is limited to Portal listeners |
+
+Errors identify the role and invalid endpoint component, exit with a nonzero
+status, and do not print shared keys. Dot segments, including percent-encoded
+forms, are rejected before a URL parser can normalize the path.
 
 ## Environment
 
