@@ -25,19 +25,19 @@ fn parse(raw: &str) -> Result<Option<SocksConfig>> {
 #[test]
 fn parses_disabled_and_endpoint_forms() {
     for raw in [
-        "portal://secret@127.0.0.1:2077",
-        "portal://secret@127.0.0.1:2077?socks=",
-        "portal://secret@127.0.0.1:2077?socks=none",
+        "portal://secret@127.0.0.1:2000",
+        "portal://secret@127.0.0.1:2000?socks=",
+        "portal://secret@127.0.0.1:2000?socks=none",
     ] {
         assert!(parse(raw).unwrap().is_none());
     }
 
-    let domain = parse("portal://secret@127.0.0.1:2077?socks=proxy.test:1080")
+    let domain = parse("portal://secret@127.0.0.1:2000?socks=proxy.test:1080")
         .unwrap()
         .unwrap();
     assert_eq!(domain.endpoint(), "proxy.test:1080");
 
-    let ipv6 = parse("portal://secret@127.0.0.1:2077?socks=[::1]:1080")
+    let ipv6 = parse("portal://secret@127.0.0.1:2000?socks=[::1]:1080")
         .unwrap()
         .unwrap();
     assert_eq!(ipv6.endpoint(), "[::1]:1080");
@@ -46,7 +46,7 @@ fn parses_disabled_and_endpoint_forms() {
 #[test]
 fn parses_percent_encoded_credentials_without_exposing_them() {
     let config =
-        parse("portal://secret@127.0.0.1:2077?socks=user%3Aname:p%40ss%26word@proxy.test:1080")
+        parse("portal://secret@127.0.0.1:2000?socks=user%3Aname:p%40ss%26word@proxy.test:1080")
             .unwrap()
             .unwrap();
     let credentials = config.credentials().unwrap();
@@ -61,14 +61,14 @@ fn parses_percent_encoded_credentials_without_exposing_them() {
 #[test]
 fn rejects_ambiguous_or_invalid_configuration() {
     for raw in [
-        "portal://secret@127.0.0.1:2077?socks=user@proxy.test:1080",
-        "portal://secret@127.0.0.1:2077?socks=:pass@proxy.test:1080",
-        "portal://secret@127.0.0.1:2077?socks=user:@proxy.test:1080",
-        "portal://secret@127.0.0.1:2077?socks=user:p:ass@proxy.test:1080",
-        "portal://secret@127.0.0.1:2077?socks=user:p+ass@proxy.test:1080",
-        "portal://secret@127.0.0.1:2077?socks=proxy.test:0",
-        "portal://secret@127.0.0.1:2077?socks=::1:1080",
-        "portal://secret@127.0.0.1:2077?socks=user:%GG@proxy.test:1080",
+        "portal://secret@127.0.0.1:2000?socks=user@proxy.test:1080",
+        "portal://secret@127.0.0.1:2000?socks=:pass@proxy.test:1080",
+        "portal://secret@127.0.0.1:2000?socks=user:@proxy.test:1080",
+        "portal://secret@127.0.0.1:2000?socks=user:p:ass@proxy.test:1080",
+        "portal://secret@127.0.0.1:2000?socks=user:p+ass@proxy.test:1080",
+        "portal://secret@127.0.0.1:2000?socks=proxy.test:0",
+        "portal://secret@127.0.0.1:2000?socks=::1:1080",
+        "portal://secret@127.0.0.1:2000?socks=user:%GG@proxy.test:1080",
     ] {
         assert!(parse(raw).is_err(), "accepted {raw}");
     }
@@ -77,7 +77,7 @@ fn rejects_ambiguous_or_invalid_configuration() {
 #[test]
 fn duplicate_socks_uses_the_first_value() {
     let config =
-        parse("portal://secret@127.0.0.1:2077?socks=proxy.test:1080&socks=other.test:1080")
+        parse("portal://secret@127.0.0.1:2000?socks=proxy.test:1080&socks=other.test:1080")
             .unwrap()
             .unwrap();
 
@@ -86,7 +86,7 @@ fn duplicate_socks_uses_the_first_value() {
 
 #[test]
 fn malformed_unknown_query_key_is_ignored() {
-    let config = parse("portal://secret@127.0.0.1:2077?%FF=x&socks=proxy.test:1080")
+    let config = parse("portal://secret@127.0.0.1:2000?%FF=x&socks=proxy.test:1080")
         .unwrap()
         .unwrap();
 
@@ -98,11 +98,11 @@ fn credential_lengths_follow_rfc_1929() {
     let username = "u".repeat(255);
     let password = "p".repeat(255);
     let accepted =
-        format!("portal://secret@127.0.0.1:2077?socks={username}:{password}@proxy.test:1080");
+        format!("portal://secret@127.0.0.1:2000?socks={username}:{password}@proxy.test:1080");
     assert!(parse(&accepted).is_ok());
 
     let username = "u".repeat(256);
-    let rejected = format!("portal://secret@127.0.0.1:2077?socks={username}:p@proxy.test:1080");
+    let rejected = format!("portal://secret@127.0.0.1:2000?socks={username}:p@proxy.test:1080");
     assert!(parse(&rejected).is_err());
 }
 
@@ -124,7 +124,7 @@ async fn tcp_connect_uses_only_no_auth_and_preserves_domain() {
         stream.write_all(&payload).await.unwrap();
     });
 
-    let config = parse(&format!("portal://secret@127.0.0.1:2077?socks={endpoint}")).unwrap();
+    let config = parse(&format!("portal://secret@127.0.0.1:2000?socks={endpoint}")).unwrap();
     let dialer = OutboundDialer::new("auto".to_string(), config);
     let target = Target::domain("target.test", 443).unwrap();
     let mut stream = dialer
@@ -154,7 +154,7 @@ async fn authenticated_connect_cannot_downgrade_to_no_auth() {
     });
 
     let config = parse(&format!(
-        "portal://secret@127.0.0.1:2077?socks=user:pass@{endpoint}"
+        "portal://secret@127.0.0.1:2000?socks=user:pass@{endpoint}"
     ))
     .unwrap();
     let dialer = OutboundDialer::new("auto".to_string(), config);
@@ -210,7 +210,7 @@ async fn udp_associate_wraps_payload_and_keeps_control_alive() {
         assert_eq!(control.read(&mut eof).await.unwrap(), 0);
     });
 
-    let config = parse(&format!("portal://secret@127.0.0.1:2077?socks={endpoint}")).unwrap();
+    let config = parse(&format!("portal://secret@127.0.0.1:2000?socks={endpoint}")).unwrap();
     let dialer = OutboundDialer::new("127.0.0.1".to_string(), config);
     let target = Target::domain("dns.test", 53).unwrap();
     let socket = dialer
@@ -252,7 +252,7 @@ async fn proxy_failure_never_falls_back_to_direct_target() {
     });
 
     let config = parse(&format!(
-        "portal://secret@127.0.0.1:2077?socks={proxy_addr}"
+        "portal://secret@127.0.0.1:2000?socks={proxy_addr}"
     ))
     .unwrap();
     let dialer = OutboundDialer::new("auto".to_string(), config);
@@ -289,7 +289,7 @@ async fn udp_association_ends_when_control_connection_closes() {
         write_test_reply(&mut control, relay_addr).await;
     });
 
-    let config = parse(&format!("portal://secret@127.0.0.1:2077?socks={endpoint}")).unwrap();
+    let config = parse(&format!("portal://secret@127.0.0.1:2000?socks={endpoint}")).unwrap();
     let dialer = OutboundDialer::new("auto".to_string(), config);
     let target = Target::domain("dns.test", 53).unwrap();
     let socket = dialer
@@ -341,7 +341,7 @@ async fn each_udp_flow_uses_a_distinct_association() {
         drop(relays);
     });
 
-    let config = parse(&format!("portal://secret@127.0.0.1:2077?socks={endpoint}")).unwrap();
+    let config = parse(&format!("portal://secret@127.0.0.1:2000?socks={endpoint}")).unwrap();
     let dialer = OutboundDialer::new("auto".to_string(), config);
     let first_target = Target::domain("one.test", 53).unwrap();
     let first = dialer

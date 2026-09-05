@@ -66,8 +66,8 @@ async fn tcp_startup_failure_releases_already_opened_quic_socket() {
 #[test]
 fn injected_family_failure_warns_only_when_degradation_is_allowed() {
     let addresses: [SocketAddr; 2] = [
-        "0.0.0.0:2077".parse().unwrap(),
-        "[::]:2077".parse().unwrap(),
+        "0.0.0.0:2000".parse().unwrap(),
+        "[::]:2000".parse().unwrap(),
     ];
     for allow in [false, true] {
         let mut warnings = Vec::new();

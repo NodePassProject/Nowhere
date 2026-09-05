@@ -12,7 +12,7 @@ fn hello() -> Hello {
             uid: 0,
             incarnation: 7,
             version: "test".to_owned(),
-            endpoint: ":2077".to_owned(),
+            endpoint: ":2000".to_owned(),
             config_summary: "net=mix".to_owned(),
             telemetry_interval_ms: 1_000,
         },

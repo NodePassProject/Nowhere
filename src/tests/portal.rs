@@ -15,18 +15,18 @@ fn test_logger() -> Logger {
 #[test]
 fn empty_host_listens_on_both_wildcard_families() {
     let portal = Portal::new_with_listen_host(
-        Url::parse("portal://secret@localhost:2077?dial=127.0.0.1").unwrap(),
+        Url::parse("portal://secret@localhost:2000?dial=127.0.0.1").unwrap(),
         Some(""),
         test_logger(),
     )
     .unwrap();
 
-    assert_eq!(portal.inner.endpoint_addr, "*:2077");
+    assert_eq!(portal.inner.endpoint_addr, "*:2000");
     assert_eq!(
         portal.inner.tcp_bind_addrs,
         vec![
-            SocketAddr::from(([0, 0, 0, 0], 2077)),
-            SocketAddr::from(([0u16; 8], 2077)),
+            SocketAddr::from(([0, 0, 0, 0], 2000)),
+            SocketAddr::from(([0u16; 8], 2000)),
         ]
     );
     assert_eq!(portal.inner.udp_bind_addrs, portal.inner.tcp_bind_addrs);
@@ -34,34 +34,34 @@ fn empty_host_listens_on_both_wildcard_families() {
     assert_eq!(portal.inner.network_mode, NetworkMode::Mix);
     assert_eq!(
         portal.effective_url(),
-        "portal://*:2077?tls=1&rate=0&etar=0&dial=127.0.0.1&socks=none&next=none"
+        "portal://*:2000?tls=1&rate=0&etar=0&dial=127.0.0.1&socks=none&next=none"
     );
 }
 
 #[test]
 fn explicit_wildcard_host_selects_one_address_family() {
     let ipv4 = Portal::new(
-        Url::parse("portal://secret@0.0.0.0:2077?dial=auto").unwrap(),
+        Url::parse("portal://secret@0.0.0.0:2000?dial=auto").unwrap(),
         test_logger(),
     )
     .unwrap();
     let ipv6 = Portal::new(
-        Url::parse("portal://secret@[::]:2077?dial=::1").unwrap(),
+        Url::parse("portal://secret@[::]:2000?dial=::1").unwrap(),
         test_logger(),
     )
     .unwrap();
 
-    assert_eq!(ipv4.inner.endpoint_addr, "0.0.0.0:2077");
+    assert_eq!(ipv4.inner.endpoint_addr, "0.0.0.0:2000");
     assert_eq!(
         ipv4.inner.tcp_bind_addrs,
-        vec![SocketAddr::from(([0, 0, 0, 0], 2077))]
+        vec![SocketAddr::from(([0, 0, 0, 0], 2000))]
     );
     assert_eq!(ipv4.inner.outbound.dialer_ip(), "auto");
 
-    assert_eq!(ipv6.inner.endpoint_addr, "[::]:2077");
+    assert_eq!(ipv6.inner.endpoint_addr, "[::]:2000");
     assert_eq!(
         ipv6.inner.tcp_bind_addrs,
-        vec![SocketAddr::from(([0u16; 8], 2077))]
+        vec![SocketAddr::from(([0u16; 8], 2000))]
     );
     assert_eq!(ipv6.inner.outbound.dialer_ip(), "::1");
 }
@@ -69,19 +69,19 @@ fn explicit_wildcard_host_selects_one_address_family() {
 #[test]
 fn explicit_carriers_have_independent_ports_and_families() {
     let portal = Portal::new(
-        Url::parse("portal://secret@*/tcp4:2077/udp6:3088").unwrap(),
+        Url::parse("portal://secret@*/tcp4:2006/udp6:2017").unwrap(),
         test_logger(),
     )
     .unwrap();
 
-    assert_eq!(portal.inner.endpoint_addr, "*/tcp4:2077/udp6:3088");
+    assert_eq!(portal.inner.endpoint_addr, "*/tcp4:2006/udp6:2017");
     assert_eq!(
         portal.inner.tcp_bind_addrs,
-        vec![SocketAddr::from(([0, 0, 0, 0], 2077))]
+        vec![SocketAddr::from(([0, 0, 0, 0], 2006))]
     );
     assert_eq!(
         portal.inner.udp_bind_addrs,
-        vec![SocketAddr::from(([0u16; 8], 3088))]
+        vec![SocketAddr::from(([0u16; 8], 2017))]
     );
     assert_eq!(portal.inner.network_mode, NetworkMode::Mix);
 }
@@ -89,10 +89,10 @@ fn explicit_carriers_have_independent_ports_and_families() {
 #[test]
 fn carrier_paths_select_network_mode_and_net_is_ignored() {
     let cases = [
-        ("portal://secret@127.0.0.1:2077", NetworkMode::Mix),
-        ("portal://secret@127.0.0.1:2077?net=tcp", NetworkMode::Mix),
-        ("portal://secret@127.0.0.1/tcp:2077", NetworkMode::Tcp),
-        ("portal://secret@127.0.0.1/udp:2077", NetworkMode::Udp),
+        ("portal://secret@127.0.0.1:2000", NetworkMode::Mix),
+        ("portal://secret@127.0.0.1:2000?net=tcp", NetworkMode::Mix),
+        ("portal://secret@127.0.0.1/tcp:2006", NetworkMode::Tcp),
+        ("portal://secret@127.0.0.1/udp:2017", NetworkMode::Udp),
     ];
 
     for (raw, expected) in cases {
@@ -111,7 +111,7 @@ fn network_mode_checkpoint_values_match_listener_modes() {
 #[test]
 fn net_is_an_ignored_unknown_parameter() {
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?net=auto").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?net=auto").unwrap(),
         test_logger(),
     )
     .unwrap();
@@ -123,7 +123,7 @@ fn net_is_an_ignored_unknown_parameter() {
 #[test]
 fn socks_configuration_is_validated_and_redacted_in_effective_url() {
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&socks=user:p%40ss@proxy.test:1080")
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&socks=user:p%40ss@proxy.test:1080")
             .unwrap(),
         test_logger(),
     )
@@ -134,7 +134,7 @@ fn socks_configuration_is_validated_and_redacted_in_effective_url() {
     assert!(!effective.contains("p@ss"));
 
     let duplicate = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?socks=proxy.test:1080&socks=other.test:1080")
+        Url::parse("portal://secret@127.0.0.1:2000?socks=proxy.test:1080&socks=other.test:1080")
             .unwrap(),
         test_logger(),
     )
@@ -145,7 +145,7 @@ fn socks_configuration_is_validated_and_redacted_in_effective_url() {
 #[test]
 fn native_next_defaults_to_quic_and_redacts_the_shared_key() {
     let portal = Portal::new(
-        Url::parse("portal://relay-key@127.0.0.1:2077?next=upstream%40key@relay.example:2080")
+        Url::parse("portal://relay-key@127.0.0.1:2000?next=upstream%40key@relay.example:2080")
             .unwrap(),
         test_logger(),
     )
@@ -165,7 +165,7 @@ fn native_next_defaults_to_quic_and_redacts_the_shared_key() {
 #[test]
 fn native_next_uses_shared_endpoint_grammar_and_single_carrier_defaults() {
     let portal = Portal::new(
-        Url::parse("portal://relay-key@*/tcp4:2077?next=upstream-key@relay.example/udp6:3088")
+        Url::parse("portal://relay-key@*/tcp4:2006?next=upstream-key@relay.example/udp6:2017")
             .unwrap(),
         test_logger(),
     )
@@ -174,7 +174,7 @@ fn native_next_uses_shared_endpoint_grammar_and_single_carrier_defaults() {
     assert_eq!(portal.inner.network_mode, NetworkMode::Tcp);
     assert_eq!(
         portal.inner.outbound.next_endpoint(),
-        "relay.example/udp6:3088"
+        "relay.example/udp6:2017"
     );
     assert_eq!(
         portal.inner.outbound.next_transport().as_deref(),
@@ -186,7 +186,7 @@ fn native_next_uses_shared_endpoint_grammar_and_single_carrier_defaults() {
 fn native_next_reuses_transport_identity_and_source_binding() {
     let portal = Portal::new(
         Url::parse(
-            "portal://relay-key@127.0.0.1:2077?dial=127.0.0.2&alpn=private/2&next=secret@[::1]:2080&up=tcp&down=tcp&mux=1&sni=origin.example&pin=abc",
+            "portal://relay-key@127.0.0.1:2000?dial=127.0.0.2&alpn=private/2&next=secret@[::1]:2080&up=tcp&down=tcp&mux=1&sni=origin.example&pin=abc",
         )
         .unwrap(),
         test_logger(),
@@ -209,7 +209,7 @@ fn native_next_reuses_transport_identity_and_source_binding() {
 fn native_next_and_socks_are_mutually_exclusive() {
     let result = Portal::new(
         Url::parse(
-            "portal://relay-key@127.0.0.1:2077?next=secret@origin.example:2080&socks=127.0.0.1:1080",
+            "portal://relay-key@127.0.0.1:2000?next=secret@origin.example:2080&socks=127.0.0.1:1080",
         )
         .unwrap(),
         test_logger(),
@@ -217,7 +217,7 @@ fn native_next_and_socks_are_mutually_exclusive() {
     assert!(result.is_err());
 
     let disabled_socks = Portal::new(
-        Url::parse("portal://relay-key@127.0.0.1:2077?next=secret@origin.example:2080&socks=none")
+        Url::parse("portal://relay-key@127.0.0.1:2000?next=secret@origin.example:2080&socks=none")
             .unwrap(),
         test_logger(),
     );
@@ -232,7 +232,7 @@ fn disabled_next_ignores_all_native_upstream_options() {
         "next=none&up=%GG&mux=%GG&pin=%FF",
     ] {
         let portal = Portal::new(
-            Url::parse(&format!("portal://relay-key@127.0.0.1:2077?{suffix}")).unwrap(),
+            Url::parse(&format!("portal://relay-key@127.0.0.1:2000?{suffix}")).unwrap(),
             test_logger(),
         )
         .unwrap();
@@ -254,7 +254,7 @@ fn enabled_next_validates_only_effective_upstream_options() {
     ] {
         let result = Portal::new(
             Url::parse(&format!(
-                "portal://relay-key@127.0.0.1:2077?next=secret@origin.example:2080&{suffix}"
+                "portal://relay-key@127.0.0.1:2000?next=secret@origin.example:2080&{suffix}"
             ))
             .unwrap(),
             test_logger(),
@@ -275,7 +275,7 @@ fn native_next_accepts_mix_and_normalizes_pure_udp_mux() {
     ] {
         let portal = Portal::new(
             Url::parse(&format!(
-                "portal://relay-key@127.0.0.1:2077?next=secret@origin.example:2080&up={up}&down={down}&mux=1"
+                "portal://relay-key@127.0.0.1:2000?next=secret@origin.example:2080&up={up}&down={down}&mux=1"
             ))
             .unwrap(),
             test_logger(),
@@ -297,7 +297,7 @@ fn native_next_accepts_mix_and_normalizes_pure_udp_mux() {
 fn next_uses_first_duplicate_and_rejects_empty_value() {
     let portal = Portal::new(
         Url::parse(
-            "portal://relay-key@127.0.0.1:2077?next=first@one.example:2080&next=second@two.example:2081",
+            "portal://relay-key@127.0.0.1:2000?next=first@one.example:2080&next=second@two.example:2081",
         )
         .unwrap(),
         test_logger(),
@@ -307,7 +307,7 @@ fn next_uses_first_duplicate_and_rejects_empty_value() {
 
     assert!(
         Portal::new(
-            Url::parse("portal://relay-key@127.0.0.1:2077?next=").unwrap(),
+            Url::parse("portal://relay-key@127.0.0.1:2000?next=").unwrap(),
             test_logger(),
         )
         .is_err()
@@ -317,7 +317,7 @@ fn next_uses_first_duplicate_and_rejects_empty_value() {
 #[test]
 fn direct_portal_reports_exact_zero_ping() {
     let portal = Portal::new(
-        Url::parse("portal://relay-key@127.0.0.1:2077").unwrap(),
+        Url::parse("portal://relay-key@127.0.0.1:2000").unwrap(),
         test_logger(),
     )
     .unwrap();
@@ -328,7 +328,7 @@ fn direct_portal_reports_exact_zero_ping() {
 fn all_network_modes_reject_tls_zero() {
     for mode in ["mix", "tcp", "udp"] {
         let portal = Portal::new(
-            Url::parse(&format!("portal://secret@127.0.0.1:2077?tls=0&net={mode}")).unwrap(),
+            Url::parse(&format!("portal://secret@127.0.0.1:2000?tls=0&net={mode}")).unwrap(),
             test_logger(),
         );
         assert!(portal.is_err());
@@ -366,14 +366,14 @@ async fn network_mode_binds_only_selected_transports() {
 #[test]
 fn portal_url_contract_rejects_invalid_structure_and_selected_values() {
     for raw in [
-        "vector://secret@127.0.0.1:2077",
-        "portal://secret:password@127.0.0.1:2077",
-        "portal://secret@127.0.0.1:2077/tcp:2077",
-        "portal://secret@127.0.0.1/not-a-carrier:2077",
-        "portal://secret@127.0.0.1:2077#fragment",
-        "portal://secret@127.0.0.1:2077?socks=",
-        "portal://secret@127.0.0.1:2077?rate=-1",
-        "portal://secret@127.0.0.1:2077?dial=not-an-ip",
+        "vector://secret@127.0.0.1:2000",
+        "portal://secret:password@127.0.0.1:2000",
+        "portal://secret@127.0.0.1:2000/tcp:2006",
+        "portal://secret@127.0.0.1/not-a-carrier:2000",
+        "portal://secret@127.0.0.1:2000#fragment",
+        "portal://secret@127.0.0.1:2000?socks=",
+        "portal://secret@127.0.0.1:2000?rate=-1",
+        "portal://secret@127.0.0.1:2000?dial=not-an-ip",
         "portal://secret@127.0.0.1:0",
         "portal://secret@127.0.0.1",
     ] {
@@ -388,7 +388,7 @@ fn portal_url_contract_rejects_invalid_structure_and_selected_values() {
 fn portal_ignores_unknown_parameters_and_keeps_first_duplicate() {
     let portal = Portal::new(
         Url::parse(
-            "portal://secret@127.0.0.1:2077?unknown=value&spec=ignored&alpn=private/2&mux=2&pool=8&net=tcp&net=udp&rate=1&rate=2",
+            "portal://secret@127.0.0.1:2000?unknown=value&spec=ignored&alpn=private/2&mux=2&pool=8&net=tcp&net=udp&rate=1&rate=2",
         )
         .unwrap(),
         test_logger(),
@@ -408,7 +408,7 @@ fn portal_mux_is_ignored_without_next() {
     for value in ["", "0", "1", "2", "true"] {
         let portal = Portal::new(
             Url::parse(&format!(
-                "portal://secret@127.0.0.1:2077?alpn=private/2&mux={value}"
+                "portal://secret@127.0.0.1:2000?alpn=private/2&mux={value}"
             ))
             .unwrap(),
             test_logger(),
@@ -422,11 +422,11 @@ fn portal_mux_is_ignored_without_next() {
 #[test]
 fn certificate_parameters_are_tied_to_ca_trusted_mode() {
     for raw in [
-        "portal://secret@127.0.0.1:2077?crt=cert.pem",
-        "portal://secret@127.0.0.1:2077?key=key.pem",
-        "portal://secret@127.0.0.1:2077?crt=cert.pem&key=key.pem",
-        "portal://secret@127.0.0.1:2077?tls=2&crt=cert.pem",
-        "portal://secret@127.0.0.1:2077?tls=2&key=key.pem",
+        "portal://secret@127.0.0.1:2000?crt=cert.pem",
+        "portal://secret@127.0.0.1:2000?key=key.pem",
+        "portal://secret@127.0.0.1:2000?crt=cert.pem&key=key.pem",
+        "portal://secret@127.0.0.1:2000?tls=2&crt=cert.pem",
+        "portal://secret@127.0.0.1:2000?tls=2&key=key.pem",
     ] {
         assert!(Portal::new(Url::parse(raw).unwrap(), test_logger()).is_err());
     }

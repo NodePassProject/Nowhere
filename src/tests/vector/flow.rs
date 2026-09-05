@@ -18,7 +18,7 @@ use crate::vector::config::VectorConfig;
 
 fn test_portal_client() -> Arc<PortalClient> {
     let url =
-        Url::parse("vector://secret@127.0.0.1:2077?up=mix&down=mix&socks=127.0.0.1:1080").unwrap();
+        Url::parse("vector://secret@127.0.0.1:2000?up=mix&down=mix&socks=127.0.0.1:1080").unwrap();
     let config = VectorConfig::from_url(&url).unwrap();
     let credentials = Credentials::new(&url).unwrap();
     PortalClient::with_session_id(

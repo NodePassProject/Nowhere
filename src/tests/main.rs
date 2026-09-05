@@ -62,12 +62,12 @@ fn help_text_documents_usage_and_configuration_surface() {
 #[test]
 fn parse_command_url_keeps_vector_remote_host() {
     let parsed = parse_command_url(
-        "vector://secret@relay.example:2077?up=udp&down=tcp&socks=127.0.0.1:1080",
+        "vector://secret@relay.example:2000?up=udp&down=tcp&socks=127.0.0.1:1080",
     )
     .unwrap();
     assert_eq!(parsed.url.scheme(), "vector");
     assert_eq!(parsed.url.host_str(), Some("relay.example"));
-    assert_eq!(parsed.url.port(), Some(2077));
+    assert_eq!(parsed.url.port(), Some(2000));
     assert_eq!(parsed.listen_host, None);
 }
 
@@ -81,11 +81,11 @@ fn logger_rejects_unknown_or_empty_levels() {
 
 #[test]
 fn parse_command_url_accepts_empty_listen_host() {
-    let parsed = parse_command_url("portal://secret@:2077?log=none&dial=::1").unwrap();
+    let parsed = parse_command_url("portal://secret@:2000?log=none&dial=::1").unwrap();
 
     assert_eq!(parsed.url.scheme(), "portal");
     assert_eq!(parsed.url.username(), "secret");
-    assert_eq!(parsed.url.port(), Some(2077));
+    assert_eq!(parsed.url.port(), Some(2000));
     assert_eq!(parsed.listen_host.as_deref(), Some(""));
     assert_eq!(
         parsed
@@ -100,25 +100,25 @@ fn parse_command_url_accepts_empty_listen_host() {
 
 #[test]
 fn parse_command_url_accepts_empty_listen_host_without_userinfo() {
-    let parsed = parse_command_url("portal://:2077").unwrap();
+    let parsed = parse_command_url("portal://:2000").unwrap();
 
     assert_eq!(parsed.url.scheme(), "portal");
     assert_eq!(parsed.url.username(), "");
-    assert_eq!(parsed.url.port(), Some(2077));
+    assert_eq!(parsed.url.port(), Some(2000));
     assert_eq!(parsed.listen_host.as_deref(), Some(""));
 }
 
 #[test]
 fn parse_command_url_rejects_empty_host_for_explicit_carriers() {
-    assert!(parse_command_url("portal://secret@/tcp:2077").is_err());
+    assert!(parse_command_url("portal://secret@/tcp:2006").is_err());
 }
 
 #[test]
 fn parse_command_url_keeps_normal_hosts() {
-    let parsed = parse_command_url("portal://secret@[::]:2077?dial=auto").unwrap();
+    let parsed = parse_command_url("portal://secret@[::]:2000?dial=auto").unwrap();
 
     assert_eq!(parsed.url.host_str(), Some("[::]"));
-    assert_eq!(parsed.url.port(), Some(2077));
+    assert_eq!(parsed.url.port(), Some(2000));
     assert_eq!(parsed.listen_host, None);
 }
 
@@ -128,10 +128,10 @@ async fn invalid_configuration_urls_fail_before_service_startup_with_safe_errors
     for (raw, expected) in [
         ("not-a-url".to_owned(), "invalid configuration URL"),
         (
-            format!("ftp://{SECRET}@example.com:2077"),
+            format!("ftp://{SECRET}@example.com:2000"),
             "scheme must be portal or vector",
         ),
-        ("portal://@*:2077?log=none".to_owned(), "missing shared key"),
+        ("portal://@*:2000?log=none".to_owned(), "missing shared key"),
         (
             format!("portal://{SECRET}@*:abc?log=none"),
             "invalid port number",
@@ -141,7 +141,7 @@ async fn invalid_configuration_urls_fail_before_service_startup_with_safe_errors
             "compact endpoint requires a port in 1..=65535",
         ),
         (
-            format!("portal://{SECRET}@/tcp:2077?log=none"),
+            format!("portal://{SECRET}@/tcp:2006?log=none"),
             "empty host",
         ),
         (
@@ -149,15 +149,15 @@ async fn invalid_configuration_urls_fail_before_service_startup_with_safe_errors
             "must use CARRIER:PORT",
         ),
         (
-            format!("portal://{SECRET}@*/tcp:2077/../udp:3088?log=none"),
+            format!("portal://{SECRET}@*/tcp:2006/../udp:2017?log=none"),
             "must not contain '.' or '..' segments",
         ),
         (
-            format!("portal://{SECRET}@*:2077/tcp:3088?log=none"),
+            format!("portal://{SECRET}@*:2000/tcp:2006?log=none"),
             "choose either HOST:PORT",
         ),
         (
-            format!("portal://{SECRET}@*/udp:2077/udp6:3088?log=none"),
+            format!("portal://{SECRET}@*/udp:2017/udp6:2017?log=none"),
             "UDP carrier is declared more than once",
         ),
         (
@@ -165,31 +165,31 @@ async fn invalid_configuration_urls_fail_before_service_startup_with_safe_errors
             "carrier port must be in 1..=65535",
         ),
         (
-            format!("portal://{SECRET}@192.0.2.1/tcp6:2077?log=none"),
+            format!("portal://{SECRET}@192.0.2.1/tcp6:2006?log=none"),
             "address family does not match",
         ),
         (
-            format!("portal://{SECRET}@*:2077?log=verbose"),
+            format!("portal://{SECRET}@*:2000?log=verbose"),
             "log must be none, debug, info, warn, error, or event",
         ),
         (
-            format!("portal://{SECRET}@*:2077?rate=-1&log=none"),
+            format!("portal://{SECRET}@*:2000?rate=-1&log=none"),
             "rate must be a non-negative integer",
         ),
         (
-            format!("portal://{SECRET}@*:2077?socks=bad&log=none"),
+            format!("portal://{SECRET}@*:2000?socks=bad&log=none"),
             "invalid socks endpoint: expected HOST:PORT",
         ),
         (
-            format!("portal://{SECRET}@unresolvable.invalid:2077?rate=-1&log=none"),
+            format!("portal://{SECRET}@unresolvable.invalid:2000?rate=-1&log=none"),
             "rate must be a non-negative integer",
         ),
         (
-            format!("vector://{SECRET}@*/tcp:2077?socks=:1080&log=none"),
+            format!("vector://{SECRET}@*/tcp:2006?socks=:1080&log=none"),
             "wildcard host is only valid for Portal listeners",
         ),
         (
-            "vector://@example.com:2077?socks=:1080&log=none".to_owned(),
+            "vector://@example.com:2000?socks=:1080&log=none".to_owned(),
             "missing shared key",
         ),
         (
@@ -197,25 +197,25 @@ async fn invalid_configuration_urls_fail_before_service_startup_with_safe_errors
             "compact endpoint requires a port in 1..=65535",
         ),
         (
-            format!("vector://{SECRET}@example.com:2077?log=none"),
+            format!("vector://{SECRET}@example.com:2000?log=none"),
             "socks parameter is required",
         ),
         (
-            format!("vector://{SECRET}@example.com/udp:2077?up=tcp&socks=:1080&log=none"),
+            format!("vector://{SECRET}@example.com/udp:2017?up=tcp&socks=:1080&log=none"),
             "up selects a carrier not declared by the endpoint",
         ),
         (
             format!(
-                "portal://outer@*:2077?next={SECRET}@origin.example/tcp:2077/../udp:3088&log=none"
+                "portal://outer@*:2000?next={SECRET}@origin.example/tcp:2006/../udp:2017&log=none"
             ),
             "must not contain '.' or '..' segments",
         ),
         (
-            format!("portal://outer@*:2077?next={SECRET}@*/tcp:2077&log=none"),
+            format!("portal://outer@*:2000?next={SECRET}@*/tcp:2006&log=none"),
             "wildcard host is only valid for Portal listeners",
         ),
         (
-            format!("portal://outer@*:2077?next={SECRET}@origin.example/tcp:2077?inner=1&log=none"),
+            format!("portal://outer@*:2000?next={SECRET}@origin.example/tcp:2006?inner=1&log=none"),
             "expected shared-key and one endpoint",
         ),
     ] {

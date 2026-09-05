@@ -67,7 +67,7 @@ fn path(label: &str) -> LinkPath {
     LinkPath {
         version: crate::protocol::ProtocolVersion::V2,
         peer: format!("{label}.client:1234"),
-        local: "portal.test:2077".into(),
+        local: "portal.test:2000".into(),
     }
 }
 

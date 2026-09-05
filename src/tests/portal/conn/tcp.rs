@@ -58,7 +58,7 @@ async fn portal_accepts_delayed_dedicated_flow_header() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -111,7 +111,7 @@ async fn tls_tcp_relays_through_socks5_connect() {
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
         Url::parse(&format!(
-            "portal://secret@127.0.0.1:2077?log=none&net=tcp&socks={socks_addr}"
+            "portal://secret@127.0.0.1:2000?log=none&net=tcp&socks={socks_addr}"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -164,7 +164,7 @@ async fn tls_tcp_uot_relays_udp_and_counts_logical_udp() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -220,7 +220,7 @@ async fn tls_tcp_uot_relays_through_authenticated_socks5_udp() {
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
         Url::parse(&format!(
-            "portal://secret@127.0.0.1:2077?log=none&net=tcp&socks=user:pass@{socks_addr}"
+            "portal://secret@127.0.0.1:2000?log=none&net=tcp&socks=user:pass@{socks_addr}"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -265,7 +265,7 @@ async fn tls_tcp_auth_failure_waits_for_deadline_without_application_response() 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -305,7 +305,7 @@ async fn tls_tcp_flow_header_timeout_closes_unused_connection() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -346,7 +346,7 @@ async fn tls_mux_carrier_closes_after_becoming_fully_idle() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -406,7 +406,7 @@ async fn tls_tcp_coalesced_auth_and_flow_bootstrap_relays() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -446,7 +446,7 @@ async fn tls_tcp_carrier_mismatch_returns_invalid_request() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -488,7 +488,7 @@ async fn mismatched_open_leaves_invalid_request_for_later_attach() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();

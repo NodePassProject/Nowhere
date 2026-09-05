@@ -17,7 +17,7 @@ fn descriptor() -> InstanceDescriptor {
         uid: 1,
         incarnation: 3,
         version: "test".to_owned(),
-        endpoint: ":2077".to_owned(),
+        endpoint: ":2000".to_owned(),
         config_summary: "portal net=mix".to_owned(),
         telemetry_interval_ms: 1_000,
     }
@@ -26,9 +26,9 @@ fn descriptor() -> InstanceDescriptor {
 #[test]
 fn listener_summary_uses_bound_addresses_without_inventing_a_second_family() {
     let hub = TelemetryHub::new(descriptor());
-    hub.set_listening_addresses("0.0.0.0:2077", "none");
+    hub.set_listening_addresses("0.0.0.0:2000", "none");
     let summary = &hub.descriptor().config_summary;
-    assert!(summary.ends_with("tcp=0.0.0.0:2077 udp=none"));
+    assert!(summary.ends_with("tcp=0.0.0.0:2000 udp=none"));
     assert!(!summary.contains("[::]"));
 }
 

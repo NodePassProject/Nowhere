@@ -115,7 +115,7 @@ async fn slow_frame_writes_time_out() {
 async fn multiple_clients_can_read_and_change_subscriptions() {
     let mut descriptor = InstanceDescriptor::current(
         InstanceRole::Portal,
-        ":2077",
+        ":2000",
         "net=mix",
         Duration::from_secs(1),
     )

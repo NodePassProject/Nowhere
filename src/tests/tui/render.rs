@@ -22,7 +22,7 @@ fn app_with_instance() -> App {
             pid: 42,
             uid: 0,
             version: "test".to_owned(),
-            endpoint: "0.0.0.0:2077".to_owned(),
+            endpoint: "0.0.0.0:2000".to_owned(),
             config_summary: "net=mix tls=1".to_owned(),
             telemetry_interval_ms: 1_000,
             telemetry_version: 2,
@@ -108,7 +108,7 @@ fn renders_full_dashboard() {
     assert!(!output.contains("ACTIVE"));
     assert!(output.contains("CPU"));
     assert!(output.contains("RSS"));
-    assert!(output.contains("LST 0.0.0.0:2077"));
+    assert!(output.contains("LST 0.0.0.0:2000"));
     assert!(output.contains("? help"));
     assert!(!output.contains("telemetry 1000ms"));
 }
@@ -210,7 +210,7 @@ fn renders_narrow_two_page_dashboard() {
     let output = rendered(72, 20, &app_with_instance());
     assert!(output.contains("Overview"));
     assert!(output.contains("SELECTED"));
-    assert!(output.contains("0.0.0.0:2077"));
+    assert!(output.contains("0.0.0.0:2000"));
     assert!(output.contains("1000ms"));
     assert!(output.contains("? help"));
     assert!(!output.contains("telemetry 1000ms"));
@@ -277,7 +277,7 @@ fn full_sidebar_keeps_long_lifecycle_labels_visible() {
             uid: 502,
             version: "test".to_owned(),
             endpoint: "[::1]:1082".to_owned(),
-            config_summary: "portal=relay.example:2077".to_owned(),
+            config_summary: "portal=relay.example:2000".to_owned(),
             telemetry_interval_ms: 1_000,
             telemetry_version: 2,
         },

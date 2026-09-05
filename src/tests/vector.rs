@@ -19,7 +19,7 @@ fn vector_constructs_for_each_carrier_pair() {
         ("mix", "mix"),
     ] {
         let url = Url::parse(&format!(
-            "vector://secret@127.0.0.1:2077?up={up}&down={down}&socks=127.0.0.1:1080"
+            "vector://secret@127.0.0.1:2000?up={up}&down={down}&socks=127.0.0.1:1080"
         ))
         .unwrap();
         Vector::new(url, Logger::new(crate::common::LogLevel::None, false)).unwrap();
@@ -29,7 +29,7 @@ fn vector_constructs_for_each_carrier_pair() {
 #[test]
 fn effective_url_prints_none_for_absent_sni() {
     let config = VectorConfig::from_url(
-        &Url::parse("vector://secret@127.0.0.1:2077?socks=127.0.0.1:1080").unwrap(),
+        &Url::parse("vector://secret@127.0.0.1:2000?socks=127.0.0.1:1080").unwrap(),
     )
     .unwrap();
     assert!(config.effective_url().contains("&sni=none&"));
@@ -41,7 +41,7 @@ async fn socks_bind_failure_moves_lifecycle_to_stopped() {
     let port = blocker.local_addr().unwrap().port();
     let vector = Vector::new(
         Url::parse(&format!(
-            "vector://secret@127.0.0.1:2077?socks=127.0.0.1:{port}&log=none"
+            "vector://secret@127.0.0.1:2000?socks=127.0.0.1:{port}&log=none"
         ))
         .unwrap(),
         Logger::new(crate::common::LogLevel::None, false),

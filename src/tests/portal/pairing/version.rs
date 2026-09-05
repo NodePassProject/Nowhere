@@ -5,7 +5,7 @@ fn versioned_half(version: ProtocolVersion, label: &str) -> LinkHalf {
     LinkHalf::tcp(LinkPath {
         version,
         peer: format!("{label}.client:1234"),
-        local: "portal.test:2077".into(),
+        local: "portal.test:2000".into(),
     })
 }
 
