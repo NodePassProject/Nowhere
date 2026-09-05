@@ -6,6 +6,7 @@
 mod alpn;
 mod config;
 mod datagram;
+mod endpoint;
 mod latency;
 mod lifecycle;
 mod logger;
@@ -26,11 +27,16 @@ pub use config::{
 pub(crate) use datagram::{
     BudgetedDatagram, UdpDatagramSend, reserve_udp_budget, send_quic_udp_packet,
 };
+pub use endpoint::validate_endpoint_url_input;
+pub(crate) use endpoint::{AddressFamily, CarrierEndpoint, ServiceEndpoint};
 pub(crate) use latency::{LatencyGuard, LatencyTracker};
 pub(crate) use lifecycle::{LifeMode, LifeReason, LifeState, Lifecycle, ShutdownSignals};
 pub use logger::{LogLevel, Logger};
 pub use network::{bind_udp_addrs, dial_tcp_from_local_ip, dial_udp_from_local_ip};
-pub(crate) use network::{filter_addrs, parse_local_ip};
+pub(crate) use network::{
+    dial_tcp_from_local_ip_family, filter_addrs, filter_addrs_for_family, parse_local_ip,
+    resolve_bind_addrs,
+};
 pub(crate) use socks::{OutboundDialer, OutboundTcpStream, OutboundUdpSocket, SocksConfig};
 pub(crate) use tls::certificate_sha256;
 pub(crate) use tls::new_server_configs_with_reload_interval;
