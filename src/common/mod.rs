@@ -34,8 +34,7 @@ pub(crate) use lifecycle::{LifeMode, LifeReason, LifeState, Lifecycle, ShutdownS
 pub use logger::{LogLevel, Logger};
 pub use network::{bind_udp_addrs, dial_tcp_from_local_ip, dial_udp_from_local_ip};
 pub(crate) use network::{
-    dial_tcp_from_local_ip_family, filter_addrs, filter_addrs_for_family, parse_local_ip,
-    resolve_bind_addrs,
+    dial_tcp_from_local_ip_family, filter_addrs_for_family, parse_local_ip, resolve_bind_addrs,
 };
 pub(crate) use socks::{OutboundDialer, OutboundTcpStream, OutboundUdpSocket, SocksConfig};
 pub(crate) use tls::certificate_sha256;

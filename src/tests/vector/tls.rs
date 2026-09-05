@@ -40,7 +40,11 @@ async fn client_prefers_fixed_v2_alpn() {
 
     let (_, _, version) = ClientTls::new(&config(&raw))
         .unwrap()
-        .connect_tcp(&endpoint.to_string(), "auto")
+        .connect_tcp(
+            &endpoint.to_string(),
+            "auto",
+            crate::common::AddressFamily::Any,
+        )
         .await
         .unwrap();
     assert_eq!(version, ProtocolVersion::V2);
@@ -123,7 +127,11 @@ async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<Protoc
     raw.push_str("socks=127.0.0.1:1080");
 
     let result = ClientTls::new(&config(&raw))?
-        .connect_tcp(&endpoint.to_string(), "auto")
+        .connect_tcp(
+            &endpoint.to_string(),
+            "auto",
+            crate::common::AddressFamily::Any,
+        )
         .await
         .map(|(_, _, version)| version);
     let _ = tokio::time::timeout(Duration::from_secs(1), server_task).await;

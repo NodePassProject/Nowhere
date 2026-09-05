@@ -19,7 +19,9 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
-use crate::common::{certificate_sha256, dial_tcp_from_local_ip, handshake_timeout};
+use crate::common::{
+    AddressFamily, certificate_sha256, dial_tcp_from_local_ip_family, handshake_timeout,
+};
 use crate::protocol::{ProtocolVersion, SUPPORTED_ALPNS, TLS_EXPORTER_LEN, TlsExporter};
 
 use super::config::PortalClientConfig;
@@ -78,14 +80,9 @@ impl ClientTls {
         client.alpn_protocols = SUPPORTED_ALPNS.iter().map(|alpn| alpn.to_vec()).collect();
         client.enable_early_data = false;
 
-        let server_name = ServerName::try_from(
-            config
-                .sni
-                .as_deref()
-                .unwrap_or(config.remote_host.as_str())
-                .to_owned(),
-        )
-        .map_err(|_| anyhow!("vector::tls::ClientTls::new: invalid TLS server name"))?;
+        let server_name =
+            ServerName::try_from(config.sni.as_deref().unwrap_or(config.host()).to_owned())
+                .map_err(|_| anyhow!("vector::tls::ClientTls::new: invalid TLS server name"))?;
         Ok(Self {
             rustls: Arc::new(client),
             server_name,
@@ -110,10 +107,12 @@ impl ClientTls {
         &self,
         endpoint: &str,
         dialer_ip: &str,
+        family: AddressFamily,
     ) -> Result<(TlsStream<TcpStream>, TlsExporter, ProtocolVersion)> {
-        let stream = dial_tcp_from_local_ip(dialer_ip, endpoint, handshake_timeout())
-            .await
-            .with_context(|| format!("vector::tls::connect_tcp: failed to dial {endpoint}"))?;
+        let stream =
+            dial_tcp_from_local_ip_family(dialer_ip, endpoint, handshake_timeout(), family)
+                .await
+                .with_context(|| format!("vector::tls::connect_tcp: failed to dial {endpoint}"))?;
         stream
             .set_nodelay(true)
             .context("vector::tls::connect_tcp: failed to set TCP_NODELAY")?;

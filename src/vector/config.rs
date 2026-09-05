@@ -12,7 +12,9 @@ use url::Url;
 use crate::common::socks::{
     SocksCredentials, first_raw_socks_value, format_host_port, parse_host_port, parse_socks_value,
 };
-use crate::common::{DEFAULT_DIALER_IP, query_first};
+use crate::common::{
+    CarrierEndpoint, DEFAULT_DIALER_IP, ServiceEndpoint, query_first, validate_endpoint_url_input,
+};
 
 const VECTOR_QUERY_KEYS: &[&str] = &[
     "up", "down", "mux", "sni", "pin", "rate", "etar", "socks", "log",
@@ -54,13 +56,18 @@ pub(crate) enum CarrierMode {
 }
 
 impl CarrierMode {
-    pub(crate) fn parse(value: Option<&str>, name: &str) -> Result<Self> {
+    pub(crate) fn parse(
+        value: Option<&str>,
+        name: &str,
+        default: Self,
+        context: &str,
+    ) -> Result<Self> {
         match value {
-            None => Ok(Self::Udp),
+            None => Ok(default),
             Some("tcp") => Ok(Self::Tcp),
             Some("udp") => Ok(Self::Udp),
             Some("mix") => Ok(Self::Mix),
-            Some(_) => bail!("vector::config: {name} must be tcp, udp, or mix"),
+            Some(_) => bail!("{context}: {name} must be tcp, udp, or mix"),
         }
     }
 
@@ -72,8 +79,7 @@ impl CarrierMode {
 /// Transport-only configuration shared by Vector and Portal upstream clients.
 #[derive(Clone, Debug)]
 pub(crate) struct PortalClientConfig {
-    pub(crate) remote_host: String,
-    pub(crate) remote_port: u16,
+    pub(crate) remote: ServiceEndpoint,
     pub(crate) up: CarrierMode,
     pub(crate) down: CarrierMode,
     pub(crate) mux: MuxMode,
@@ -83,22 +89,29 @@ pub(crate) struct PortalClientConfig {
 }
 
 impl PortalClientConfig {
-    fn parse(url: &Url, query: &HashMap<String, String>, dialer_ip: &str) -> Result<Self> {
-        let remote_host = url
-            .host_str()
-            .filter(|host| !host.is_empty())
-            .ok_or_else(|| anyhow!("vector::config: missing Portal host"))?
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .to_owned();
-        let remote_port = url
-            .port()
-            .filter(|port| *port != 0)
-            .ok_or_else(|| anyhow!("vector::config: missing Portal port"))?;
-        let up = CarrierMode::parse(query.get("up").map(String::as_str), "up")?;
-        let down = CarrierMode::parse(query.get("down").map(String::as_str), "down")?;
+    fn parse(
+        url: &Url,
+        query: &HashMap<String, String>,
+        dialer_ip: &str,
+        context: &str,
+    ) -> Result<Self> {
+        let remote = ServiceEndpoint::parse(url, false, context)?;
+        let default = match (remote.has_tcp(), remote.has_udp()) {
+            (true, false) => CarrierMode::Tcp,
+            (false, true) | (true, true) => CarrierMode::Udp,
+            (false, false) => unreachable!(),
+        };
+        let up = CarrierMode::parse(query.get("up").map(String::as_str), "up", default, context)?;
+        let down = CarrierMode::parse(
+            query.get("down").map(String::as_str),
+            "down",
+            default,
+            context,
+        )?;
+        validate_carrier_policy(&remote, up, "up", context)?;
+        validate_carrier_policy(&remote, down, "down", context)?;
         let mux = MuxMode::parse(query.get("mux").map(String::as_str))
-            .map_err(|error| anyhow!("vector::config: {error}"))?;
+            .map_err(|error| anyhow!("{context}: {error}"))?;
         let mux = if up == CarrierMode::Udp && down == CarrierMode::Udp {
             MuxMode::Disabled
         } else {
@@ -113,7 +126,7 @@ impl PortalClientConfig {
                     || value.contains([':', '[', ']'])
                     || value.parse::<std::net::IpAddr>().is_ok()
                 {
-                    bail!("vector::config: sni must be an ASCII DNS name");
+                    bail!("{context}: sni must be an ASCII DNS name");
                 }
                 Ok(value.to_owned())
             })
@@ -123,8 +136,7 @@ impl PortalClientConfig {
             .filter(|value| !value.is_empty() && value.as_str() != "none")
             .cloned();
         Ok(Self {
-            remote_host,
-            remote_port,
+            remote,
             up,
             down,
             mux,
@@ -139,30 +151,39 @@ impl PortalClientConfig {
         query: &HashMap<String, String>,
         dialer_ip: &str,
     ) -> Result<(Self, crate::protocol::Credentials)> {
+        validate_endpoint_url_input(&format!("vector://{raw_authority}"), "Portal next endpoint")?;
         let separator = raw_authority.rfind('@').ok_or_else(|| {
-            anyhow!("portal::next: shared key and endpoint must be separated by @")
+            anyhow!("Portal next endpoint: shared key and endpoint must be separated by '@'")
         })?;
         if raw_authority[..separator].contains('@') {
-            bail!("portal::next: reserved shared-key characters must be percent-encoded");
+            bail!("Portal next endpoint: reserved shared-key characters must be percent-encoded");
         }
         let url = Url::parse(&format!("vector://{raw_authority}"))
-            .map_err(|error| anyhow!("portal::next: invalid upstream Portal authority: {error}"))?;
-        if url.password().is_some()
-            || !url.path().is_empty()
-            || url.query().is_some()
-            || url.fragment().is_some()
-        {
-            bail!("portal::next: expected only shared-key@host:port");
+            .map_err(|error| anyhow!("Portal next endpoint: invalid authority: {error}"))?;
+        if url.password().is_some() || url.query().is_some() || url.fragment().is_some() {
+            bail!(
+                "Portal next endpoint: expected shared-key and one endpoint without a query or fragment"
+            );
         }
-        let credentials = crate::protocol::Credentials::new(&url)
-            .map_err(|error| anyhow!("portal::next: {error}"))?;
-        let config = Self::parse(&url, query, dialer_ip)
-            .map_err(|error| anyhow!("portal::next: {error}"))?;
+        let credentials = crate::protocol::Credentials::new(&url)?;
+        let config = Self::parse(&url, query, dialer_ip, "Portal next endpoint")?;
         Ok((config, credentials))
     }
 
     pub(crate) fn endpoint(&self) -> String {
-        format_host_port(&self.remote_host, self.remote_port)
+        self.remote.canonical()
+    }
+
+    pub(crate) fn host(&self) -> &str {
+        &self.remote.host
+    }
+
+    pub(crate) fn tcp_endpoint(&self) -> Option<CarrierEndpoint> {
+        self.remote.tcp
+    }
+
+    pub(crate) fn udp_endpoint(&self) -> Option<CarrierEndpoint> {
+        self.remote.udp
     }
 
     pub(crate) fn effective_route(&self) -> String {
@@ -198,9 +219,9 @@ pub(crate) struct SocksListenConfig {
 impl SocksListenConfig {
     fn from_url(url: &Url) -> Result<Self> {
         let raw_value = first_raw_socks_value(url)
-            .ok_or_else(|| anyhow!("vector::config: socks parameter is required"))?;
+            .ok_or_else(|| anyhow!("Vector configuration: socks parameter is required"))?;
         if raw_value.is_empty() {
-            bail!("vector::config: socks must not be empty");
+            bail!("Vector configuration: socks must not be empty");
         }
         let (endpoint, credentials) = parse_socks_value(raw_value)?;
         let (host, port) = parse_host_port(&endpoint, "socks listener", true)?;
@@ -223,8 +244,7 @@ impl SocksListenConfig {
 /// Fully validated Vector runtime configuration.
 #[derive(Clone, Debug)]
 pub(crate) struct VectorConfig {
-    pub(super) remote_host: String,
-    pub(super) remote_port: u16,
+    pub(super) remote: ServiceEndpoint,
     pub(super) up: CarrierMode,
     pub(super) down: CarrierMode,
     pub(super) mux: MuxMode,
@@ -238,30 +258,25 @@ pub(crate) struct VectorConfig {
 impl VectorConfig {
     pub(super) fn from_url(url: &Url) -> Result<Self> {
         if url.scheme() != "vector" {
-            bail!("vector::config: URL scheme must be vector");
+            bail!("Vector configuration: URL scheme must be vector");
         }
         if url.password().is_some() {
-            bail!("vector::config: URL password component is not supported");
+            bail!("Vector configuration: URL password component is not supported");
         }
         if url.username().is_empty() {
-            bail!("vector::config: missing shared key");
+            bail!("Vector configuration: missing shared key before '@'");
         }
         if url.fragment().is_some() {
-            bail!("vector::config: URL fragment is not supported");
+            bail!("Vector configuration: URL fragment is not supported");
         }
-        if !url.path().is_empty() {
-            bail!("vector::config: URL path is not supported");
-        }
-
         let query = query_first(url, VECTOR_QUERY_KEYS)?;
-        let portal = PortalClientConfig::parse(url, &query, DEFAULT_DIALER_IP)?;
+        let portal = PortalClientConfig::parse(url, &query, DEFAULT_DIALER_IP, "Vector endpoint")?;
         let rate_mbps = parse_rate(query.get("rate").map(String::as_str), "rate")?;
         let etar_mbps = parse_rate(query.get("etar").map(String::as_str), "etar")?;
         let socks = SocksListenConfig::from_url(url)?;
 
         Ok(Self {
-            remote_host: portal.remote_host,
-            remote_port: portal.remote_port,
+            remote: portal.remote,
             up: portal.up,
             down: portal.down,
             mux: portal.mux,
@@ -275,8 +290,7 @@ impl VectorConfig {
 
     pub(crate) fn portal_client_config(&self) -> PortalClientConfig {
         PortalClientConfig {
-            remote_host: self.remote_host.clone(),
-            remote_port: self.remote_port,
+            remote: self.remote.clone(),
             up: self.up,
             down: self.down,
             mux: self.mux,
@@ -287,7 +301,7 @@ impl VectorConfig {
     }
 
     pub(super) fn portal_endpoint(&self) -> String {
-        format_host_port(&self.remote_host, self.remote_port)
+        self.remote.canonical()
     }
 
     pub(super) fn checkpoint_mode(&self) -> u8 {
@@ -320,6 +334,23 @@ impl VectorConfig {
     }
 }
 
+fn validate_carrier_policy(
+    endpoint: &ServiceEndpoint,
+    mode: CarrierMode,
+    name: &str,
+    context: &str,
+) -> Result<()> {
+    let available = match mode {
+        CarrierMode::Tcp => endpoint.has_tcp(),
+        CarrierMode::Udp => endpoint.has_udp(),
+        CarrierMode::Mix => endpoint.has_tcp() && endpoint.has_udp(),
+    };
+    if !available {
+        bail!("{context}: {name} selects a carrier not declared by the endpoint");
+    }
+    Ok(())
+}
+
 fn parse_rate(value: Option<&str>, name: &str) -> Result<i32> {
     match value {
         None => Ok(0),
@@ -327,7 +358,7 @@ fn parse_rate(value: Option<&str>, name: &str) -> Result<i32> {
             .parse::<i32>()
             .ok()
             .filter(|value| *value >= 0)
-            .ok_or_else(|| anyhow!("vector::config: {name} must be a non-negative integer")),
+            .ok_or_else(|| anyhow!("Vector configuration: {name} must be a non-negative integer")),
     }
 }
 

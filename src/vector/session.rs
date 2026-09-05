@@ -21,9 +21,8 @@ use tokio_rustls::client::TlsStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::common::{
-    BudgetedDatagram, LatencyGuard, LatencyTracker, UdpDatagramSend, filter_addrs,
-    handshake_timeout, parse_local_ip, reserve_udp_budget, send_quic_udp_packet, service_cooldown,
-    udp_idle_timeout,
+    BudgetedDatagram, LatencyGuard, LatencyTracker, UdpDatagramSend, handshake_timeout,
+    parse_local_ip, reserve_udp_budget, send_quic_udp_packet, service_cooldown, udp_idle_timeout,
 };
 use crate::mux::{MUX_IDLE_TIMEOUT, MuxConfig, MuxHandle, MuxStream};
 use crate::protocol::{

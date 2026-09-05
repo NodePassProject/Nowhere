@@ -85,14 +85,21 @@ impl QuicManager {
     }
 
     async fn connect(&self) -> Result<Arc<QuicSession>> {
+        let endpoint = self.config.udp_endpoint().ok_or_else(|| {
+            anyhow!("vector::session::QuicManager::connect: UDP carrier is not configured")
+        })?;
         let resolved = timeout(
             handshake_timeout(),
-            lookup_host((self.config.remote_host.as_str(), self.config.remote_port)),
+            lookup_host((self.config.host(), endpoint.port)),
         )
         .await
         .map_err(|_| anyhow!("vector::session::QuicManager::connect: Portal DNS timeout"))?
         .context("vector::session::QuicManager::connect: Portal DNS failed")?;
-        let addresses = filter_addrs(resolved, parse_local_ip(&self.config.dialer_ip));
+        let addresses = crate::common::filter_addrs_for_family(
+            resolved,
+            parse_local_ip(&self.config.dialer_ip),
+            endpoint.family,
+        );
         if addresses.is_empty() {
             bail!("vector::session::QuicManager::connect: no Portal address resolved");
         }

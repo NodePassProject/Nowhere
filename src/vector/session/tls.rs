@@ -4,7 +4,7 @@
 use super::*;
 
 pub(in crate::vector) struct TlsManager {
-    endpoint: String,
+    endpoint: Option<(String, crate::common::AddressFamily)>,
     dialer_ip: String,
     tls: ClientTls,
     auth_key: AuthKey,
@@ -45,7 +45,9 @@ impl TlsManager {
         signals: ClientSignals,
     ) -> Arc<Self> {
         Arc::new(Self {
-            endpoint: config.endpoint(),
+            endpoint: config
+                .tcp_endpoint()
+                .map(|endpoint| (config.remote.carrier_addr(endpoint), endpoint.family)),
             dialer_ip: config.dialer_ip.clone(),
             tls,
             auth_key: credentials.auth_key,
@@ -177,9 +179,13 @@ impl TlsManager {
     }
 
     async fn connect_lane(&self) -> Result<TlsLane> {
+        let (endpoint, family) = self
+            .endpoint
+            .as_ref()
+            .ok_or_else(|| anyhow!("vector::session::TlsManager: TCP carrier is not configured"))?;
         let (stream, exporter, version) = self
             .tls
-            .connect_tcp(&self.endpoint, &self.dialer_ip)
+            .connect_tcp(endpoint, &self.dialer_ip, *family)
             .await?;
         let latency = self.latency.register();
         latency.update_tcp(stream.get_ref().0);

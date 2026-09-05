@@ -17,6 +17,32 @@ fn defaults_to_quic_both_directions() {
 }
 
 #[test]
+fn explicit_endpoints_select_ports_families_and_single_carrier_defaults() {
+    let tcp = parse("vector://secret@example.com/tcp4:2077?socks=:1080").unwrap();
+    assert_eq!(tcp.up, CarrierMode::Tcp);
+    assert_eq!(tcp.down, CarrierMode::Tcp);
+    assert_eq!(tcp.portal_endpoint(), "example.com/tcp4:2077");
+
+    let mixed =
+        parse("vector://secret@example.com/udp6:3088/tcp4:2077?socks=:1080&up=tcp&down=udp")
+            .unwrap();
+    assert_eq!(mixed.portal_endpoint(), "example.com/tcp4:2077/udp6:3088");
+    assert_eq!(mixed.remote.tcp.unwrap().port, 2077);
+    assert_eq!(mixed.remote.udp.unwrap().port, 3088);
+}
+
+#[test]
+fn policy_must_use_declared_carriers() {
+    for raw in [
+        "vector://secret@example.com/tcp:2077?up=udp&socks=:1080",
+        "vector://secret@example.com/udp:2077?down=tcp&socks=:1080",
+        "vector://secret@example.com/tcp:2077?up=mix&socks=:1080",
+    ] {
+        assert!(parse(raw).is_err(), "accepted {raw}");
+    }
+}
+
+#[test]
 fn tcp_pair_defaults_to_dedicated_lanes() {
     let config =
         parse("vector://secret@example.com:2077?up=tcp&down=tcp&socks=127.0.0.1:1080").unwrap();
@@ -188,7 +214,7 @@ fn rejects_invalid_authority_shape() {
 #[test]
 fn normalizes_ipv6_portal_authority() {
     let config = parse("vector://secret@[::1]:2077?socks=127.0.0.1:1080").unwrap();
-    assert_eq!(config.remote_host, "::1");
+    assert_eq!(config.remote.host, "::1");
     assert_eq!(config.portal_endpoint(), "[::1]:2077");
 }
 
@@ -211,6 +237,35 @@ fn upstream_authority_decodes_reserved_key_bytes_and_ipv6() {
 }
 
 #[test]
+fn upstream_authority_decodes_the_shared_key_exactly_once() {
+    let query = HashMap::new();
+    let (_, credentials) = PortalClientConfig::from_upstream_authority(
+        "part%2540key@origin.example/udp:2080",
+        &query,
+        "auto",
+    )
+    .unwrap();
+    assert_eq!(
+        credentials,
+        crate::protocol::Credentials::from_shared_key(b"part%40key").unwrap()
+    );
+}
+
+#[test]
+fn upstream_authority_accepts_explicit_carriers() {
+    let query = HashMap::new();
+    let (config, _) = PortalClientConfig::from_upstream_authority(
+        "secret@origin.example/tcp6:2077",
+        &query,
+        "auto",
+    )
+    .unwrap();
+    assert_eq!(config.endpoint(), "origin.example/tcp6:2077");
+    assert_eq!(config.up, CarrierMode::Tcp);
+    assert_eq!(config.down, CarrierMode::Tcp);
+}
+
+#[test]
 fn upstream_authority_requires_unambiguous_key_endpoint_separator() {
     let query = HashMap::new();
     for authority in [
@@ -222,6 +277,47 @@ fn upstream_authority_requires_unambiguous_key_endpoint_separator() {
         assert!(
             PortalClientConfig::from_upstream_authority(authority, &query, "auto").is_err(),
             "authority accepted: {authority}"
+        );
+    }
+}
+
+#[test]
+fn upstream_authority_rejects_every_invalid_endpoint_shape() {
+    let query = HashMap::new();
+    for (authority, expected) in [
+        ("secret@*:2077", "wildcard host is only valid"),
+        (
+            "secret@origin.example:2077/tcp:3088",
+            "choose either HOST:PORT",
+        ),
+        ("secret@origin.example/tcp:2077/", "trailing slash"),
+        (
+            "secret@origin.example/tcp:2077/tcp6:3088",
+            "TCP carrier is declared more than once",
+        ),
+        ("secret@origin.example/udp:0", "1..=65535"),
+        ("secret@origin.example/sctp:2077", "unknown carrier"),
+        (
+            "secret@192.0.2.1/udp6:2077",
+            "address family does not match",
+        ),
+        (
+            "secret@origin.example/tcp:2077?inner=1",
+            "expected shared-key and one endpoint",
+        ),
+        (
+            "secret@origin.example/tcp:2077#fragment",
+            "expected shared-key and one endpoint",
+        ),
+        ("bad%GG@origin.example/tcp:2077", "malformed percent escape"),
+    ] {
+        let error = PortalClientConfig::from_upstream_authority(authority, &query, "auto")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{authority} returned {error:?}");
+        assert!(
+            !error.contains("secret@"),
+            "error leaked the next shared key"
         );
     }
 }
