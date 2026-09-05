@@ -37,6 +37,30 @@ compatibility: default V1 and V2 peers communicate using the version negotiation
 described above. Compatible compact address syntax does not imply identical
 query semantics across versions.
 
+The endpoint path is local process configuration and never appears on the wire.
+It determines which TCP or UDP socket carries the TLS/QUIC connection before
+ALPN and AuthFrame processing begin.
+
+| Configuration | V2 behavior | V1 interoperability consequence |
+|---|---|---|
+| `HOST:PORT` | Both carriers use one unrestricted port | A default V1 client can reach both carriers |
+| `HOST/tcp:2006` | Only TLS/TCP exists | A peer must select TCP and use port 2006 |
+| `HOST/udp:2017` | Only QUIC/UDP exists | A peer must select UDP and use port 2017 |
+| `HOST/tcp:2006/udp:2017` | Carriers use independent ports | A client must understand or otherwise know both ports |
+| `HOST/tcp4:2006/udp6:2017` | Carrier DNS/address results are family-filtered | Peer reachability must satisfy the same families |
+
+A V1 client URL has one authority port and cannot describe separate TCP and UDP
+ports. A V2 Portal intended to serve unmodified V1 clients therefore uses the
+compact form on that compatibility edge. A V2 Vector may use an explicit
+endpoint with a V1 Portal when each declared address and port matches a listener
+that the V1 Portal actually exposes.
+
+`net` has no meaning to the V2 endpoint parser. For example,
+`portal://key@*:2000?net=tcp` still declares both carriers because the compact
+endpoint declares both. A TCP-only V2 service uses
+`portal://key@*/tcp:2006`. This query difference does not change ALPN or the
+compatible V1 wire encoding.
+
 ## TLS lane contract
 
 Vector `mux=0` opens one authenticated TLS connection per Flow. Vector `mux=1`
@@ -93,6 +117,11 @@ FlowHeader. Portal compatibility is independent of whether the client policy
 is fixed or mixed.
 The upstream Mux selection defaults to `0`, is ignored without an enabled
 `next`, and canonicalizes to `0` for a fixed `udp/udp` route.
+
+Each hop has its own endpoint constraints. A V2 Portal may accept an inbound V1
+TLS client on a compact listener and use an IPv6-only QUIC endpoint for its V2
+`next` hop. The incoming ALPN, local listener family, upstream ALPN, and upstream
+address family are evaluated independently.
 
 Interoperability tests exercise both peer roles: one endpoint as Portal and the
 other as client. The complete 3×3 `up`/`down` policy matrix covers all four

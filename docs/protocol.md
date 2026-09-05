@@ -26,6 +26,35 @@ Nowhere 2 offers `nw2` first and the default V1 value `now/1` second. A selected
 `nw2` carrier is V2; every accepted non-`nw2` carrier is V1, which in this
 implementation means exactly `now/1`.
 
+### Command endpoint mapping
+
+The command URL chooses the socket for each physical carrier before this wire
+protocol begins. Its endpoint forms map as follows:
+
+| Command endpoint entry | Physical carrier | Wire transport byte |
+|---|---|---:|
+| compact `HOST:PORT` TCP side | TLS 1.3 over TCP on `PORT` | `0x01` |
+| compact `HOST:PORT` UDP side | QUIC over UDP on `PORT` | `0x02` |
+| `HOST/tcp:PORT`, `HOST/tcp4:PORT`, or `HOST/tcp6:PORT` | TLS 1.3 over TCP on its own port/family | `0x01` |
+| `HOST/udp:PORT`, `HOST/udp4:PORT`, or `HOST/udp6:PORT` | QUIC over UDP on its own port/family | `0x02` |
+
+TCP and UDP may use different ports and address families while sharing one
+command endpoint host. Port numbers, hostnames, wildcard selection, and
+address-family suffixes are not serialized in AuthFrame or FlowHeader. They
+only select the local listener or remote socket on which a carrier is
+established.
+
+Disabling a carrier by omitting it from an explicit endpoint does not create a
+new wire mode. It prevents the local process from listening or dialing that
+physical transport. Client `up`, `down`, and `mix` policy must select from the
+declared carriers before a FlowHeader is encoded.
+
+Separate TCP and UDP socket addresses do not separate sessions. The same
+authenticated `session_id` joins all physical carriers created by one client,
+so split OPEN and ATTACH lanes can pair across carrier ports and IP families.
+Address family is never negotiated on the wire; reachability and family
+filtering complete before TLS or QUIC authentication.
+
 One client session has one random 16-byte `session_id`. Every physical carrier
 is authenticated with that ID, so Portal can pair logical lanes belonging to
 the same client session.
