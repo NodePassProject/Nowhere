@@ -22,6 +22,36 @@ TLS is version 1.3. Deployments may use a certificate pin, normal system-root
 verification with SNI, or the explicitly configured unverified certificate
 mode used by generated local certificates.
 
+## Endpoint exposure
+
+The service endpoint is also the network exposure policy. A compact Portal
+endpoint exposes TLS/TCP and QUIC/UDP on the same port. An explicit path exposes
+only its declared carriers, ports, and address families:
+
+```text
+portal://key@*/tcp4:2006
+portal://key@192.0.2.10/tcp:2006/udp:2017
+portal://key@[2001:db8::10]/udp6:2017
+```
+
+`*` and the compact empty host bind wildcard interfaces. Use a concrete local
+address when the service should be limited to one interface, and enforce the
+same transport, port, and family policy in host and perimeter firewalls. Every
+IPv6 listener is `V6ONLY`, so IPv4 exposure is always represented by a separate
+socket and firewall decision.
+
+A hostname listener binds all matching addresses resolved at startup. The
+result is not refreshed dynamically, which prevents a later DNS answer from
+silently expanding a running process, but operators must review the complete
+startup address list after each restart. Vector and native `next` honor
+explicit family suffixes and never retry through the other family.
+
+Effective URLs, startup summaries, TUI descriptors, and configuration errors
+omit the shared key. The original command URL still contains the credential;
+protect shell history, process arguments, service-manager configuration, and
+deployment logs accordingly. Reserved key bytes must be percent-encoded, and
+nested `next` credentials are decoded exactly once.
+
 ## Admission
 
 Portal bounds pre-authentication work and applies per-source admission before

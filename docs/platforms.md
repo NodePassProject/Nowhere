@@ -22,6 +22,32 @@ cargo build --release --locked
 cargo test --all-targets --locked
 ```
 
+## Network exposure
+
+Portal binds one socket for every address selected by each declared carrier.
+The endpoint path therefore defines both process listeners and the firewall or
+container rules required around the process.
+
+| Endpoint | Required inbound exposure |
+|---|---|
+| `*:2000` | TCP 2000 and UDP 2000 |
+| `*/tcp:2006` | TCP 2006 |
+| `*/udp:2017` | UDP 2017 |
+| `*/tcp:2006/udp:2017` | TCP 2006 and UDP 2017 |
+| `*/tcp4:2006/udp6:2017` | IPv4 TCP 2006 and IPv6 UDP 2017 |
+
+An unrestricted `*` carrier opens separate IPv4 and IPv6 wildcard sockets.
+IPv6 sockets use `V6ONLY` on Linux, macOS, and Windows, so an IPv6 firewall
+rule does not replace the corresponding IPv4 rule. If the operating system
+does not support one family, only an unrestricted wildcard carrier may start
+with the available family and a warning. Explicit families and concrete bind
+addresses fail startup when unavailable.
+
+A hostname listener resolves once at startup and binds every matching address.
+DNS changes take effect after a process restart. Vector and Portal `next`
+resolve each remote carrier independently, filter by its `4` or `6` suffix,
+and fail rather than crossing the declared family boundary.
+
 ## Container image
 
 GHCR publishes `ghcr.io/nodepassproject/nowhere` for exactly two platforms:
@@ -41,6 +67,21 @@ docker run -d --rm --name nowhere-portal \
   ghcr.io/nodepassproject/nowhere:latest \
   'portal://change-me@:2000'
 ```
+
+Publish separate carrier ports when the endpoint uses an explicit path:
+
+```text
+docker run -d --rm --name nowhere-portal \
+  -p 2006:2006/tcp \
+  -p 2017:2017/udp \
+  ghcr.io/nodepassproject/nowhere:latest \
+  'portal://change-me@*/tcp:2006/udp:2017'
+```
+
+Docker publication is transport-specific. Publishing `2006/udp` does not
+expose the TCP carrier, and publishing `2017/tcp` does not expose QUIC. For an
+IPv4-only or IPv6-only carrier, align the Docker host binding and host firewall
+with the endpoint suffix.
 
 For `tls=2`, mount the CA-issued PEM certificate chain and private key:
 

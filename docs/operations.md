@@ -12,6 +12,45 @@ Run `nowhere` without a URL and select:
 - `1` Overview;
 - `2` Logs.
 
+## Listener lifecycle
+
+Portal validates the complete URL, resolves every declared carrier, and opens
+its UDP and TCP listener sets before entering `READY`. Each successful bind is
+logged with its actual transport and socket address:
+
+```text
+listening on TLS/TCP 0.0.0.0:2006
+listening on TLS/TCP [::]:2006
+listening on QUIC/UDP 0.0.0.0:2017
+listening on QUIC/UDP [::]:2017
+```
+
+The effective configuration keeps the normalized logical endpoint, such as
+`*/tcp:2006/udp:2017`. TUI instance summaries show the actual TCP and UDP
+address lists after binding. Disabled carriers appear as `none`; shared keys
+are absent from both views.
+
+One hostname may resolve to several addresses. Portal deduplicates the startup
+result and binds every address that matches the carrier family. These sockets
+form one logical carrier listener set. DNS is not refreshed while the process
+runs, and an unexpected exit from any active listener set stops the service.
+
+Startup is all-or-nothing for declared carriers. A carrier must bind at least
+one address. A port conflict, permission error, unavailable concrete address,
+or explicit family failure stops startup and releases sockets already opened.
+The only partial-family case is `*` with unrestricted `tcp` or `udp`: an
+operating system without one address family logs a warning and continues with
+the other family.
+
+| Symptom | Check |
+|---|---|
+| TCP works but QUIC does not | UDP port publication, firewall, and the endpoint's UDP entry |
+| QUIC works but TCP does not | TCP port publication, firewall, and the endpoint's TCP entry |
+| IPv4 works but IPv6 does not | Carrier suffix, IPv6 route, and the separate `[::]` bind log |
+| Startup reports no matching address | DNS results and the carrier's `4` or `6` suffix |
+| Startup reports address in use | Each transport/port pair and any duplicate service instance |
+| Vector rejects `up`, `down`, or `mix` | The remote endpoint must declare every selected carrier |
+
 ## Capacity
 
 The important memory bounds are the 1,024 concurrent TCP flows and 256 UDP flows
@@ -110,7 +149,13 @@ configured shutdown deadline.
 
 Functional validation belongs on every deployment platform:
 
-- Portal reaches `READY` on every configured listener;
+- Portal reports every expected TCP and UDP address before reaching `READY`;
+- compact endpoints accept both carriers on one port, while explicit endpoints
+  expose only their declared carrier/port/family combinations;
+- wildcard IPv6 listeners are `V6ONLY` and coexist with IPv4 listeners on the
+  same numeric port;
+- hostname listeners bind every deduplicated startup address, and a failed
+  startup releases listeners opened earlier;
 - Vector accepts SOCKS5 CONNECT and UDP ASSOCIATE;
 - every configured uplink/downlink carrier combination reaches a target;
 - every Mix policy resolves only to its documented concrete pairs and cleans
