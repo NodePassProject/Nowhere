@@ -163,6 +163,38 @@ fn native_next_defaults_to_tcp_without_mux_and_redacts_the_shared_key() {
 }
 
 #[test]
+fn native_next_omitted_directions_keep_independent_tcp_defaults_and_explicit_mux() {
+    for endpoint in ["origin.example:2000", "origin.example/udp6:2017/tcp4:2006"] {
+        for (query, up, down) in [
+            ("", "tcp", "tcp"),
+            ("&up=udp", "udp", "tcp"),
+            ("&down=udp", "tcp", "udp"),
+            ("&up=mix", "mix", "tcp"),
+            ("&down=mix", "tcp", "mix"),
+        ] {
+            for (mux_query, mux) in [("", 0), ("&mux=1", 1)] {
+                let raw = format!(
+                    "portal://relay-key@*/udp4:2017?next=upstream-key@{endpoint}{query}{mux_query}"
+                );
+                let portal = Portal::new(Url::parse(&raw).unwrap(), test_logger()).unwrap();
+                assert_eq!(portal.inner.network_mode, NetworkMode::Udp);
+                assert_eq!(
+                    portal.inner.outbound.next_transport().as_deref(),
+                    Some(format!("up={up} down={down} mux={mux} sni=none pin=none").as_str()),
+                    "{raw}"
+                );
+                assert!(
+                    portal
+                        .effective_url()
+                        .contains(&format!("&up={up}&down={down}&mux={mux}&")),
+                    "{raw}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn native_next_uses_shared_endpoint_grammar_and_single_carrier_defaults() {
     let portal = Portal::new(
         Url::parse("portal://relay-key@*/tcp4:2006?next=upstream-key@relay.example/udp6:2017")

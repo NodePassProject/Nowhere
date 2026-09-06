@@ -38,6 +38,33 @@ fn explicit_endpoints_select_ports_families_and_single_carrier_defaults() {
 }
 
 #[test]
+fn omitted_directions_keep_independent_tcp_defaults_and_explicit_mux() {
+    for endpoint in ["example.com:2000", "example.com/udp6:2017/tcp4:2006"] {
+        for (query, up, down) in [
+            ("", "tcp", "tcp"),
+            ("&up=udp", "udp", "tcp"),
+            ("&down=udp", "tcp", "udp"),
+            ("&up=mix", "mix", "tcp"),
+            ("&down=mix", "tcp", "mix"),
+        ] {
+            for (mux_query, mux) in [("", MuxMode::Disabled), ("&mux=1", MuxMode::Enabled)] {
+                let raw = format!("vector://secret@{endpoint}?socks=:1080{query}{mux_query}");
+                let config = parse(&raw).unwrap();
+                assert_eq!(config.up.to_string(), up, "{raw}");
+                assert_eq!(config.down.to_string(), down, "{raw}");
+                assert_eq!(config.mux, mux, "{raw}");
+                assert!(
+                    config
+                        .effective_url()
+                        .contains(&format!("up={up}&down={down}&mux={mux}&")),
+                    "{raw}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn policy_must_use_declared_carriers() {
     for raw in [
         "vector://secret@example.com/tcp:2006?up=udp&socks=:1080",
