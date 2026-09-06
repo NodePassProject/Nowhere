@@ -26,6 +26,8 @@ fn help_text_documents_usage_and_configuration_surface() {
         "mux=0|1",
         "up=tcp|udp|mix",
         "down=tcp|udp|mix",
+        "Defaults to the only declared carrier, or TCP.",
+        "with both, TCP is the",
         "Use TLS Mux when the native route can select TCP.",
         "UDP ASSOCIATE",
         "rate=<mbps>",

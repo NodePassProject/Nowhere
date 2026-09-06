@@ -143,7 +143,7 @@ fn socks_configuration_is_validated_and_redacted_in_effective_url() {
 }
 
 #[test]
-fn native_next_defaults_to_quic_and_redacts_the_shared_key() {
+fn native_next_defaults_to_tcp_without_mux_and_redacts_the_shared_key() {
     let portal = Portal::new(
         Url::parse("portal://relay-key@127.0.0.1:2000?next=upstream%40key@relay.example:2080")
             .unwrap(),
@@ -154,7 +154,7 @@ fn native_next_defaults_to_quic_and_redacts_the_shared_key() {
     assert_eq!(portal.inner.outbound.next_endpoint(), "relay.example:2080");
     assert_eq!(
         portal.inner.outbound.next_transport().as_deref(),
-        Some("up=udp down=udp mux=0 sni=none pin=none")
+        Some("up=tcp down=tcp mux=0 sni=none pin=none")
     );
     let effective = portal.effective_url();
     assert!(effective.contains("next=relay.example:2080"));

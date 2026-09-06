@@ -5,10 +5,10 @@ fn parse(raw: &str) -> Result<VectorConfig> {
 }
 
 #[test]
-fn defaults_to_quic_both_directions() {
+fn dual_carrier_endpoint_defaults_to_tcp_without_mux() {
     let config = parse("vector://secret@example.com:2000?socks=:1080").unwrap();
-    assert_eq!(config.up, CarrierMode::Udp);
-    assert_eq!(config.down, CarrierMode::Udp);
+    assert_eq!(config.up, CarrierMode::Tcp);
+    assert_eq!(config.down, CarrierMode::Tcp);
     assert_eq!(config.mux, MuxMode::Disabled);
     assert_eq!(config.sni, None);
     assert_eq!(config.pin, None);
@@ -23,12 +23,18 @@ fn explicit_endpoints_select_ports_families_and_single_carrier_defaults() {
     assert_eq!(tcp.down, CarrierMode::Tcp);
     assert_eq!(tcp.portal_endpoint(), "example.com/tcp4:2006");
 
-    let mixed =
-        parse("vector://secret@example.com/udp6:2017/tcp4:2006?socks=:1080&up=tcp&down=udp")
-            .unwrap();
+    let udp = parse("vector://secret@example.com/udp6:2017?socks=:1080").unwrap();
+    assert_eq!(udp.up, CarrierMode::Udp);
+    assert_eq!(udp.down, CarrierMode::Udp);
+    assert_eq!(udp.mux, MuxMode::Disabled);
+
+    let mixed = parse("vector://secret@example.com/udp6:2017/tcp4:2006?socks=:1080").unwrap();
     assert_eq!(mixed.portal_endpoint(), "example.com/tcp4:2006/udp6:2017");
     assert_eq!(mixed.remote.tcp.unwrap().port, 2006);
     assert_eq!(mixed.remote.udp.unwrap().port, 2017);
+    assert_eq!(mixed.up, CarrierMode::Tcp);
+    assert_eq!(mixed.down, CarrierMode::Tcp);
+    assert_eq!(mixed.mux, MuxMode::Disabled);
 }
 
 #[test]
