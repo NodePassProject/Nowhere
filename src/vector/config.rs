@@ -97,8 +97,8 @@ impl PortalClientConfig {
     ) -> Result<Self> {
         let remote = ServiceEndpoint::parse(url, false, context)?;
         let default = match (remote.has_tcp(), remote.has_udp()) {
-            (true, false) => CarrierMode::Tcp,
-            (false, true) | (true, true) => CarrierMode::Udp,
+            (true, false) | (true, true) => CarrierMode::Tcp,
+            (false, true) => CarrierMode::Udp,
             (false, false) => unreachable!(),
         };
         let up = CarrierMode::parse(query.get("up").map(String::as_str), "up", default, context)?;

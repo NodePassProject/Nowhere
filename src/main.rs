@@ -74,9 +74,9 @@ Portal parameters:
                    Example: shared-key@host/tcp:2006/udp6:2017. Omit or use
                    none to disable. Mutually exclusive with socks.
   up=tcp|udp|mix   Native upstream upload carrier. Mix chooses per flow.
-                   Defaults to the only declared carrier, or UDP.
+                   Defaults to the only declared carrier, or TCP.
   down=tcp|udp|mix Native upstream download carrier. Mix chooses per flow.
-                   Defaults to the only declared carrier, or UDP.
+                   Defaults to the only declared carrier, or TCP.
   mux=0|1          Use TLS Mux when the native route can select TCP. Default: 0.
   sni=<name|none>  Native upstream certificate DNS name. Default: none.
   pin=<sha256|none> Native upstream certificate fingerprint. Default: none.
@@ -84,8 +84,8 @@ Portal parameters:
   log=<level>      none, debug, info, warn, error, event. Default: info.
 
 Vector parameters:
-  up=tcp|udp|mix   Upload carrier. Defaults to the only declared carrier, or UDP.
-  down=tcp|udp|mix Download carrier. Defaults to the only declared carrier, or UDP.
+  up=tcp|udp|mix   Upload carrier. Defaults to the only declared carrier, or TCP.
+  down=tcp|udp|mix Download carrier. Defaults to the only declared carrier, or TCP.
   mux=0|1          Use TLS Mux when either direction can select TCP. Default: 0.
   sni=<name|none>  Verify the certificate for a DNS name. Empty, omitted, or
                    none disables certificate validation. Default: none.
@@ -121,7 +121,7 @@ Portal binding:
 
 Vector and next dialing:
   * is invalid. DNS results are filtered independently for each carrier family.
-  A single carrier is the default for both directions; with both, UDP is the
+  A single carrier is the default for both directions; with both, TCP is the
   default. Explicit up/down must exist, and mix requires both carriers.
 
 Transport capabilities:
