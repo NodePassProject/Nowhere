@@ -88,7 +88,9 @@ rules, DNS behavior, family availability, and canonical output.
 
 ### One flow, two transport decisions
 
-Vector's `up` and `down` parameters accept `tcp`, `udp`, or `mix`:
+Vector's `up` and `down` parameters accept `tcp`, `udp`, or `mix`. When both
+carriers are available, omitted directions select TCP. Mux remains disabled
+unless `mux=1` is set:
 
 | `up` ↓ / `down` → | `tcp` | `udp` | `mix` |
 |---|---|---|---|

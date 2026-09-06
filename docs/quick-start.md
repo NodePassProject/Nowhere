@@ -60,10 +60,10 @@ operating system does not support one address family.
 
 ## 2. Start Vector
 
-Dedicated TLS lanes in both directions:
+Dedicated TLS lanes in both directions use the compact endpoint defaults:
 
 ```text
-nowhere 'vector://secret@127.0.0.1:2000?up=tcp&down=tcp&socks=127.0.0.1:1080'
+nowhere 'vector://secret@127.0.0.1:2000?socks=127.0.0.1:1080'
 ```
 
 QUIC in both directions:
@@ -79,8 +79,9 @@ nowhere 'vector://secret@127.0.0.1/tcp:2006/udp:2017?up=tcp&down=udp&socks=127.0
 ```
 
 The carrier path describes what can be dialed. `up` and `down` choose from
-those carriers for each logical direction. A single-carrier endpoint needs no
-explicit direction policy:
+those carriers for each logical direction. Compact and explicit dual-carrier
+endpoints default both directions to TCP with Mux disabled. A single-carrier
+endpoint needs no explicit direction policy:
 
 ```text
 nowhere 'vector://secret@127.0.0.1/tcp4:2006?socks=127.0.0.1:1080'

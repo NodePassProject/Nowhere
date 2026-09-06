@@ -105,7 +105,7 @@ sockets instead of relying on an operating-system dual-stack default.
 | `dial` | `auto` or local IP | `auto` |
 | `socks` | outbound SOCKS5 configuration | disabled |
 | `next` | `shared-key@host:port` or explicit carrier endpoint | disabled |
-| `up`, `down` | native next-hop policy: `tcp`, `udp`, or `mix` | only carrier, otherwise `udp` |
+| `up`, `down` | native next-hop policy: `tcp`, `udp`, or `mix` | only carrier, otherwise `tcp` |
 | `mux` | native next-hop TLS: `0` dedicated lanes, `1` Mux when TCP is possible | `0` |
 | `sni` | native next-hop verified DNS name, or `none` | `none` |
 | `pin` | native next-hop certificate SHA-256 pin, or `none` | `none` |
@@ -132,14 +132,14 @@ IPv4. If no resolved address matches the selected family, dialing fails with a
 configuration-specific address error.
 
 When an endpoint declares one carrier, omitted `up` and `down` both select that
-carrier. When both carriers exist, each omitted direction selects UDP. An
+carrier. When both carriers exist, each omitted direction selects TCP. An
 explicit direction may select only a declared carrier, and `mix` requires both
 TCP and UDP. These checks run before the SOCKS listener begins accepting
-traffic.
+traffic. The transport default does not enable Mux; omitted `mux` remains `0`.
 
 | Query | Values | Default |
 |---|---|---|
-| `up`, `down` | `tcp`, `udp`, or `mix` | only carrier, otherwise `udp` |
+| `up`, `down` | `tcp`, `udp`, or `mix` | only carrier, otherwise `tcp` |
 | `mux` | `0` dedicated TLS lanes, `1` TLS Mux | `0` |
 | `sni` | verified DNS name, or `none` | `none` |
 | `pin` | certificate SHA-256 pin, or `none` | `none` |
