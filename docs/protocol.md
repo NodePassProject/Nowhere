@@ -213,8 +213,8 @@ Mux frame.
 
 ### MuxHeader
 
-Every Mux frame starts with an 8-byte header. STREAM and DATAGRAM frames carry
-exactly `value` payload bytes; WINDOW carries no payload.
+Every Mux frame starts with an 8-byte header. A DATA STREAM frame carries
+exactly `value` payload bytes; control frames carry no payload.
 
 ```text
 MuxHeader - 8 bytes
@@ -228,13 +228,8 @@ MuxHeader - 8 bytes
 
 | `kind` | Name | `value` | `flow_id` |
 |---:|---|---|---|
-| `0x01` | STREAM | payload length | nonzero |
-| `0x02` | WINDOW | returned byte credit | `0` for connection, nonzero for stream |
-| `0x03` | DATAGRAM | payload length | nonzero |
-
-The runtime implements STREAM and WINDOW. DATAGRAM headers are recognized by
-the codec but are not registered as a runtime plane; receiving one closes the
-Mux carrier as unsupported.
+| `0x01` | STREAM | DATA length, or initial window extension with SYN | nonzero |
+| `0x02` | WINDOW | returned credit in 1 KiB units | `0` for connection, nonzero for stream |
 
 For STREAM, the low three flag bits are:
 
@@ -247,12 +242,14 @@ flags byte
          +---------------------+-----+-----+-----+
 ```
 
-- `SYN=0x01` creates the logical stream before optional payload is delivered.
+- `SYN=0x01` creates the logical stream. It is isolated, carries no payload,
+  and `value` extends the peer's 4 MiB initial stream window in 1 KiB units.
 - `FIN=0x02` half-closes the sender after optional payload is delivered.
 - `RST=0x04` resets the stream. It MUST be the only flag and `value` MUST be 0.
 - All other flag bits MUST be zero.
 
-WINDOW uses `flags=0`, carries no payload, and requires nonzero credit. A
+WINDOW uses `flags=0`, carries no payload, and requires nonzero credit in 1 KiB
+units. A
 WINDOW with `flow_id=0` replenishes connection credit; a nonzero ID replenishes
 that logical stream. Credit that would exceed the configured window closes the
 carrier. A late stream-local WINDOW for an already closed stream is ignored.
@@ -261,9 +258,11 @@ STREAM data for an unknown flow is a carrier error. Late FIN or RST processing
 is idempotent. Closing the physical Mux carrier fails every logical stream on
 that carrier.
 
-The runtime emits at most 32 KiB of data per STREAM frame. Default Mux bounds
-are 512 KiB per-stream receive credit, 512 KiB connection-wide receive credit,
-256 active streams, and 512 queued outbound frame slots. Payload must obtain
+The runtime emits at most 32 KiB of data per STREAM frame. Mux uses an initial
+4 MiB stream window and 8 MiB connection window. Each side sends one WINDOW to
+extend its connection window and includes its stream-window extension in SYN.
+The selected transport profile sets final windows to 4/8, 8/16, or 16/32 MiB.
+Each shard permits 256 active streams and 512 queued outbound frame slots. Payload must obtain
 both stream and connection credit before it enters the outbound queue.
 
 ```text
@@ -283,7 +282,8 @@ payload beyond either advertised receive window.
 
 Client-side Shards open lazily in separate uplink and downlink sets. A new flow
 uses the least-loaded live Shard for its TLS direction; a new Shard opens when
-all live Shards in that set have 4 active flows. A symmetric `tcp/tcp` flow
+all live Shards in that set have 4 active flows, up to 4 live Shards per
+direction. Once the pool is full, new flows reuse its least-loaded Shard. A symmetric `tcp/tcp` flow
 uses one duplex stream from the uplink set. A fully idle Shard closes after 30
 seconds. Portal applies the same timeout to an authenticated Mux carrier with
 no active streams. Sharding is runtime placement and does not add wire fields.

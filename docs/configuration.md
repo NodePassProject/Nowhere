@@ -223,7 +223,8 @@ carrier.
 
 With `mux=1`, Shards open lazily according to active flow pressure. New flows
 use the least-loaded shard; a shard carries 4 active flows before another
-opens and closes after 30 seconds fully idle. With `mux=0`, every TLS-carried
+opens, with at most 4 shards per direction. A shard closes after 30 seconds
+fully idle. With `mux=0`, every TLS-carried
 Flow owns one on-demand lane that closes with the Flow. Mux applies when at
 least one direction is `tcp` or `mix`. `udp/udp&mux=1` canonicalizes to
 `mux=0`.
@@ -287,7 +288,7 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 | `NOW_MAX_TCP_FLOWS` | `1024` | TCP flows per authenticated client session |
 | `NOW_MAX_UDP_FLOWS` | `256` | UDP flows per authenticated client session |
 | `NOW_QUIC_UDP_QUEUE_BYTES` | `4 MiB` | QUIC datagram and reassembly byte budget |
-| `NOW_QUIC_MEMORY_PROFILE` | `throughput` | QUIC profile: `memory`, `balanced`, or `throughput` |
+| `NOW_TRANSPORT_MEMORY_PROFILE` | `throughput` | QUIC and TLS Mux profile: `memory`, `balanced`, or `throughput` |
 | `NOW_MAX_PENDING_PAIRS` | `1024` | Pending split-flow pairs per Portal session |
 | `NOW_FLOW_PAIR_TIMEOUT` | `15s` | Portal split-flow pairing deadline |
 | `NOW_FLOW_SETUP_TIMEOUT` | `20s` | Client wait for `SetupResult` |
@@ -305,11 +306,12 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 | `NOW_SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown deadline |
 | `NOW_RELOAD_INTERVAL` | `1h` | Supplied-certificate reload interval |
 
-Mux limits are library defaults with strict validation: 512 KiB per stream and
-connection, 256 active streams per Mux, and 512 queued frame slots. Payload in
-the queue is also charged against the 512 KiB connection window, so slot capacity
-does not multiply the byte bound. The application uses a 4-flow shard density
-and retires fully idle shards after 30 seconds. `NOW_MAX_TCP_FLOWS` is the hard
+TLS Mux shares the transport profile's 4/8, 8/16, or 16/32 MiB stream/connection
+receive windows with QUIC. A Mux carrier permits 256 active streams and 512
+queued frame slots; queued payload remains charged against the connection
+window. The application opens another shard after 4 active flows, caps each
+direction at 4 shards, reuses the least-loaded shard after that, and retires
+fully idle shards after 30 seconds. `NOW_MAX_TCP_FLOWS` is the hard
 per-session logical TCP limit shared by TLS and QUIC. `NOW_MAX_UDP_FLOWS` is the
 corresponding UDP limit shared by UoT and QUIC DATAGRAM. Excess flows fail
 without waiting for capacity. QUIC internally admits the sum of both limits as

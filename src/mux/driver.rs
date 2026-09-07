@@ -13,19 +13,15 @@ use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
-use super::{Inbound, Outbound, Shared};
+use super::{Inbound, MuxChunk, Outbound, Shared};
 
 pub(super) async fn send_data(
     shared: Arc<Shared>,
     flow_id: FlowId,
-    payload: Bytes,
+    payload: MuxChunk,
 ) -> io::Result<()> {
     let charge = frame_charge(payload.len());
-    let (flow_credit, fair_credit) = shared.send_credits(flow_id)?;
-    let fair = fair_credit
-        .acquire_many_owned(charge as u32)
-        .await
-        .map_err(|_| closed())?;
+    let flow_credit = shared.send_credit(flow_id)?;
     let flow = flow_credit
         .acquire_many_owned(charge as u32)
         .await
@@ -45,7 +41,6 @@ pub(super) async fn send_data(
         })
         .await
         .map_err(|_| closed())?;
-    fair.forget();
     flow.forget();
     connection.forget();
     Ok(())
@@ -61,8 +56,8 @@ pub(super) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<
             }
             let header = decode_header(&encoded).map_err(invalid)?;
             let payload_len = match header.kind {
-                FrameKind::Stream | FrameKind::Datagram => header.value as usize,
-                FrameKind::Window => 0,
+                FrameKind::Stream if header.flags & FLAG_SYN == 0 => header.value as usize,
+                FrameKind::Stream | FrameKind::Window => 0,
             };
             let mut payload = vec![0; payload_len];
             if !payload.is_empty() {
@@ -74,12 +69,6 @@ pub(super) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<
             match header.kind {
                 FrameKind::Stream => receive_stream(&shared, header, Bytes::from(payload)).await?,
                 FrameKind::Window => receive_window(&shared, header)?,
-                FrameKind::Datagram => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "mux datagram is not registered",
-                    ));
-                }
             }
         }
     }
@@ -96,7 +85,20 @@ async fn receive_stream(
 ) -> io::Result<()> {
     if header.flags & FLAG_SYN != 0 {
         let terminal_permit = shared.reserve_terminal().await?;
-        let stream = shared.insert_flow(header.flow_id, terminal_permit)?;
+        let stream = shared.insert_flow(header.flow_id, terminal_permit, true)?;
+        let extra_credit = header.value as usize;
+        if extra_credit != 0 {
+            let credit = shared.send_credit(header.flow_id)?;
+            if credit.available_permits().saturating_add(extra_credit)
+                > super::credit_units(super::MAX_STREAM_WINDOW_BYTES)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "stream window overflow",
+                ));
+            }
+            credit.add_permits(extra_credit);
+        }
         shared
             .incoming_tx
             .send(stream)
@@ -139,7 +141,7 @@ fn receive_window(shared: &Shared, header: FrameHeader) -> io::Result<()> {
             .connection_send_credit
             .available_permits()
             .saturating_add(credit)
-            > shared.config.connection_window_bytes
+            > super::credit_units(super::MAX_CONNECTION_WINDOW_BYTES)
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -157,7 +159,7 @@ fn receive_window(shared: &Shared, header: FrameHeader) -> io::Result<()> {
         return Ok(());
     };
     if flow.send_credit.available_permits().saturating_add(credit)
-        > shared.config.stream_window_bytes
+        > super::credit_units(super::MAX_STREAM_WINDOW_BYTES)
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -165,7 +167,6 @@ fn receive_window(shared: &Shared, header: FrameHeader) -> io::Result<()> {
         ));
     }
     flow.send_credit.add_permits(credit);
-    Shared::return_fair_credit(flow, credit);
     Ok(())
 }
 
@@ -183,7 +184,7 @@ pub(super) async fn run_terminals(shared: Arc<Shared>, mut terminal_rx: mpsc::Re
             _ = shared.closed_notify.notified() => return,
             sent = shared.data_tx.send(Outbound {
                 header,
-                payload: Bytes::new(),
+                payload: MuxChunk::empty(),
                 flushed: None,
             }) => sent,
         };
@@ -237,10 +238,11 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
                     }
                 }
                 writer.write_all(&headers).await?;
+                writer.flush().await?;
                 continue;
             }
             let header = encode_header(item.header).map_err(invalid)?;
-            write_frame_vectored(&mut writer, &header, &item.payload).await?;
+            write_frame_vectored(&mut writer, &header, item.payload.as_ref()).await?;
         }
     }
     .await;
@@ -316,6 +318,7 @@ async fn write_pending_windows<W: AsyncWrite + Unpin>(
     }
     if !encoded.is_empty() {
         writer.write_all(encoded).await?;
+        writer.flush().await?;
     }
     Ok(())
 }
@@ -331,7 +334,12 @@ fn append_windows(encoded: &mut Vec<u8>, flow_id: FlowId, mut credit: usize) -> 
 }
 
 fn frame_charge(payload: usize) -> usize {
-    payload
+    super::credit_units(payload)
+}
+
+pub(super) fn frame_open(flow_id: FlowId, receive_window_bytes: usize) -> io::Result<FrameHeader> {
+    let extra = receive_window_bytes.saturating_sub(super::BASE_STREAM_WINDOW_BYTES);
+    FrameHeader::stream(flow_id, FLAG_SYN, super::credit_units(extra)).map_err(invalid)
 }
 
 pub(super) fn frame_stream(flow_id: FlowId, flags: u8, length: usize) -> io::Result<FrameHeader> {

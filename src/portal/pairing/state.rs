@@ -8,14 +8,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use quinn::Connection;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{FlowKind, ProtocolVersion, SessionId, Target};
 
-pub(in crate::portal) type BoxReader = Pin<Box<dyn AsyncRead + Send>>;
-pub(in crate::portal) type BoxWriter = Pin<Box<dyn AsyncWrite + Send>>;
+pub(in crate::portal) type BoxReader = Pin<Box<dyn crate::transport::AsyncReadAny>>;
+pub(in crate::portal) type BoxWriter = Pin<Box<dyn crate::transport::AsyncWriteAny>>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(in crate::portal) struct SessionKey {

@@ -375,7 +375,7 @@ fn configure_quic_transport(
     idle_timeout: Duration,
     keepalive_interval: Duration,
 ) -> Result<()> {
-    let flow_control = quic_flow_control()?;
+    let flow_control = transport_flow_control()?;
     let mut transport = quinn::TransportConfig::default();
     transport.datagram_receive_buffer_size(Some(QUIC_DATAGRAM_BUFFER_SIZE));
     transport.datagram_send_buffer_size(QUIC_DATAGRAM_BUFFER_SIZE);

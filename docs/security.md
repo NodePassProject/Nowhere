@@ -70,17 +70,19 @@ The fixed maximum frame payload is 65,535 bytes and the runtime emits at most
 and DATA for unknown streams close the carrier. Late terminal and credit frames
 for a terminal stream are idempotent.
 
-Default limits are 512 KiB per stream and per Mux connection and 256 active
-streams per Mux. With client `mux=1`, Vector or Portal `next` places at most 4
-active flows on a shard before opening another, distributes new flows to the
+The transport memory profile bounds Mux stream/connection windows at 4/8,
+8/16, or 16/32 MiB, and each Mux allows 256 active streams. With client `mux=1`,
+Vector or Portal `next` places at most 4 active flows on a shard before opening
+another, caps each direction at 4 shards, distributes new flows to the
 least-loaded shard, and closes a fully idle shard after 30 seconds. One
 authenticated inbound Mux carrier is subject to the same fully idle timeout.
 One authenticated client session admits at most 1,024 concurrent logical TCP
 flows and 256 logical UDP flows across all of its carriers. UoT and QUIC
 DATAGRAM flows share the UDP limit.
-Local fair credit prevents one stream from monopolizing a shared window. The
-finite frame queue has 512 slots, but payload admission is capped by the
-512 KiB byte window; empty SYN/FIN/WINDOW frames cannot turn those slots into
+Per-stream and connection credit plus bounded channel admission limit how much
+one stream can occupy. The finite frame queue has 512 slots, but
+payload admission is capped by the selected connection window; empty
+SYN/FIN/WINDOW frames cannot turn those slots into
 retained application payload. These are credit ceilings rather than eagerly
 allocated payload buffers.
 

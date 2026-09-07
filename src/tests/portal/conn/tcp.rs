@@ -381,6 +381,10 @@ async fn tls_mux_carrier_closes_after_becoming_fully_idle() {
         .await
         .unwrap()
         .unwrap();
+    let mut window = [0_u8; 8];
+    tls.read_exact(&mut window).await.unwrap();
+    assert_eq!(window[0], 0x02);
+    assert_eq!(&window[4..], &[0, 0, 0, 0]);
     let mut byte = [0_u8; 1];
     let read = tls.read(&mut byte).await;
     assert!(

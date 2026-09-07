@@ -31,13 +31,14 @@ use crate::protocol::{
     decode_udp_frame_owned, encode_auth_frame, encode_udp_close,
 };
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel, TelemetryHub};
-use crate::transport::{Stats, quic_flow_control};
+use crate::transport::{Stats, transport_flow_control};
 
 use super::config::PortalClientConfig;
 use super::tls::{ClientTls, EXPORTER_LABEL, quic_protocol_version};
 
 const QUIC_DATAGRAM_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 const TLS_MUX_FLOWS_PER_SHARD: usize = 4;
+const TLS_MUX_MAX_SHARDS_PER_DIRECTION: usize = 4;
 
 #[derive(Clone)]
 pub(super) struct ClientSignals {

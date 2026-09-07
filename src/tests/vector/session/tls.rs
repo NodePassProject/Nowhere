@@ -62,6 +62,28 @@ async fn shard_selection_uses_the_least_loaded_carrier() {
 }
 
 #[tokio::test]
+async fn full_pool_reuses_the_least_loaded_shard() {
+    let mut shards = Vec::new();
+    let mut peer_handles = Vec::new();
+    let mut streams = Vec::new();
+    let mut peers = Vec::new();
+    for shard_index in 0..TLS_MUX_MAX_SHARDS_PER_DIRECTION {
+        let (left, right) = tokio::io::duplex(1 << 20);
+        let (handle, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+        let (peer_handle, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();
+        for index in 0..TLS_MUX_FLOWS_PER_SHARD {
+            let flow_id = (shard_index * TLS_MUX_FLOWS_PER_SHARD + index + 1) as u32;
+            streams.push(handle.open_stream(flow_id).await.unwrap());
+            peers.push(incoming.accept().await.unwrap().unwrap());
+        }
+        shards.push(shard(handle));
+        peer_handles.push(peer_handle);
+    }
+    assert!(select_available_mux(&shards).is_some());
+    drop((peer_handles, streams, peers));
+}
+
+#[tokio::test]
 async fn closing_one_shard_does_not_affect_another() {
     let (left_a, right_a) = tokio::io::duplex(1 << 20);
     let (handle_a, _) = MuxHandle::start(left_a, MuxConfig::default()).unwrap();

@@ -119,7 +119,7 @@ async fn handle_connection(
     }
     // Once auth succeeds, expand the conservative pre-auth limits to the normal
     // data-plane limits and release the admission slot.
-    let flow_control = match crate::transport::quic_flow_control() {
+    let flow_control = match crate::transport::transport_flow_control() {
         Ok(value) => value,
         Err(err) => {
             portal.logger.error(format_args!(

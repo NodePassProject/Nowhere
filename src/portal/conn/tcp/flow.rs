@@ -36,7 +36,9 @@ pub(super) async fn process_flow<R, W>(
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
 {
-    let mut recv = BufReader::new(recv);
+    // A one-byte staging buffer keeps exact handshake reads from prefetching
+    // application payload out of an owned Mux chunk.
+    let mut recv = BufReader::with_capacity(1, recv);
     let header = match tokio::select! {
         result = timeout(flow_timeout, read_flow_header(&mut recv)) => Some(result),
         _ = shutdown.cancelled() => None,

@@ -206,12 +206,20 @@ impl TlsManager {
 }
 
 fn select_available_mux(muxes: &[TlsMux]) -> Option<TlsMux> {
-    muxes
+    let available = muxes
         .iter()
         .filter(|shard| !shard.handle.is_closed())
         .min_by_key(|shard| shard.handle.active_streams())
-        .filter(|shard| shard.handle.active_streams() < TLS_MUX_FLOWS_PER_SHARD)
-        .cloned()
+        .cloned()?;
+    let active = available.handle.active_streams();
+    if !available.handle.has_stream_capacity() {
+        return None;
+    }
+    if active < TLS_MUX_FLOWS_PER_SHARD || muxes.len() >= TLS_MUX_MAX_SHARDS_PER_DIRECTION {
+        Some(available)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

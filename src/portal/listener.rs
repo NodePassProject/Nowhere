@@ -14,7 +14,7 @@ use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
 
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel};
-use crate::transport::quic_flow_control;
+use crate::transport::transport_flow_control;
 
 use super::{PortalInner, conn};
 
@@ -184,7 +184,7 @@ pub(super) fn configure_transport(
     udp_idle_timeout: Duration,
     keep_alive_interval: Option<Duration>,
 ) -> Result<()> {
-    let flow_control = quic_flow_control()?;
+    let flow_control = transport_flow_control()?;
     let transport = Arc::get_mut(&mut server_config.transport).ok_or_else(|| {
         anyhow::anyhow!("portal::configure_transport: server transport already shared")
     })?;

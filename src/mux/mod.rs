@@ -20,13 +20,17 @@ mod handle;
 mod stream;
 mod wire;
 
-const FRAME_BYTES: usize = 32 * 1024;
-const WINDOW_UPDATE_BYTES: usize = 4 * 1024;
+pub(crate) const FRAME_BYTES: usize = 32 * 1024;
+const MIB: usize = 1024 * 1024;
+const BASE_STREAM_WINDOW_BYTES: usize = 4 * MIB;
+const BASE_CONNECTION_WINDOW_BYTES: usize = 8 * MIB;
+const MAX_STREAM_WINDOW_BYTES: usize = 16 * MIB;
+const MAX_CONNECTION_WINDOW_BYTES: usize = 32 * MIB;
+const CREDIT_UNIT_BYTES: usize = 1024;
 // Frame count is separate from the byte window: UoT carries many small
 // packets, so the frame queue absorbs scheduling bursts while the byte window
 // remains the hard payload bound.
 const FLOW_CHANNEL_FRAMES: usize = 512;
-const MIN_FAIR_CREDIT_BYTES: usize = 256 * 1024;
 pub(crate) const MUX_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -39,16 +43,25 @@ pub(crate) struct MuxConfig {
 
 impl Default for MuxConfig {
     fn default() -> Self {
-        Self {
-            stream_window_bytes: 512 * 1024,
-            connection_window_bytes: 512 * 1024,
-            max_streams: 256,
-            outbound_frames: 512,
-        }
+        Self::from_flow_control(crate::transport::transport_flow_control().unwrap_or(
+            crate::transport::TransportFlowControl {
+                stream_receive_window: MAX_STREAM_WINDOW_BYTES as u32,
+                connection_receive_window: MAX_CONNECTION_WINDOW_BYTES as u32,
+                send_window: MAX_CONNECTION_WINDOW_BYTES as u64,
+            },
+        ))
     }
 }
 
 impl MuxConfig {
+    pub(crate) fn from_flow_control(profile: crate::transport::TransportFlowControl) -> Self {
+        Self {
+            stream_window_bytes: profile.stream_receive_window as usize,
+            connection_window_bytes: profile.connection_receive_window as usize,
+            max_streams: 256,
+            outbound_frames: 512,
+        }
+    }
     fn validate(self) -> io::Result<Self> {
         if self.stream_window_bytes < FRAME_BYTES
             || self.connection_window_bytes < self.stream_window_bytes
@@ -68,6 +81,17 @@ impl MuxConfig {
 pub(crate) struct MuxStream {
     reader: FlowReader,
     writer: FlowWriter,
+}
+
+pub(crate) struct MuxChunk {
+    payload: Bytes,
+    _credit: Option<ReceiveCredit>,
+}
+
+struct ReceiveCredit {
+    shared: Arc<Shared>,
+    flow_id: FlowId,
+    charge: usize,
 }
 
 pub(crate) struct FlowReader {
@@ -113,14 +137,13 @@ struct Shared {
     active_streams_tx: watch::Sender<usize>,
     closed: AtomicBool,
     closed_notify: Notify,
+    #[cfg(test)]
+    borrowed_write_copies: AtomicUsize,
 }
 
 struct FlowState {
     inbound: mpsc::Sender<Inbound>,
     send_credit: Arc<Semaphore>,
-    fair_send_credit: Arc<Semaphore>,
-    fair_limit: usize,
-    fair_debt: usize,
     receive_credit: usize,
     pending_receive_credit: usize,
     window_queued: bool,
@@ -135,8 +158,52 @@ enum Inbound {
 
 struct Outbound {
     header: FrameHeader,
-    payload: Bytes,
+    payload: MuxChunk,
     flushed: Option<oneshot::Sender<io::Result<()>>>,
+}
+
+impl MuxChunk {
+    pub(crate) fn from_bytes(payload: Bytes) -> Self {
+        Self {
+            payload,
+            _credit: None,
+        }
+    }
+
+    fn received(payload: Bytes, shared: Arc<Shared>, flow_id: FlowId, charge: usize) -> Self {
+        Self {
+            payload,
+            _credit: Some(ReceiveCredit {
+                shared,
+                flow_id,
+                charge,
+            }),
+        }
+    }
+
+    fn empty() -> Self {
+        Self::from_bytes(Bytes::new())
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.payload.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.payload.is_empty()
+    }
+}
+
+impl AsRef<[u8]> for MuxChunk {
+    fn as_ref(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
+impl Drop for ReceiveCredit {
+    fn drop(&mut self) {
+        self.shared.release_receive(self.flow_id, self.charge);
+    }
 }
 
 impl Shared {
@@ -151,6 +218,7 @@ impl Shared {
         self: &Arc<Self>,
         flow_id: FlowId,
         terminal_permit: mpsc::OwnedPermit<FlowId>,
+        advertise_window: bool,
     ) -> io::Result<MuxStream> {
         if flow_id == 0 || self.closed.load(Ordering::Acquire) {
             return Err(closed());
@@ -169,25 +237,36 @@ impl Shared {
                 "mux flow already exists",
             ));
         }
-        let send_credit = Arc::new(Semaphore::new(self.config.stream_window_bytes));
-        let fair_send_credit = Arc::new(Semaphore::new(self.config.stream_window_bytes));
+        let send_credit = Arc::new(Semaphore::new(credit_units(BASE_STREAM_WINDOW_BYTES)));
+        let initial_credit = if advertise_window {
+            credit_units(
+                self.config
+                    .stream_window_bytes
+                    .saturating_sub(BASE_STREAM_WINDOW_BYTES),
+            )
+        } else {
+            0
+        };
         flows.insert(
             flow_id,
             FlowState {
                 inbound: sender,
                 send_credit,
-                fair_send_credit,
-                fair_limit: self.config.stream_window_bytes,
-                fair_debt: 0,
-                receive_credit: self.config.stream_window_bytes,
-                pending_receive_credit: 0,
-                window_queued: false,
+                receive_credit: credit_units(self.config.stream_window_bytes),
+                pending_receive_credit: initial_credit,
+                window_queued: advertise_window && initial_credit != 0,
                 local_parts: 2,
             },
         );
-        Self::rebalance_fair_credits(&mut flows, self.config);
         let active_streams = flows.len();
         drop(flows);
+        if advertise_window && initial_credit != 0 {
+            self.ready_flows
+                .lock()
+                .expect("mux ready-flow lock")
+                .push_back(flow_id);
+            self.control_notify.notify_one();
+        }
         self.active_streams_tx.send_replace(active_streams);
         Ok(MuxStream {
             reader: FlowReader {
@@ -217,53 +296,18 @@ impl Shared {
         self.closed_notify.notify_waiters();
     }
 
-    fn send_credits(&self, flow_id: FlowId) -> io::Result<(Arc<Semaphore>, Arc<Semaphore>)> {
+    fn send_credit(&self, flow_id: FlowId) -> io::Result<Arc<Semaphore>> {
         self.flows
             .lock()
             .expect("mux flow lock")
             .get(&flow_id)
-            .map(|flow| (flow.send_credit.clone(), flow.fair_send_credit.clone()))
+            .map(|flow| flow.send_credit.clone())
             .ok_or_else(closed)
-    }
-
-    fn rebalance_fair_credits(flows: &mut HashMap<FlowId, FlowState>, config: MuxConfig) {
-        if flows.is_empty() {
-            return;
-        }
-        let fair_limit = (config.connection_window_bytes / flows.len())
-            .max(MIN_FAIR_CREDIT_BYTES)
-            .min(config.stream_window_bytes);
-        for flow in flows.values_mut() {
-            if fair_limit < flow.fair_limit {
-                let reduction = flow.fair_limit - fair_limit;
-                let removed = flow.fair_send_credit.forget_permits(reduction);
-                flow.fair_debt = flow.fair_debt.saturating_add(reduction - removed);
-            } else if fair_limit > flow.fair_limit {
-                let increase = fair_limit - flow.fair_limit;
-                let debt_repaid = increase.min(flow.fair_debt);
-                flow.fair_debt -= debt_repaid;
-                flow.fair_send_credit.add_permits(increase - debt_repaid);
-            }
-            flow.fair_limit = fair_limit;
-        }
-    }
-
-    fn return_fair_credit(flow: &mut FlowState, credit: usize) {
-        let debt_repaid = credit.min(flow.fair_debt);
-        flow.fair_debt -= debt_repaid;
-        let returned = credit - debt_repaid;
-        let room = flow
-            .fair_limit
-            .saturating_sub(flow.fair_send_credit.available_permits());
-        flow.fair_send_credit.add_permits(returned.min(room));
     }
 
     fn remove_flow(&self, flow_id: FlowId) -> Option<FlowState> {
         let mut flows = self.flows.lock().expect("mux flow lock");
         let removed = flows.remove(&flow_id);
-        if removed.is_some() {
-            Self::rebalance_fair_credits(&mut flows, self.config);
-        }
         let active_streams = flows.len();
         drop(flows);
         self.active_streams_tx.send_replace(active_streams);
@@ -301,12 +345,12 @@ impl Shared {
                 .expect("mux credit lock");
             *connection = connection
                 .saturating_add(charge)
-                .min(self.config.connection_window_bytes);
+                .min(credit_units(self.config.connection_window_bytes));
             if let Some(flow) = self.flows.lock().expect("mux flow lock").get_mut(&flow_id) {
                 flow.receive_credit = flow
                     .receive_credit
                     .saturating_add(charge)
-                    .min(self.config.stream_window_bytes);
+                    .min(credit_units(self.config.stream_window_bytes));
                 flow.pending_receive_credit = flow.pending_receive_credit.saturating_add(charge);
                 let ready = if flow.window_queued {
                     false
@@ -314,7 +358,9 @@ impl Shared {
                     flow.window_queued = true;
                     true
                 };
-                (ready, flow.pending_receive_credit >= WINDOW_UPDATE_BYTES)
+                let threshold =
+                    credit_units(self.config.stream_window_bytes / 8).min(u16::MAX as usize);
+                (ready, flow.pending_receive_credit >= threshold)
             } else {
                 return;
             }
@@ -328,7 +374,9 @@ impl Shared {
         let previous = self
             .pending_connection_credit
             .fetch_add(charge, Ordering::AcqRel);
-        if flow_notify || previous.saturating_add(charge) >= WINDOW_UPDATE_BYTES {
+        let threshold =
+            credit_units(self.config.connection_window_bytes / 8).min(u16::MAX as usize);
+        if flow_notify || previous.saturating_add(charge) >= threshold {
             self.control_notify.notify_one();
         }
     }
@@ -342,7 +390,6 @@ impl Shared {
         flow.local_parts = flow.local_parts.saturating_sub(1);
         if flow.local_parts == 0 {
             flows.remove(&flow_id);
-            Self::rebalance_fair_credits(&mut flows, self.config);
         }
         let active_streams = flows.len();
         drop(flows);
@@ -351,6 +398,10 @@ impl Shared {
             self.control_notify.notify_one();
         }
     }
+}
+
+fn credit_units(bytes: usize) -> usize {
+    bytes.div_ceil(CREDIT_UNIT_BYTES)
 }
 
 #[cfg(test)]

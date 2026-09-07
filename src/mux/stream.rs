@@ -12,7 +12,11 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::oneshot;
 
 use super::driver::{closed, frame_stream, send_data};
-use super::{FRAME_BYTES, FlowReader, FlowWriter, Inbound, MuxStream, Outbound};
+use super::{FRAME_BYTES, FlowReader, FlowWriter, Inbound, MuxChunk, MuxStream, Outbound};
+
+fn copy_payload(payload: &[u8]) -> Bytes {
+    Bytes::copy_from_slice(payload)
+}
 
 impl MuxStream {
     pub fn into_split(self) -> (FlowReader, FlowWriter) {
@@ -106,6 +110,41 @@ impl AsyncRead for FlowReader {
     }
 }
 
+impl FlowReader {
+    pub(crate) async fn recv_chunk(&mut self) -> io::Result<Option<MuxChunk>> {
+        if let Some((payload, offset, charge)) = self.current.take() {
+            return Ok(Some(MuxChunk::received(
+                payload.slice(offset..),
+                self.shared.clone(),
+                self.flow_id,
+                charge,
+            )));
+        }
+        if self.eof {
+            return Ok(None);
+        }
+        match self.receiver.recv().await {
+            Some(Inbound::Data { payload, charge }) => Ok(Some(MuxChunk::received(
+                payload,
+                self.shared.clone(),
+                self.flow_id,
+                charge,
+            ))),
+            Some(Inbound::Fin) | None => {
+                self.eof = true;
+                Ok(None)
+            }
+            Some(Inbound::Reset) => {
+                self.eof = true;
+                Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "mux flow reset",
+                ))
+            }
+        }
+    }
+}
+
 impl Drop for FlowReader {
     fn drop(&mut self) {
         if let Some((_, _, charge)) = self.current.take() {
@@ -136,7 +175,11 @@ impl AsyncWrite for FlowWriter {
             return Poll::Ready(Ok(0));
         }
         let length = buf.len().min(FRAME_BYTES);
-        let payload = Bytes::copy_from_slice(&buf[..length]);
+        #[cfg(test)]
+        self.shared
+            .borrowed_write_copies
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let payload = MuxChunk::from_bytes(copy_payload(&buf[..length]));
         self.start_write(cx, payload, length)
     }
 
@@ -151,23 +194,18 @@ impl AsyncWrite for FlowWriter {
         if let Some(result) = self.poll_pending(cx) {
             return result;
         }
-        let length = bufs
-            .iter()
-            .map(|buffer| buffer.len())
-            .sum::<usize>()
-            .min(FRAME_BYTES);
-        if length == 0 {
-            return Poll::Ready(Ok(0));
-        }
-        let mut payload = Vec::with_capacity(length);
         for buffer in bufs {
-            let remaining = length - payload.len();
-            if remaining == 0 {
-                break;
+            if !buffer.is_empty() {
+                let length = buffer.len().min(FRAME_BYTES);
+                #[cfg(test)]
+                self.shared
+                    .borrowed_write_copies
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let payload = MuxChunk::from_bytes(copy_payload(&buffer[..length]));
+                return self.start_write(cx, payload, length);
             }
-            payload.extend_from_slice(&buffer[..buffer.len().min(remaining)]);
         }
-        self.start_write(cx, Bytes::from(payload), length)
+        Poll::Ready(Ok(0))
     }
 
     fn is_write_vectored(&self) -> bool {
@@ -189,7 +227,7 @@ impl AsyncWrite for FlowWriter {
                     .data_tx
                     .send(Outbound {
                         header: frame_stream(flow_id, 0, 0)?,
-                        payload: Bytes::new(),
+                        payload: MuxChunk::empty(),
                         flushed: Some(tx),
                     })
                     .await
@@ -217,7 +255,7 @@ impl AsyncWrite for FlowWriter {
                     .data_tx
                     .send(Outbound {
                         header: frame_stream(flow_id, FLAG_FIN, 0)?,
-                        payload: Bytes::new(),
+                        payload: MuxChunk::empty(),
                         flushed: None,
                     })
                     .await
@@ -239,7 +277,7 @@ impl FlowWriter {
     fn start_write(
         &mut self,
         cx: &mut Context<'_>,
-        payload: Bytes,
+        payload: MuxChunk,
         length: usize,
     ) -> Poll<io::Result<usize>> {
         let shared = self.shared.clone();
@@ -269,6 +307,29 @@ impl FlowWriter {
             self.pending_action = None;
         }
         result
+    }
+}
+
+impl FlowWriter {
+    pub(crate) async fn send_chunk(&mut self, chunk: MuxChunk) -> io::Result<()> {
+        if self.closed
+            || self
+                .shared
+                .closed
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(closed());
+        }
+        if chunk.is_empty() {
+            return Ok(());
+        }
+        if chunk.len() > FRAME_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "mux chunk exceeds frame size",
+            ));
+        }
+        super::driver::send_data(self.shared.clone(), self.flow_id, chunk).await
     }
 }
 

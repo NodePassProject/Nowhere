@@ -16,7 +16,6 @@ pub(super) const FLAG_RST: u8 = 0x04;
 pub(super) enum FrameKind {
     Stream = 0x01,
     Window = 0x02,
-    Datagram = 0x03,
 }
 
 impl TryFrom<u8> for FrameKind {
@@ -26,7 +25,6 @@ impl TryFrom<u8> for FrameKind {
         match value {
             0x01 => Ok(Self::Stream),
             0x02 => Ok(Self::Window),
-            0x03 => Ok(Self::Datagram),
             _ => Err(WireError::UnknownKind(value)),
         }
     }
@@ -73,6 +71,9 @@ impl FrameHeader {
                 if self.flags & FLAG_RST != 0 && (self.flags != FLAG_RST || self.value != 0) {
                     return Err(WireError::InvalidReset);
                 }
+                if self.flags & FLAG_SYN != 0 && self.flags != FLAG_SYN {
+                    return Err(WireError::InvalidOpen);
+                }
             }
             FrameKind::Window => {
                 if self.flags != 0 {
@@ -80,14 +81,6 @@ impl FrameHeader {
                 }
                 if self.value == 0 {
                     return Err(WireError::InvalidWindow);
-                }
-            }
-            FrameKind::Datagram => {
-                if self.flow_id == 0 {
-                    return Err(WireError::InvalidFlowId);
-                }
-                if self.flags != 0 {
-                    return Err(WireError::ReservedFlags);
                 }
             }
         }
@@ -128,6 +121,7 @@ pub(super) enum WireError {
     InvalidFlowId,
     InvalidWindow,
     InvalidReset,
+    InvalidOpen,
 }
 
 impl fmt::Display for WireError {
@@ -144,6 +138,7 @@ impl fmt::Display for WireError {
             Self::InvalidReset => {
                 formatter.write_str("RST must be the only flag and carry no data")
             }
+            Self::InvalidOpen => formatter.write_str("SYN must be an isolated open frame"),
         }
     }
 }

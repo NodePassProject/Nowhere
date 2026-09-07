@@ -36,7 +36,7 @@ fn help_text_documents_usage_and_configuration_surface() {
         "NOW_MAX_TCP_FLOWS",
         "NOW_MAX_UDP_FLOWS",
         "NOW_QUIC_UDP_QUEUE_BYTES",
-        "NOW_QUIC_MEMORY_PROFILE",
+        "NOW_TRANSPORT_MEMORY_PROFILE",
         "NOW_MAX_PENDING_PAIRS",
         "NOW_FLOW_PAIR_TIMEOUT",
         "NOW_FLOW_SETUP_TIMEOUT",

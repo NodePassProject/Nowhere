@@ -154,10 +154,6 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
             &mut client_read,
             &mut client_write,
             (target_read, target_write),
-            (
-                portal.buffers.get_tcp_buffer(),
-                portal.buffers.get_tcp_buffer(),
-            ),
             Some((uplink, downlink)),
             &access,
         );

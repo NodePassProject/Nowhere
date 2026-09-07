@@ -11,7 +11,7 @@ use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::timeout;
@@ -40,8 +40,8 @@ mod tcp;
 pub(crate) use self::tcp::{TcpTunnel, TcpTunnelGuard};
 pub(super) use self::tcp::{open_tcp, relay_tcp};
 
-pub(crate) type BoxReader = Pin<Box<dyn AsyncRead + Send>>;
-pub(crate) type BoxWriter = Pin<Box<dyn AsyncWrite + Send>>;
+pub(crate) type BoxReader = Pin<Box<dyn crate::transport::AsyncReadAny>>;
+pub(crate) type BoxWriter = Pin<Box<dyn crate::transport::AsyncWriteAny>>;
 
 pub(super) struct PhysicalLane {
     pub(super) reader: Option<BoxReader>,

@@ -104,8 +104,9 @@ and never appears on a dedicated lane.
 
 ## Runtime contract
 
-Mux Shards open lazily at 4 active flows, select the least-loaded live Shard,
-and close after 30 seconds fully idle. Dedicated lanes and Mux streams use the
+Mux Shards open lazily at 4 active flows up to a 4-Shard directional pool,
+select the least-loaded live Shard, and close after 30 seconds fully idle.
+Dedicated lanes and Mux streams use the
 same authentication, FlowHeader, Target, setup result, pairing and limits.
 QUIC behavior is independent from the client Mux setting.
 

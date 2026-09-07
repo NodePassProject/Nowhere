@@ -70,6 +70,42 @@ async fn many_small_writes_cross_the_credit_window() {
 }
 
 #[tokio::test]
+async fn peers_with_different_profiles_exchange_beyond_the_base_window() {
+    let memory = MuxConfig {
+        stream_window_bytes: 4 * MIB,
+        connection_window_bytes: 8 * MIB,
+        ..MuxConfig::default()
+    };
+    let throughput = MuxConfig {
+        stream_window_bytes: 16 * MIB,
+        connection_window_bytes: 32 * MIB,
+        ..MuxConfig::default()
+    };
+    let (left, right) = tokio::io::duplex(1 << 20);
+    let (client, _) = MuxHandle::start(left, memory).unwrap();
+    let (_server, mut incoming) = MuxHandle::start(right, throughput).unwrap();
+    let mut outgoing = client.open_stream(81).await.unwrap();
+    let mut accepted = incoming.accept().await.unwrap().unwrap();
+    let sender = tokio::spawn(async move {
+        let payload = vec![0x81; 12 * MIB];
+        outgoing.write_all(&payload).await.unwrap();
+        outgoing.shutdown().await.unwrap();
+    });
+    let mut received = 0;
+    let mut buffer = vec![0; FRAME_BYTES];
+    loop {
+        let count = accepted.read(&mut buffer).await.unwrap();
+        if count == 0 {
+            break;
+        }
+        assert!(buffer[..count].iter().all(|byte| *byte == 0x81));
+        received += count;
+    }
+    sender.await.unwrap();
+    assert_eq!(received, 12 * MIB);
+}
+
+#[tokio::test]
 async fn carrier_close_fails_every_flow() {
     let (left, right) = tokio::io::duplex(1024);
     let (client, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
@@ -127,7 +163,7 @@ async fn dropping_unused_writer_preserves_incoming_half() {
 }
 
 #[tokio::test]
-async fn fair_credit_tracks_active_stream_count() {
+async fn stream_credit_does_not_shrink_with_active_stream_count() {
     let (left, right) = tokio::io::duplex(1 << 20);
     let (client, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
     let (_server, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();
@@ -139,7 +175,10 @@ async fn fair_credit_tracks_active_stream_count() {
     }
     {
         let flows = client.shared.flows.lock().unwrap();
-        assert!(flows.values().all(|flow| flow.fair_limit == 256 * 1024));
+        assert!(flows.values().all(|flow| {
+            flow.send_credit.available_permits()
+                == credit_units(MuxConfig::default().stream_window_bytes)
+        }));
     }
 
     let retained = streams.pop().unwrap();
@@ -148,8 +187,13 @@ async fn fair_credit_tracks_active_stream_count() {
         let flows = client.shared.flows.lock().unwrap();
         assert_eq!(flows.len(), 1);
         assert_eq!(
-            flows.values().next().unwrap().fair_limit,
-            MuxConfig::default().stream_window_bytes
+            flows
+                .values()
+                .next()
+                .unwrap()
+                .send_credit
+                .available_permits(),
+            credit_units(MuxConfig::default().stream_window_bytes)
         );
     }
     drop(retained);

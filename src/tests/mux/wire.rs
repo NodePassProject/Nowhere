@@ -12,16 +12,6 @@ fn header_has_stable_eight_byte_vector() {
 fn only_connection_window_accepts_zero_flow_id() {
     assert!(FrameHeader::window(0, 1).is_ok());
     assert!(FrameHeader::stream(0, 0, 1).is_err());
-    assert_eq!(
-        FrameHeader {
-            kind: FrameKind::Datagram,
-            flags: 0,
-            value: 1,
-            flow_id: 0,
-        }
-        .validate(),
-        Err(WireError::InvalidFlowId)
-    );
 }
 
 #[test]
@@ -29,4 +19,10 @@ fn reset_is_exclusive_and_empty() {
     assert!(FrameHeader::stream(1, FLAG_RST, 0).is_ok());
     assert!(FrameHeader::stream(1, FLAG_RST | FLAG_FIN, 0).is_err());
     assert!(FrameHeader::stream(1, FLAG_RST, 1).is_err());
+}
+
+#[test]
+fn open_uses_value_for_initial_window_credit() {
+    assert!(FrameHeader::stream(1, FLAG_SYN, 12 * 1024).is_ok());
+    assert!(FrameHeader::stream(1, FLAG_SYN | FLAG_FIN, 0).is_err());
 }

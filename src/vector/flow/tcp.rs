@@ -4,6 +4,7 @@
 //! TCP tunnel setup and bidirectional relay.
 
 use super::*;
+use crate::transport::{read_owned, read_owned_from, write_owned, write_owned_to};
 
 pub(crate) struct TcpTunnel {
     reader: BoxReader,
@@ -231,21 +232,19 @@ pub(in crate::vector) async fn relay_tcp(
 
     let result = {
         let (mut client_read, mut client_write) = client.into_split();
-        let mut up_buffer = vector.buffers.get_tcp_buffer();
-        let mut down_buffer = vector.buffers.get_tcp_buffer();
         let uplink = tunnel.uplink;
         let downlink = tunnel.downlink;
         let client_to_portal = async {
             loop {
-                let read = client_read.read(&mut up_buffer).await?;
-                if read == 0 {
+                let Some(chunk) = read_owned_from(&mut client_read).await? else {
                     tunnel.writer.shutdown().await?;
                     return Ok::<(), anyhow::Error>(());
-                }
+                };
+                let read = chunk.len();
                 if let Some(rate) = &vector.rate_limiter {
                     rate.wait_read(read as i64).await;
                 }
-                tunnel.writer.write_all(&up_buffer[..read]).await?;
+                write_owned(&mut tunnel.writer, chunk).await?;
                 if uplink == Carrier::Quic && downlink == Carrier::TlsTcp {
                     // A continuously writable QUIC stream can otherwise keep
                     // this relay hot long enough to delay the opposite Mux
@@ -262,15 +261,15 @@ pub(in crate::vector) async fn relay_tcp(
         };
         let portal_to_client = async {
             loop {
-                let read = tunnel.reader.read(&mut down_buffer).await?;
-                if read == 0 {
+                let Some(chunk) = read_owned(&mut tunnel.reader).await? else {
                     client_write.shutdown().await?;
                     return Ok::<(), anyhow::Error>(());
-                }
+                };
+                let read = chunk.len();
                 if let Some(rate) = &vector.rate_limiter {
                     rate.wait_write(read as i64).await;
                 }
-                client_write.write_all(&down_buffer[..read]).await?;
+                write_owned_to(&mut client_write, chunk).await?;
                 access.add_download(read as u64);
                 vector
                     .stats
