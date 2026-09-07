@@ -72,8 +72,8 @@ for a terminal stream are idempotent.
 
 The transport memory profile bounds Mux stream/connection windows at 4/8,
 8/16, or 16/32 MiB, and each Mux allows 256 active streams. With client `mux=1`,
-Vector or Portal `next` places at most 4 active flows on a shard before opening
-another, caps each direction at 4 shards, distributes new flows to the
+Vector or Portal `next` adapts a shard's target density to TLS setup latency and
+live connection pressure, caps each direction at 4 shards, distributes new flows to the
 least-loaded shard, and closes a fully idle shard after 30 seconds. One
 authenticated inbound Mux carrier is subject to the same fully idle timeout.
 One authenticated client session admits at most 1,024 concurrent logical TCP
@@ -92,7 +92,7 @@ authenticated client session
     +-- TCP budget: 1,024 active flows
     |     |
     |     +-- dedicated TLS lane
-    |     +-- Mux stream --> TLS Shard, target density 4
+    |     +-- Mux stream --> adaptive TLS Shard
     |     +-- QUIC reliable stream
     |
     +-- UDP budget: 256 active flows

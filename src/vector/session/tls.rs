@@ -34,6 +34,7 @@ pub(in crate::vector) enum OpenedTls {
 struct TlsMux {
     handle: MuxHandle,
     version: ProtocolVersion,
+    target_density: usize,
 }
 
 impl TlsManager {
@@ -87,6 +88,7 @@ impl TlsManager {
                 .map(|stream| OpenedTls::Mux(stream, shard.version))
                 .map_err(Into::into);
         }
+        let connect_started = Instant::now();
         let lane = self.connect_lane().await?;
         let TlsLane {
             mut stream,
@@ -106,7 +108,11 @@ impl TlsManager {
         stream.flush().await?;
         let (handle, incoming) = MuxHandle::start(stream, MuxConfig::default())?;
         drop(incoming);
-        let shard = TlsMux { handle, version };
+        let shard = TlsMux {
+            handle,
+            version,
+            target_density: mux_target_density(connect_started.elapsed()),
+        };
         self.mux(direction).lock().await.push(shard.clone());
         let manager = self.clone();
         let lifetime = shard.clone();
@@ -215,10 +221,21 @@ fn select_available_mux(muxes: &[TlsMux]) -> Option<TlsMux> {
     if !available.handle.has_stream_capacity() {
         return None;
     }
-    if active < TLS_MUX_FLOWS_PER_SHARD || muxes.len() >= TLS_MUX_MAX_SHARDS_PER_DIRECTION {
+    if (active < available.target_density && !available.handle.is_send_congested())
+        || muxes.len() >= TLS_MUX_MAX_SHARDS_PER_DIRECTION
+    {
         Some(available)
     } else {
         None
+    }
+}
+
+fn mux_target_density(setup_latency: Duration) -> usize {
+    match setup_latency.as_millis() {
+        0..30 => 16,
+        30..75 => 8,
+        75..200 => 4,
+        _ => 2,
     }
 }
 

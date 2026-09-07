@@ -7,10 +7,12 @@ use std::any::Any;
 use std::io;
 use std::pin::Pin;
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
 use crate::mux::{FRAME_BYTES, FlowReader, FlowWriter, MuxChunk};
+
+use super::Buffers;
 
 pub(crate) trait AsyncReadAny: AsyncRead + Send + Unpin {
     fn as_any_mut(&mut self) -> &mut dyn Any;
@@ -54,6 +56,7 @@ impl AsRef<[u8]> for RelayChunk {
 
 pub(crate) async fn read_owned(
     reader: &mut Pin<Box<dyn AsyncReadAny>>,
+    buffers: &Buffers,
 ) -> io::Result<Option<RelayChunk>> {
     let any = reader.as_mut().get_mut().as_any_mut();
     if let Some(reader) = any.downcast_mut::<FlowReader>() {
@@ -71,18 +74,22 @@ pub(crate) async fn read_owned(
             .await
             .map(|chunk| chunk.map(RelayChunk::Mux));
     }
-    read_owned_from(reader).await
+    read_owned_from(reader, buffers).await
 }
 
 pub(crate) async fn read_owned_from<R: AsyncRead + Unpin>(
     reader: &mut R,
+    buffers: &Buffers,
 ) -> io::Result<Option<RelayChunk>> {
-    let mut payload = BytesMut::with_capacity(FRAME_BYTES);
-    let count = reader.read_buf(&mut payload).await?;
+    let mut payload = buffers.get_tcp_buffer();
+    let capacity = payload.len().min(FRAME_BYTES);
+    let count = reader.read(&mut payload[..capacity]).await?;
     if count == 0 {
         Ok(None)
     } else {
-        Ok(Some(RelayChunk::Bytes(payload.freeze())))
+        Ok(Some(RelayChunk::Bytes(
+            Bytes::from_owner(payload).slice(..count),
+        )))
     }
 }
 
@@ -139,5 +146,21 @@ mod tests {
 
         assert_eq!(&received, b"owned payload");
         assert_eq!(client.borrowed_write_copies(), 0);
+    }
+
+    #[tokio::test]
+    async fn generic_reads_use_a_pool_owned_chunk() {
+        let buffers = Buffers::new(FRAME_BYTES, 1);
+        let mut reader = &b"pooled"[..];
+        let chunk = read_owned_from(&mut reader, &buffers)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(chunk.as_ref(), b"pooled");
+        let allocation = chunk.as_ref().as_ptr();
+        drop(chunk);
+        let reused = buffers.get_tcp_buffer();
+        assert_eq!(reused.as_ptr(), allocation);
     }
 }

@@ -8,18 +8,19 @@ fn shard(handle: MuxHandle) -> TlsMux {
     TlsMux {
         handle,
         version: ProtocolVersion::V2,
+        target_density: 4,
     }
 }
 
 #[tokio::test]
-async fn shard_selection_stops_at_four_active_flows() {
+async fn shard_selection_stops_at_its_target_density() {
     let (left, right) = tokio::io::duplex(1 << 20);
     let (handle, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
     let (_peer, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();
     let mut streams = Vec::new();
     let mut peers = Vec::new();
 
-    for flow_id in 1..TLS_MUX_FLOWS_PER_SHARD as u32 {
+    for flow_id in 1..4 {
         streams.push(handle.open_stream(flow_id).await.unwrap());
         peers.push(incoming.accept().await.unwrap().unwrap());
     }
@@ -31,12 +32,7 @@ async fn shard_selection_stops_at_four_active_flows() {
             .same_carrier(&handle)
     );
 
-    streams.push(
-        handle
-            .open_stream(TLS_MUX_FLOWS_PER_SHARD as u32)
-            .await
-            .unwrap(),
-    );
+    streams.push(handle.open_stream(4).await.unwrap());
     peers.push(incoming.accept().await.unwrap().unwrap());
     assert!(select_available_mux(std::slice::from_ref(&shard)).is_none());
 }
@@ -71,8 +67,8 @@ async fn full_pool_reuses_the_least_loaded_shard() {
         let (left, right) = tokio::io::duplex(1 << 20);
         let (handle, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
         let (peer_handle, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();
-        for index in 0..TLS_MUX_FLOWS_PER_SHARD {
-            let flow_id = (shard_index * TLS_MUX_FLOWS_PER_SHARD + index + 1) as u32;
+        for index in 0..4 {
+            let flow_id = (shard_index * 4 + index + 1) as u32;
             streams.push(handle.open_stream(flow_id).await.unwrap());
             peers.push(incoming.accept().await.unwrap().unwrap());
         }
@@ -81,6 +77,14 @@ async fn full_pool_reuses_the_least_loaded_shard() {
     }
     assert!(select_available_mux(&shards).is_some());
     drop((peer_handles, streams, peers));
+}
+
+#[test]
+fn setup_latency_adapts_target_density() {
+    assert_eq!(mux_target_density(Duration::from_millis(10)), 16);
+    assert_eq!(mux_target_density(Duration::from_millis(50)), 8);
+    assert_eq!(mux_target_density(Duration::from_millis(100)), 4);
+    assert_eq!(mux_target_density(Duration::from_millis(600)), 2);
 }
 
 #[tokio::test]

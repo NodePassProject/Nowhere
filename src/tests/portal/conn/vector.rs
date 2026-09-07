@@ -281,8 +281,8 @@ async fn mux_full_duplex_tcp_exceeds_each_direction_credit_window() {
 }
 
 #[tokio::test]
-async fn mux_fifth_active_tcp_flow_opens_a_second_shard() {
-    const FLOW_COUNT: usize = 5;
+async fn mux_seventeenth_active_tcp_flow_opens_a_second_low_latency_shard() {
+    const FLOW_COUNT: usize = 17;
 
     let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target_address = target.local_addr().unwrap();
@@ -318,7 +318,10 @@ async fn mux_fifth_active_tcp_flow_opens_a_second_shard() {
     .unwrap();
 
     assert_eq!(runtime.portal_stats.link_tcp.load(Ordering::Relaxed), 2);
-    assert_eq!(runtime.portal_stats.tcp_active.load(Ordering::Relaxed), 5);
+    assert_eq!(
+        runtime.portal_stats.tcp_active.load(Ordering::Relaxed),
+        FLOW_COUNT as i32
+    );
     drop(flows);
     target_shutdown.cancel();
     target_task.await.unwrap();

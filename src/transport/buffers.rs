@@ -94,6 +94,12 @@ impl AsMut<[u8]> for BufferLease {
     }
 }
 
+impl AsRef<[u8]> for BufferLease {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
 impl Drop for BufferLease {
     fn drop(&mut self) {
         let Some(buffer) = self.buffer.take() else {

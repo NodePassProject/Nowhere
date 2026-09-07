@@ -33,7 +33,7 @@ where
 
     let client_to_target = async {
         loop {
-            let Some(chunk) = read_owned(client_read).await? else {
+            let Some(chunk) = read_owned(client_read, &portal.buffers).await? else {
                 target_write.shutdown().await?;
                 return Ok::<(), anyhow::Error>(());
             };
@@ -56,7 +56,7 @@ where
 
     let target_to_client = async {
         loop {
-            let Some(chunk) = read_owned_from(&mut target_read).await? else {
+            let Some(chunk) = read_owned_from(&mut target_read, &portal.buffers).await? else {
                 client_write.shutdown().await?;
                 return Ok::<(), anyhow::Error>(());
             };

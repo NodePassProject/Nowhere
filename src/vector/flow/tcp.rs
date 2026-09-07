@@ -236,7 +236,7 @@ pub(in crate::vector) async fn relay_tcp(
         let downlink = tunnel.downlink;
         let client_to_portal = async {
             loop {
-                let Some(chunk) = read_owned_from(&mut client_read).await? else {
+                let Some(chunk) = read_owned_from(&mut client_read, &vector.buffers).await? else {
                     tunnel.writer.shutdown().await?;
                     return Ok::<(), anyhow::Error>(());
                 };
@@ -261,7 +261,7 @@ pub(in crate::vector) async fn relay_tcp(
         };
         let portal_to_client = async {
             loop {
-                let Some(chunk) = read_owned(&mut tunnel.reader).await? else {
+                let Some(chunk) = read_owned(&mut tunnel.reader, &vector.buffers).await? else {
                     client_write.shutdown().await?;
                     return Ok::<(), anyhow::Error>(());
                 };

@@ -58,8 +58,9 @@ per authenticated client session, the selected 4/8, 8/16, or 16/32 MiB
 per-stream/per-Mux receive
 windows, 256 streams per Mux, bounded reusable relay-buffer caches, and QUIC UDP
 queue/reassembly limits. UoT and QUIC DATAGRAM share the UDP flow limit. TLS
-shards originated with `mux=1` by Vector or a Portal `next` client target 4
-active flows, stop at 4 shards per direction, use least-loaded placement, and
+shards originated with `mux=1` by Vector or a Portal `next` client adapt their
+target density to TLS setup latency and carrier pressure, stop at 4 shards per
+direction, use least-loaded placement, and
 close after 30 seconds fully idle. Frame queue slots do not bypass byte credit. Windows are granted as
 permits and payload is admitted incrementally.
 

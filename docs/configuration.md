@@ -222,8 +222,10 @@ has no health score or circuit breaker. Both carriers must be declared for
 carrier.
 
 With `mux=1`, Shards open lazily according to active flow pressure. New flows
-use the least-loaded shard; a shard carries 4 active flows before another
-opens, with at most 4 shards per direction. A shard closes after 30 seconds
+use the least-loaded shard. TLS setup latency selects a target density of 16,
+8, 4, or 2 flows at 30, 75, and 200 ms, while connection-credit or queue
+pressure can expand earlier.
+Each direction has at most 4 shards. A shard closes after 30 seconds
 fully idle. With `mux=0`, every TLS-carried
 Flow owns one on-demand lane that closes with the Flow. Mux applies when at
 least one direction is `tcp` or `mix`. `udp/udp&mux=1` canonicalizes to
@@ -309,8 +311,9 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 TLS Mux shares the transport profile's 4/8, 8/16, or 16/32 MiB stream/connection
 receive windows with QUIC. A Mux carrier permits 256 active streams and 512
 queued frame slots; queued payload remains charged against the connection
-window. The application opens another shard after 4 active flows, caps each
-direction at 4 shards, reuses the least-loaded shard after that, and retires
+window. The application adapts shard density to measured TLS setup latency and
+live carrier pressure, caps each direction at 4 shards, reuses the least-loaded
+shard after that, and retires
 fully idle shards after 30 seconds. `NOW_MAX_TCP_FLOWS` is the hard
 per-session logical TCP limit shared by TLS and QUIC. `NOW_MAX_UDP_FLOWS` is the
 corresponding UDP limit shared by UoT and QUIC DATAGRAM. Excess flows fail

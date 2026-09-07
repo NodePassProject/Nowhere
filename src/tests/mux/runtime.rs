@@ -168,11 +168,26 @@ async fn stream_credit_does_not_shrink_with_active_stream_count() {
     let (client, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
     let (_server, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();
     let mut streams = Vec::new();
+    let mut peers = Vec::new();
 
     for flow_id in 1..=128 {
         streams.push(client.open_stream(flow_id).await.unwrap());
-        let _ = incoming.accept().await.unwrap().unwrap();
+        peers.push(incoming.accept().await.unwrap().unwrap());
     }
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let all_ready = client.shared.flows.lock().unwrap().values().all(|flow| {
+                flow.send_credit.available_permits()
+                    == credit_units(MuxConfig::default().stream_window_bytes)
+            });
+            if all_ready {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
     {
         let flows = client.shared.flows.lock().unwrap();
         assert!(flows.values().all(|flow| {
@@ -197,4 +212,41 @@ async fn stream_credit_does_not_shrink_with_active_stream_count() {
         );
     }
     drop(retained);
+    drop(peers);
+}
+
+#[tokio::test]
+async fn concurrent_streams_cross_the_connection_window() {
+    const FLOWS: u32 = 16;
+    const BYTES_PER_FLOW: usize = 3 * MIB;
+    let (left, right) = tokio::io::duplex(1 << 20);
+    let (client, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    let (_server, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();
+    let mut writers = Vec::new();
+    let mut readers = Vec::new();
+    for flow_id in 1..=FLOWS {
+        writers.push(client.open_stream(flow_id).await.unwrap());
+        readers.push(incoming.accept().await.unwrap().unwrap());
+    }
+
+    let mut tasks = writers
+        .into_iter()
+        .map(|mut stream| {
+            tokio::spawn(async move {
+                stream.write_all(&vec![0x5a; BYTES_PER_FLOW]).await.unwrap();
+                stream.shutdown().await.unwrap();
+            })
+        })
+        .collect::<Vec<_>>();
+    tasks.extend(readers.into_iter().map(|mut stream| {
+        tokio::spawn(async move {
+            let mut received = Vec::new();
+            stream.read_to_end(&mut received).await.unwrap();
+            assert_eq!(received.len(), BYTES_PER_FLOW);
+            assert!(received.iter().all(|byte| *byte == 0x5a));
+        })
+    }));
+    for task in tasks {
+        task.await.unwrap();
+    }
 }

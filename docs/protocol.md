@@ -281,9 +281,11 @@ Both credit checks precede queue admission. A stream therefore cannot reserve
 payload beyond either advertised receive window.
 
 Client-side Shards open lazily in separate uplink and downlink sets. A new flow
-uses the least-loaded live Shard for its TLS direction; a new Shard opens when
-all live Shards in that set have 4 active flows, up to 4 live Shards per
-direction. Once the pool is full, new flows reuse its least-loaded Shard. A symmetric `tcp/tcp` flow
+uses the least-loaded live Shard for its TLS direction. Its target density is
+derived from measured TLS setup latency: 16, 8, 4, or 2 active flows as setup
+latency crosses 30, 75, and 200 ms. Exhausting three quarters of connection
+credit or frame-queue capacity can open the next Shard earlier, up to 4 live
+Shards per direction. Once the pool is full, new flows reuse its least-loaded Shard. A symmetric `tcp/tcp` flow
 uses one duplex stream from the uplink set. A fully idle Shard closes after 30
 seconds. Portal applies the same timeout to an authenticated Mux carrier with
 no active streams. Sharding is runtime placement and does not add wire fields.

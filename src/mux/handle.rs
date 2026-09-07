@@ -31,6 +31,9 @@ impl MuxHandle {
             connection_send_credit: Arc::new(Semaphore::new(super::credit_units(
                 super::BASE_CONNECTION_WINDOW_BYTES,
             ))),
+            connection_send_peak: AtomicUsize::new(super::credit_units(
+                super::BASE_CONNECTION_WINDOW_BYTES,
+            )),
             connection_receive_credit: Mutex::new(super::credit_units(
                 config.connection_window_bytes,
             )),
@@ -90,6 +93,13 @@ impl MuxHandle {
 
     pub(crate) fn has_stream_capacity(&self) -> bool {
         self.active_streams() < self.shared.config.max_streams
+    }
+
+    pub(crate) fn is_send_congested(&self) -> bool {
+        let available = self.shared.connection_send_credit.available_permits();
+        let peak = self.shared.connection_send_peak.load(Ordering::Relaxed);
+        available.saturating_mul(4) < peak
+            || self.shared.data_tx.capacity().saturating_mul(4) < self.shared.config.outbound_frames
     }
 
     #[cfg(test)]

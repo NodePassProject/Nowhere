@@ -11,10 +11,15 @@ mux=${4:-1}
 binary=${5:-target/release/nowhere}
 container_name=nowhere-toxiproxy
 
-if ! container list | awk '{print $1}' | grep -Fqx "$container_name"; then
-    container run --rm -d --name "$container_name" \
-        ghcr.io/shopify/toxiproxy:2.12.0 >/dev/null
-fi
+# A timed-out high-rate sample can leave Toxiproxy links draining long after
+# both Nowhere processes exit. Use a fresh proxy process so the next sample is
+# independent instead of blocking while the old proxy is reconfigured.
+container delete -f "$container_name" >/dev/null 2>&1 || true
+while container list | awk 'NR > 1 { print $1 }' | grep -Fqx "$container_name"; do
+    sleep 0.1
+done
+container run --rm -d --name "$container_name" \
+    ghcr.io/shopify/toxiproxy:2.12.0 >/dev/null
 
 proxy_ip=$(container list | awk -v name="$container_name" '
     NR == 1 {

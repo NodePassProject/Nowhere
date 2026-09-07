@@ -27,6 +27,7 @@ const BASE_CONNECTION_WINDOW_BYTES: usize = 8 * MIB;
 const MAX_STREAM_WINDOW_BYTES: usize = 16 * MIB;
 const MAX_CONNECTION_WINDOW_BYTES: usize = 32 * MIB;
 const CREDIT_UNIT_BYTES: usize = 1024;
+const WINDOW_UPDATE_DIVISOR: usize = 8;
 // Frame count is separate from the byte window: UoT carries many small
 // packets, so the frame queue absorbs scheduling bursts while the byte window
 // remains the hard payload bound.
@@ -127,6 +128,7 @@ struct Shared {
     config: MuxConfig,
     flows: Mutex<HashMap<FlowId, FlowState>>,
     connection_send_credit: Arc<Semaphore>,
+    connection_send_peak: AtomicUsize,
     connection_receive_credit: Mutex<usize>,
     pending_connection_credit: AtomicUsize,
     ready_flows: Mutex<VecDeque<FlowId>>,
@@ -359,7 +361,8 @@ impl Shared {
                     true
                 };
                 let threshold =
-                    credit_units(self.config.stream_window_bytes / 8).min(u16::MAX as usize);
+                    credit_units(self.config.stream_window_bytes / WINDOW_UPDATE_DIVISOR)
+                        .min(u16::MAX as usize);
                 (ready, flow.pending_receive_credit >= threshold)
             } else {
                 return;
@@ -374,8 +377,8 @@ impl Shared {
         let previous = self
             .pending_connection_credit
             .fetch_add(charge, Ordering::AcqRel);
-        let threshold =
-            credit_units(self.config.connection_window_bytes / 8).min(u16::MAX as usize);
+        let threshold = credit_units(self.config.connection_window_bytes / WINDOW_UPDATE_DIVISOR)
+            .min(u16::MAX as usize);
         if flow_notify || previous.saturating_add(charge) >= threshold {
             self.control_notify.notify_one();
         }

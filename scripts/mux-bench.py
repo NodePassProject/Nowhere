@@ -115,6 +115,17 @@ def rss_kib(pid):
     return int(output.strip())
 
 
+def established_tcp(pid):
+    try:
+        output = subprocess.check_output(
+            ["lsof", "-nP", "-a", "-p", str(pid), "-iTCP", "-sTCP:ESTABLISHED"],
+            text=True, stderr=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    return max(0, len(output.splitlines()) - 1)
+
+
 def wait_port(port, host="127.0.0.1", deadline=10):
     until = time.monotonic() + deadline
     while time.monotonic() < until:
@@ -185,7 +196,14 @@ def main():
             env=env, stdout=output, stderr=output,
         )
         wait_port(1080)
-        barrier = threading.Barrier(args.flows)
+        topology = {}
+
+        def capture_topology():
+            connections = established_tcp(vector.pid)
+            if connections is not None:
+                topology["tls_carriers"] = max(0, connections - args.flows)
+
+        barrier = threading.Barrier(args.flows, action=capture_topology)
         durations = [0.0] * args.flows
         byte_count = args.mib_per_flow * 1024 * 1024
         peak = {"portal": rss_kib(portal.pid), "vector": rss_kib(vector.pid)}
@@ -217,7 +235,7 @@ def main():
             raise RuntimeError(f"flow failures: {errors}")
         total = byte_count * args.flows
         transfer = max(durations)
-        print(json.dumps({
+        result = {
             "rtt_ms": args.rtt_ms, "flows": args.flows, "mux": int(args.mux),
             "profile": args.profile, "mib": total / 1024 / 1024,
             "seconds": round(transfer, 3), "mbps": round(total * 8 / transfer / 1_000_000, 2),
@@ -225,7 +243,9 @@ def main():
             "flow_max_seconds": round(max(durations), 3),
             "portal_peak_rss_mib": round(peak["portal"] / 1024, 2),
             "vector_peak_rss_mib": round(peak["vector"] / 1024, 2),
-        }, sort_keys=True))
+        }
+        result.update(topology)
+        print(json.dumps(result, sort_keys=True))
     finally:
         stop.set()
         for process in (vector, portal):

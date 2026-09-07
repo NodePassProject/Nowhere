@@ -48,7 +48,11 @@ pub(super) async fn send_data(
 
 pub(super) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<Shared>) {
     let result: io::Result<()> = async {
+        let mut data_frames = 0_u8;
         loop {
+            if shared.closed.load(std::sync::atomic::Ordering::Acquire) {
+                return Ok(());
+            }
             let mut encoded = [0; HEADER_LEN];
             tokio::select! {
                 _ = shared.closed_notify.notified() => return Ok(()),
@@ -69,6 +73,13 @@ pub(super) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<
             match header.kind {
                 FrameKind::Stream => receive_stream(&shared, header, Bytes::from(payload)).await?,
                 FrameKind::Window => receive_window(&shared, header)?,
+            }
+            if payload_len != 0 {
+                data_frames = data_frames.wrapping_add(1);
+                if data_frames == 32 {
+                    data_frames = 0;
+                    tokio::task::yield_now().await;
+                }
             }
         }
     }
@@ -149,6 +160,10 @@ fn receive_window(shared: &Shared, header: FrameHeader) -> io::Result<()> {
             ));
         }
         shared.connection_send_credit.add_permits(credit);
+        shared.connection_send_peak.fetch_max(
+            shared.connection_send_credit.available_permits(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         return Ok(());
     }
     let mut flows = shared.flows.lock().expect("mux flow lock");
@@ -172,6 +187,9 @@ fn receive_window(shared: &Shared, header: FrameHeader) -> io::Result<()> {
 
 pub(super) async fn run_terminals(shared: Arc<Shared>, mut terminal_rx: mpsc::Receiver<FlowId>) {
     loop {
+        if shared.closed.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
         let flow_id = tokio::select! {
             _ = shared.closed_notify.notified() => return,
             flow_id = terminal_rx.recv() => flow_id,
@@ -204,6 +222,9 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
     let mut pending_item = None;
     let result: io::Result<()> = async {
         loop {
+            if shared.closed.load(std::sync::atomic::Ordering::Acquire) {
+                return Ok(());
+            }
             let item = if let Some(item) = pending_item.take() {
                 Some(item)
             } else {
