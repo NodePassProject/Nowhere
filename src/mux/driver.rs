@@ -20,7 +20,12 @@ pub(super) async fn send_data(
     payload: MuxChunk,
 ) -> io::Result<()> {
     let charge = frame_charge(payload.len());
-    let flow_credit = shared.send_credit(flow_id)?;
+    let (flow_credit, slot) = {
+        let flows = shared.flows.lock().expect("mux flow lock");
+        let flow = flows.get(&flow_id).ok_or_else(closed)?;
+        (flow.send_credit.clone(), flow.send_slot.clone())
+    };
+    let slot = slot.acquire_owned().await.map_err(|_| closed())?;
     let flow = flow_credit
         .acquire_many_owned(charge as u32)
         .await
@@ -33,9 +38,10 @@ pub(super) async fn send_data(
         .map_err(|_| closed())?;
     shared
         .data_tx
-        .send(Outbound::Frame {
+        .send(Outbound::Data {
             header: frame_data(flow_id, payload.len())?,
             payload,
+            _slot: slot,
         })
         .await
         .map_err(|_| closed())?;
@@ -94,8 +100,7 @@ pub(super) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<
 }
 
 async fn receive_open(shared: &Arc<Shared>, header: FrameHeader) -> io::Result<()> {
-    let terminal_permit = shared.reserve_terminal().await?;
-    let stream = shared.insert_flow(header.flow_id, terminal_permit, true)?;
+    let stream = shared.insert_flow(header.flow_id, true)?;
     let extra_credit = header.value as usize;
     if extra_credit != 0 {
         let credit = shared.send_credit(header.flow_id)?;
@@ -106,22 +111,24 @@ async fn receive_open(shared: &Arc<Shared>, header: FrameHeader) -> io::Result<(
         }
         credit.add_permits(extra_credit);
     }
-    shared.incoming_tx.send(stream).await.map_err(|_| closed())
+    shared.incoming_tx.send(stream).map_err(|_| closed())
 }
 
 async fn receive_data(shared: &Arc<Shared>, header: FrameHeader, payload: Bytes) -> io::Result<()> {
     let charge = frame_charge(payload.len());
     let inbound = shared.admit_receive(header.flow_id, charge)?;
-    inbound
-        .send(Inbound::Data { payload, charge })
-        .await
-        .map_err(|_| closed())
+    if inbound.send(Inbound::Data { payload, charge }).is_err() {
+        // The local read half may be abandoned while its writer is still
+        // live. Return credit for discarded bytes without killing other flows.
+        shared.release_receive(header.flow_id, charge);
+    }
+    Ok(())
 }
 
 async fn receive_close(shared: &Shared, header: FrameHeader) {
     if header.code == CLOSE_RESET {
         if let Some(flow) = shared.remove_flow(header.flow_id) {
-            let _ = flow.inbound.send(Inbound::Reset).await;
+            let _ = flow.inbound.send(Inbound::Reset);
         }
         return;
     }
@@ -137,7 +144,7 @@ async fn receive_close(shared: &Shared, header: FrameHeader) {
         })
     };
     if let Some(inbound) = inbound {
-        let _ = inbound.send(Inbound::Fin).await;
+        let _ = inbound.send(Inbound::Fin);
     }
 }
 
@@ -172,7 +179,10 @@ fn receive_window(shared: &Shared, header: FrameHeader) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) async fn run_terminals(shared: Arc<Shared>, mut terminal_rx: mpsc::Receiver<FlowId>) {
+pub(super) async fn run_terminals(
+    shared: Arc<Shared>,
+    mut terminal_rx: mpsc::UnboundedReceiver<FlowId>,
+) {
     loop {
         if shared.closed.load(std::sync::atomic::Ordering::Acquire) {
             return;
@@ -187,10 +197,7 @@ pub(super) async fn run_terminals(shared: Arc<Shared>, mut terminal_rx: mpsc::Re
         };
         let sent = tokio::select! {
             _ = shared.closed_notify.cancelled() => return,
-            sent = shared.data_tx.send(Outbound::Frame {
-                header,
-                payload: MuxChunk::empty(),
-            }) => sent,
+            sent = shared.data_tx.send(Outbound::Control(header)) => sent,
         };
         if sent.is_err() {
             return;
@@ -234,13 +241,13 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
                         return Err(closed());
                     }
                 }
-                Outbound::Frame { header, payload } if payload.is_empty() => {
+                Outbound::Control(header) => {
                     headers.clear();
                     headers.extend_from_slice(&encode_header(header).map_err(invalid)?);
                     while headers.len() < 8 * 256 {
                         let Ok(next) = data_rx.try_recv() else { break };
                         match next {
-                            Outbound::Frame { header, payload } if payload.is_empty() => {
+                            Outbound::Control(header) => {
                                 headers.extend_from_slice(&encode_header(header).map_err(invalid)?);
                             }
                             next => {
@@ -252,9 +259,14 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
                     writer.write_all(&headers).await?;
                     writer.flush().await?;
                 }
-                Outbound::Frame { header, payload } => {
+                Outbound::Data {
+                    header,
+                    payload,
+                    _slot,
+                } => {
                     let header = encode_header(header).map_err(invalid)?;
                     write_frame_vectored(&mut writer, &header, payload.as_ref()).await?;
+                    drop(_slot);
                 }
             }
         }

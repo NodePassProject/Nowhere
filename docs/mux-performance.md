@@ -46,9 +46,9 @@ claims.
 | One Mux Shard | 300 ms | 16 | 128 MiB | 670.71 Mbps | 26.72 MiB | 10.19 MiB |
 | Four Mux Shards | 300 ms | 16 | 128 MiB | 1.69 Gbps | 61.61 MiB | 11.88 MiB |
 
-The larger profile removes the dominant high-RTT collapse. Four Shards improve
+In these historical proxy samples, the larger profile removes the dominant high-RTT collapse. Four Shards improve
 aggregate 16-flow throughput by about 2.5 times at both measured RTTs, while
-raising peak RSS substantially. The runtime therefore adapts target density to
+raising peak RSS substantially. That implementation adapted target density to
 TLS setup latency and live carrier pressure, and caps the directional pool at
 four. A single flow remains on one Shard.
 
@@ -75,11 +75,11 @@ owned frame payload directly.
 | 100 ms | 16 | 128 MiB | 4 | 4.74 Gbps | 57.48 MiB | 12.78 MiB |
 | 300 ms | 16 | 128 MiB | 4 | 1.66 Gbps | 75.64 MiB | 26.30 MiB |
 
-The adaptive policy keeps 16 simultaneous low-RTT flows on one carrier, while
+That historical adaptive policy kept 16 simultaneous low-RTT flows on one carrier, while
 100 and 300 ms samples expand to four. The high-RTT aggregate results match or
 slightly exceed the fixed-four baseline within normal local-run variation, so
-the four-carrier cap remains useful under high BDP without imposing four TLS
-connections on low-latency workloads. Single-flow throughput is unchanged.
+these observations motivated the former four-carrier cap. They do not validate
+the current eight-carrier pool or prove an optimal pool size.
 
 Multi-DATA vectored batching was tested and rejected. Tokio-rustls can complete
 a vectored write after consuming only part of a header/payload pair; extending
@@ -120,3 +120,57 @@ runs using the throughput profile.
 Both smoke cells satisfy the 3% throughput and RSS thresholds. These results
 exercise the real binaries and carrier topology, but Toxiproxy's TCP
 termination means the Linux netem matrix remains the gating measurement.
+
+## 2026-09-08 eight-carrier pool and stream admission
+
+The current implementation shares at most eight connecting/established TLS
+slots per session across directions. Idle carriers are reused before creating
+more. At capacity, placement uses credit/queue occupancy, then live plus pending
+streams. Connecting slots accept reservations and share one initializer, so a
+cold burst is balanced before handshakes finish. There is no fixed Mux stream
+count limit, setup-latency density rule, or scheduling timer. Application session
+admission limits remain separate.
+
+Each stream may have one queued/in-progress DATA frame. Receive queues rely on
+byte credit rather than a per-stream packet count, removing the slow-small-packet
+reader stall. No wire fields were added. The 30-second fully idle timeout remains.
+
+The saved pre-change release is `cc5623a` (`/tmp/nowhere-mux-before-pool8`). Both
+implementations used `NOW_TRANSPORT_MEMORY_PROFILE=throughput`. No builds or tests
+ran concurrently with the samples below.
+
+| Measurement | Implementation | TLS carriers | Throughput | Portal peak RSS | Vector peak RSS |
+|---|---|---:|---:|---:|---:|
+| Toxiproxy 300 ms, 16 flows, 128 MiB; median of 3 | Before | 4 | 1.668 Gbps | 75.56 MiB | 18.33 MiB |
+| Toxiproxy 300 ms, 16 flows, 128 MiB; median of 3 | Current | 8 | 2.833 Gbps | 12.73 MiB | 10.66 MiB |
+| Direct loopback, 16 flows, 24 GiB; one sample | Before | 1 | 13.086 Gbps | 26.61 MiB | 10.45 MiB |
+| Direct loopback, 16 flows, 24 GiB; one sample | Current | 8 | 11.224 Gbps | 13.23 MiB | 12.78 MiB |
+
+The final delayed samples were 2833.47, 2836.52, and 2766.98 Mbps; baseline samples
+were 1667.70, 1668.21, and 1662.83 Mbps. The delayed median improves 69.9%, while
+the loopback point regresses 14.2%. Loopback transfers took 15.755 and 18.367
+seconds respectively. The fixed eight-slot policy therefore favors delayed
+parallel transfers, not universal throughput improvement. This is not a completed
+no-regression acceptance; the Linux netem matrix is still outstanding.
+
+```sh
+tests/bench-mux-local.sh 300 16 8 1 target/release/nowhere
+python3 tests/mux-bench-local.py --direct --rtt-ms 0 \
+  --flows 16 --mib-per-flow 1536 --binary target/release/nowhere
+```
+
+Rejected experiments:
+
+- Pressure-only background expansion left the initial 16-flow burst on one
+  carrier and reached only 671.63 Mbps at the same proxy delay.
+- Expanding without reservations for connecting carriers produced a 1094.90 Mbps
+  outlier among otherwise roughly 2.9 Gbps samples. Connecting-slot reservations
+  remove that first-completed-carrier placement bias.
+- Allowing four queued DATA frames per flow gave only 11.368 Gbps in the loopback
+  point, with Portal/Vector RSS increasing to 14.89/15.38 MiB. The one-frame bound
+  was retained.
+
+A longer 300 ms proxy attempt (16 x 256 MiB) failed on the saved baseline with
+early EOF and timeouts, so no sustained delayed comparison was obtained. This
+does not establish whether the baseline or proxy path caused the failure. Short
+proxy samples cannot substitute for packet-level loss/RTT testing.

@@ -2,14 +2,118 @@ use super::wire::{CLOSE_FIN, CLOSE_RESET, FrameHeader, encode_header};
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[tokio::test]
+async fn more_than_256_live_streams_transfer_and_half_close() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let (left, right) = tokio::io::duplex(1 << 20);
+        let (client, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+        let (server, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();
+        let mut streams = Vec::new();
+        for id in 1..=1024 {
+            let outgoing = client.open_stream(id).await.unwrap();
+            let accepted = incoming.accept().await.unwrap().unwrap();
+            streams.push((outgoing, accepted));
+        }
+        assert_eq!(client.active_streams(), 1024);
+        for (mut outgoing, mut accepted) in streams {
+            outgoing.write_all(b"ok").await.unwrap();
+            drop(outgoing);
+            let mut bytes = Vec::new();
+            accepted.read_to_end(&mut bytes).await.unwrap();
+            assert_eq!(bytes, b"ok");
+        }
+        assert_eq!(client.active_streams(), 0);
+        client.close();
+        server.close();
+    })
+    .await
+    .expect("stream admission must not depend on terminal queue capacity");
+}
+
+#[tokio::test]
+async fn slow_small_packet_reader_does_not_block_other_flows() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let (left, right) = tokio::io::duplex(1 << 20);
+        let (client, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+        let (server, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();
+        let mut slow = client.open_stream(1).await.unwrap();
+        let _slow_peer = incoming.accept().await.unwrap().unwrap();
+        for _ in 0..1024 {
+            slow.write_all(b"x").await.unwrap();
+        }
+        let mut fast = client.open_stream(2).await.unwrap();
+        let mut fast_peer = incoming.accept().await.unwrap().unwrap();
+        fast.write_all(b"ok").await.unwrap();
+        let mut bytes = [0; 2];
+        fast_peer.read_exact(&mut bytes).await.unwrap();
+        assert_eq!(&bytes, b"ok");
+        client.close();
+        server.close();
+    })
+    .await
+    .expect("per-flow queue must not stall the carrier reader");
+}
+
 #[test]
 fn production_idle_timeout_remains_thirty_seconds() {
     assert_eq!(MUX_IDLE_TIMEOUT, Duration::from_secs(30));
 }
 
+#[tokio::test]
+async fn abandoned_reader_returns_credit_without_closing_other_streams() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let (left, right) = tokio::io::duplex(1 << 20);
+        let (client, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+        let (server, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();
+        let outgoing = client.open_stream(1).await.unwrap();
+        let mut accepted = incoming.accept().await.unwrap().unwrap();
+        let (reader, _writer) = outgoing.into_split();
+        drop(reader);
+        accepted
+            .write_all(&vec![0; 2 * MAX_CONNECTION_WINDOW_BYTES])
+            .await
+            .unwrap();
+        let mut other = client.open_stream(2).await.unwrap();
+        let mut peer = incoming.accept().await.unwrap().unwrap();
+        other.write_all(b"ok").await.unwrap();
+        let mut bytes = [0; 2];
+        peer.read_exact(&mut bytes).await.unwrap();
+        assert_eq!(&bytes, b"ok");
+        assert!(!client.is_closed());
+        client.close();
+        server.close();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_blocked_flow_cannot_fill_the_shared_send_queue() {
+    let (left, _right) = tokio::io::duplex(1);
+    let (handle, _incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    let mut a = handle.open_stream(1).await.unwrap();
+    let mut b = handle.open_stream(2).await.unwrap();
+    a.write_all(b"queued").await.unwrap();
+    let pending = tokio::spawn(async move { a.write_all(b"blocked").await });
+    tokio::time::timeout(Duration::from_secs(1), b.write_all(b"other"))
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::task::yield_now().await;
+    assert!(!pending.is_finished());
+    handle.close();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), pending)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+}
+
 async fn assert_raw_frame_closes_carrier(frame: &[u8]) {
     let (left, mut peer) = tokio::io::duplex(1 << 20);
-    let (handle, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    let (handle, _incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
     peer.write_all(frame).await.unwrap();
     tokio::time::timeout(Duration::from_secs(1), handle.closed())
         .await
@@ -52,7 +156,15 @@ async fn duplicate_close_and_late_stream_window_are_idempotent() {
     peer.write_all(&encode_header(FrameHeader::window(7, 1).unwrap()).unwrap())
         .await
         .unwrap();
-    tokio::task::yield_now().await;
+    peer.write_all(&encode_header(FrameHeader::open(9, 0).unwrap()).unwrap())
+        .await
+        .unwrap();
+    let next = tokio::time::timeout(Duration::from_secs(1), incoming.accept())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(next.flow_id(), 9);
     assert!(!handle.is_closed());
     drop(stream);
 }

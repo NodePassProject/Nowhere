@@ -37,7 +37,7 @@ use super::config::PortalClientConfig;
 use super::tls::{ClientTls, EXPORTER_LABEL, require_quic_nw2};
 
 const QUIC_DATAGRAM_BUFFER_SIZE: usize = 4 * 1024 * 1024;
-const TLS_MUX_MAX_SHARDS_PER_DIRECTION: usize = 4;
+const TLS_MUX_MAX_CARRIERS: usize = 8;
 
 #[derive(Clone)]
 pub(super) struct ClientSignals {
@@ -147,7 +147,7 @@ mod quic;
 mod tls;
 
 pub(super) use self::quic::{QueuedDatagram, QuicManager, QuicSession};
-pub(super) use self::tls::{MuxDirection, OpenedTls, TlsManager};
+pub(super) use self::tls::{OpenedTls, TlsManager};
 
 #[cfg(test)]
 #[path = "../tests/vector/session.rs"]

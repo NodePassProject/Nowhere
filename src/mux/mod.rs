@@ -28,17 +28,12 @@ const MAX_STREAM_WINDOW_BYTES: usize = 16 * MIB;
 const MAX_CONNECTION_WINDOW_BYTES: usize = 32 * MIB;
 const CREDIT_UNIT_BYTES: usize = 1024;
 const WINDOW_UPDATE_DIVISOR: usize = 8;
-// Frame count is separate from the byte window: UoT carries many small
-// packets, so the frame queue absorbs scheduling bursts while the byte window
-// remains the hard payload bound.
-const FLOW_CHANNEL_FRAMES: usize = 512;
 pub(crate) const MUX_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MuxConfig {
     pub stream_window_bytes: usize,
     pub connection_window_bytes: usize,
-    pub max_streams: usize,
     pub outbound_frames: usize,
 }
 
@@ -59,7 +54,6 @@ impl MuxConfig {
         Self {
             stream_window_bytes: profile.stream_receive_window as usize,
             connection_window_bytes: profile.connection_receive_window as usize,
-            max_streams: 256,
             outbound_frames: 512,
         }
     }
@@ -73,7 +67,6 @@ impl MuxConfig {
                 .connection_window_bytes
                 .is_multiple_of(CREDIT_UNIT_BYTES)
             || self.connection_window_bytes < self.stream_window_bytes
-            || self.max_streams == 0
             || self.outbound_frames == 0
             || self.connection_window_bytes > Semaphore::MAX_PERMITS
         {
@@ -105,7 +98,7 @@ struct ReceiveCredit {
 pub(crate) struct FlowReader {
     shared: Arc<Shared>,
     flow_id: FlowId,
-    receiver: mpsc::Receiver<Inbound>,
+    receiver: mpsc::UnboundedReceiver<Inbound>,
     current: Option<(Bytes, usize, usize)>,
     eof: bool,
 }
@@ -115,7 +108,6 @@ pub(crate) struct FlowWriter {
     flow_id: FlowId,
     pending: Option<WriteFuture>,
     pending_action: Option<ActionFuture>,
-    terminal_permit: Option<mpsc::OwnedPermit<FlowId>>,
     closed: bool,
 }
 
@@ -125,7 +117,7 @@ pub(crate) struct MuxHandle {
 }
 
 pub(crate) struct Incoming {
-    receiver: mpsc::Receiver<MuxStream>,
+    receiver: mpsc::UnboundedReceiver<MuxStream>,
 }
 
 type WriteFuture = Pin<Box<dyn Future<Output = io::Result<usize>> + Send>>;
@@ -140,9 +132,9 @@ struct Shared {
     pending_connection_credit: AtomicUsize,
     ready_flows: Mutex<VecDeque<FlowId>>,
     data_tx: mpsc::Sender<Outbound>,
-    terminal_tx: mpsc::Sender<FlowId>,
+    terminal_tx: mpsc::UnboundedSender<FlowId>,
     control_notify: Notify,
-    incoming_tx: mpsc::Sender<MuxStream>,
+    incoming_tx: mpsc::UnboundedSender<MuxStream>,
     active_streams_tx: watch::Sender<usize>,
     closed: AtomicBool,
     closed_notify: tokio_util::sync::CancellationToken,
@@ -151,8 +143,9 @@ struct Shared {
 }
 
 struct FlowState {
-    inbound: mpsc::Sender<Inbound>,
+    inbound: mpsc::UnboundedSender<Inbound>,
     send_credit: Arc<Semaphore>,
+    send_slot: Arc<Semaphore>,
     receive_credit: usize,
     pending_receive_credit: usize,
     window_queued: bool,
@@ -167,10 +160,12 @@ enum Inbound {
 }
 
 enum Outbound {
-    Frame {
+    Data {
         header: FrameHeader,
         payload: MuxChunk,
+        _slot: tokio::sync::OwnedSemaphorePermit,
     },
+    Control(FrameHeader),
     Flush(oneshot::Sender<io::Result<()>>),
 }
 
@@ -191,10 +186,6 @@ impl MuxChunk {
                 charge,
             }),
         }
-    }
-
-    fn empty() -> Self {
-        Self::from_bytes(Bytes::new())
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -219,29 +210,20 @@ impl Drop for ReceiveCredit {
 }
 
 impl Shared {
-    async fn reserve_terminal(&self) -> io::Result<mpsc::OwnedPermit<FlowId>> {
-        tokio::select! {
-            _ = self.closed_notify.cancelled() => Err(closed()),
-            permit = self.terminal_tx.clone().reserve_owned() => permit.map_err(|_| closed()),
-        }
-    }
-
     fn insert_flow(
         self: &Arc<Self>,
         flow_id: FlowId,
-        terminal_permit: mpsc::OwnedPermit<FlowId>,
         advertise_window: bool,
     ) -> io::Result<MuxStream> {
         if flow_id == 0 || self.closed.load(Ordering::Acquire) {
             return Err(closed());
         }
-        let (sender, receiver) = mpsc::channel(FLOW_CHANNEL_FRAMES);
+        // Every DATA frame consumes at least one KiB of connection credit,
+        // bounding both payload and queue nodes without blocking the reader.
+        let (sender, receiver) = mpsc::unbounded_channel();
         let mut flows = self.flows.lock().expect("mux flow lock");
-        if flows.len() >= self.config.max_streams {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "mux stream limit reached",
-            ));
+        if self.closed.load(Ordering::Acquire) {
+            return Err(closed());
         }
         if flows.contains_key(&flow_id) {
             return Err(io::Error::new(
@@ -264,6 +246,7 @@ impl Shared {
             FlowState {
                 inbound: sender,
                 send_credit,
+                send_slot: Arc::new(Semaphore::new(1)),
                 receive_credit: credit_units(self.config.stream_window_bytes),
                 pending_receive_credit: initial_credit,
                 window_queued: advertise_window && initial_credit != 0,
@@ -272,6 +255,7 @@ impl Shared {
             },
         );
         let active_streams = flows.len();
+        self.active_streams_tx.send_replace(active_streams);
         drop(flows);
         if advertise_window && initial_credit != 0 {
             self.ready_flows
@@ -280,7 +264,6 @@ impl Shared {
                 .push_back(flow_id);
             self.control_notify.notify_one();
         }
-        self.active_streams_tx.send_replace(active_streams);
         Ok(MuxStream {
             reader: FlowReader {
                 shared: self.clone(),
@@ -294,7 +277,6 @@ impl Shared {
                 flow_id,
                 pending: None,
                 pending_action: None,
-                terminal_permit: Some(terminal_permit),
                 closed: false,
             },
         })
@@ -307,11 +289,12 @@ impl Shared {
         let mut flows = self.flows.lock().expect("mux flow lock");
         for flow in flows.values() {
             flow.send_credit.close();
+            flow.send_slot.close();
         }
         flows.clear();
+        self.active_streams_tx.send_replace(0);
         drop(flows);
         self.connection_send_credit.close();
-        self.active_streams_tx.send_replace(0);
         self.closed_notify.cancel();
     }
 
@@ -329,14 +312,19 @@ impl Shared {
         let removed = flows.remove(&flow_id);
         if let Some(flow) = &removed {
             flow.send_credit.close();
+            flow.send_slot.close();
         }
         let active_streams = flows.len();
-        drop(flows);
         self.active_streams_tx.send_replace(active_streams);
+        drop(flows);
         removed
     }
 
-    fn admit_receive(&self, flow_id: FlowId, charge: usize) -> io::Result<mpsc::Sender<Inbound>> {
+    fn admit_receive(
+        &self,
+        flow_id: FlowId,
+        charge: usize,
+    ) -> io::Result<mpsc::UnboundedSender<Inbound>> {
         let mut connection = self
             .connection_receive_credit
             .lock()
@@ -421,8 +409,8 @@ impl Shared {
             flows.remove(&flow_id);
         }
         let active_streams = flows.len();
-        drop(flows);
         self.active_streams_tx.send_replace(active_streams);
+        drop(flows);
         if flush_credit {
             self.control_notify.notify_one();
         }

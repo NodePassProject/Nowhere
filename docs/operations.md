@@ -56,11 +56,11 @@ the other family.
 The important memory bounds are the 1,024 concurrent TCP flows and 256 UDP flows
 per authenticated client session, the selected 4/8, 8/16, or 16/32 MiB
 per-stream/per-Mux receive
-windows, 256 streams per Mux, bounded reusable relay-buffer caches, and QUIC UDP
+windows, bounded reusable relay-buffer caches, and QUIC UDP
 queue/reassembly limits. UoT and QUIC DATAGRAM share the UDP flow limit. TLS
 shards originated with `mux=1` by Vector or a Portal `next` client adapt their
-target density to TLS setup latency and carrier pressure, stop at 4 shards per
-direction, use least-loaded placement, and
+pool to concurrent flow demand, stop at eight carriers per session
+across both directions, use lowest-occupancy placement, and
 close after 30 seconds fully idle. Frame queue slots do not bypass byte credit. Windows are granted as
 permits and payload is admitted incrementally.
 
@@ -74,31 +74,23 @@ bandwidth-delay product.
 
 ### TLS Shard placement
 
-An originating client keeps separate uplink and downlink Shard sets. Only a
-direction that selects TLS/TCP uses a set; a symmetric `tcp/tcp` flow uses one
-duplex stream from the uplink set.
+An originating client shares one full-duplex TLS carrier pool across directions.
+Mux imposes no fixed stream count limit; session application admission is separate.
 
 ```text
-                         +-------------------------+
-new TLS-carried Flow --->| live Shard below 4?     |
-                         +------------+------------+
-                                      |
-                        +-------------+---------------+
-                        | yes                         | no
-                        v                             v
-              +------------------+          +------------------+
-              | choose the       |          | open one TLS     |
-              | least-loaded one |          | Mux Shard        |
-              +---------+--------+          +---------+--------+
-                        |                             |
-                        +--------------+--------------+
-                                       |
-                                       v
-                              open logical stream
+new flow --> idle carrier? --> reuse
+                 |
+                 +--> free slot? --> establish TLS (up to eight in parallel)
+                          |
+                          +--> lowest credit/queue occupancy --> multiplex
+                               (connecting slots accept reservations too)
 ```
 
-While load grows from zero, a direction uses `ceil(active flows / 4)` Shards.
-After load falls, an empty Shard remains available during its idle period:
+Connections are created on demand. At most eight pool slots cover establishment
+and carrier lifetime. Each slot shares one initializer and counts pending flows
+alongside live streams. A cancelled initializer can be retried in the same slot.
+No polling task or setup-latency threshold is used.
+After load falls, an empty carrier remains available during its idle period:
 
 ```text
 +--------+  last stream closes  +------+  30s with no stream  +--------+

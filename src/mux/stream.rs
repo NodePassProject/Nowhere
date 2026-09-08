@@ -147,6 +147,7 @@ impl FlowReader {
 
 impl Drop for FlowReader {
     fn drop(&mut self) {
+        self.receiver.close();
         if let Some((_, _, charge)) = self.current.take() {
             self.shared.release_receive(self.flow_id, charge);
         }
@@ -248,10 +249,7 @@ impl AsyncWrite for FlowWriter {
             self.pending_action = Some(Box::pin(async move {
                 shared
                     .data_tx
-                    .send(Outbound::Frame {
-                        header: frame_close(flow_id, CLOSE_FIN)?,
-                        payload: MuxChunk::empty(),
-                    })
+                    .send(Outbound::Control(frame_close(flow_id, CLOSE_FIN)?))
                     .await
                     .map_err(|_| closed())
             }));
@@ -259,7 +257,6 @@ impl AsyncWrite for FlowWriter {
         match self.poll_action(cx) {
             Poll::Ready(Ok(())) => {
                 self.closed = true;
-                self.terminal_permit = None;
                 Poll::Ready(Ok(()))
             }
             other => other,
@@ -330,13 +327,11 @@ impl FlowWriter {
 impl Drop for FlowWriter {
     fn drop(&mut self) {
         if !self.closed {
-            // One bounded dispatcher per carrier preserves ordering behind
+            // One dispatcher per carrier preserves ordering behind
             // already queued DATA without spawning a task for every dropped
             // stream. Dropping a writer is a half-close: split-direction users
             // intentionally discard the unused half while retaining the other.
-            if let Some(permit) = self.terminal_permit.take() {
-                permit.send(self.flow_id);
-            }
+            let _ = self.shared.terminal_tx.send(self.flow_id);
         }
         self.shared.release_part(self.flow_id);
     }

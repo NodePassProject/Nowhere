@@ -281,10 +281,12 @@ async fn mux_full_duplex_tcp_exceeds_each_direction_credit_window() {
 }
 
 #[tokio::test]
-async fn mux_seventeenth_active_tcp_flow_opens_a_second_low_latency_shard() {
-    const FLOW_COUNT: usize = 17;
+async fn mux_hundreds_of_tcp_flows_share_at_most_eight_carriers() {
+    const FLOW_COUNT: usize = 300;
 
-    let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = tokio::net::TcpSocket::new_v4().unwrap();
+    target.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let target = target.listen(1024).unwrap();
     let target_address = target.local_addr().unwrap();
     let target_shutdown = CancellationToken::new();
     let target_child_shutdown = target_shutdown.clone();
@@ -300,24 +302,33 @@ async fn mux_seventeenth_active_tcp_flow_opens_a_second_low_latency_shard() {
 
     let flows = timeout(TEST_TIMEOUT, async {
         let mut flows = Vec::with_capacity(FLOW_COUNT);
+        let mut opening = tokio::task::JoinSet::new();
         for _ in 0..FLOW_COUNT {
-            let mut flow = TcpStream::connect(runtime.socks).await.unwrap();
-            negotiate_socks(&mut flow).await;
-            flow.write_all(&ip_request(1, target_address))
-                .await
-                .unwrap();
-            read_ipv4_reply(&mut flow).await;
-            flows.push(flow);
+            // Exercise concurrent cold admission without overflowing the OS
+            // target listener's SYN backlog when the full suite runs in parallel.
+            if opening.len() == 32 {
+                flows.push(opening.join_next().await.unwrap().unwrap());
+            }
+            let socks = runtime.socks;
+            opening.spawn(async move {
+                let mut flow = TcpStream::connect(socks).await.unwrap();
+                negotiate_socks(&mut flow).await;
+                flow.write_all(&ip_request(1, target_address))
+                    .await
+                    .unwrap();
+                read_ipv4_reply(&mut flow).await;
+                flow
+            });
         }
-        while runtime.portal_stats.link_tcp.load(Ordering::Relaxed) != 2 {
-            tokio::task::yield_now().await;
+        while let Some(flow) = opening.join_next().await {
+            flows.push(flow.unwrap());
         }
         flows
     })
     .await
     .unwrap();
 
-    assert_eq!(runtime.portal_stats.link_tcp.load(Ordering::Relaxed), 2);
+    assert_eq!(runtime.portal_stats.link_tcp.load(Ordering::Relaxed), 8);
     assert_eq!(
         runtime.portal_stats.tcp_active.load(Ordering::Relaxed),
         FLOW_COUNT as i32

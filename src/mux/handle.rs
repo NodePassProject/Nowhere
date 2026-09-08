@@ -22,8 +22,8 @@ impl MuxHandle {
     {
         let config = config.validate()?;
         let (data_tx, data_rx) = mpsc::channel(config.outbound_frames);
-        let (terminal_tx, terminal_rx) = mpsc::channel(config.max_streams);
-        let (incoming_tx, incoming_rx) = mpsc::channel(config.max_streams);
+        let (terminal_tx, terminal_rx) = mpsc::unbounded_channel();
+        let (incoming_tx, incoming_rx) = mpsc::unbounded_channel();
         let (active_streams_tx, _) = watch::channel(0);
         let shared = Arc::new(Shared {
             config,
@@ -42,7 +42,7 @@ impl MuxHandle {
                     .connection_window_bytes
                     .saturating_sub(super::BASE_CONNECTION_WINDOW_BYTES),
             )),
-            ready_flows: Mutex::new(VecDeque::with_capacity(config.max_streams)),
+            ready_flows: Mutex::new(VecDeque::new()),
             data_tx,
             terminal_tx,
             control_notify: Notify::new(),
@@ -68,15 +68,24 @@ impl MuxHandle {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) async fn open_stream(&self, flow_id: super::FlowId) -> io::Result<MuxStream> {
-        let terminal_permit = self.shared.reserve_terminal().await?;
-        let stream = self.shared.insert_flow(flow_id, terminal_permit, false)?;
+        let stream = self.prepare_stream(flow_id)?;
+        self.open_prepared(stream).await
+    }
+
+    pub(crate) fn prepare_stream(&self, flow_id: super::FlowId) -> io::Result<MuxStream> {
+        self.shared.insert_flow(flow_id, false)
+    }
+
+    pub(crate) async fn open_prepared(&self, stream: MuxStream) -> io::Result<MuxStream> {
+        let flow_id = stream.flow_id();
         self.shared
             .data_tx
-            .send(Outbound::Frame {
-                header: frame_open(flow_id, self.shared.config.stream_window_bytes)?,
-                payload: super::MuxChunk::empty(),
-            })
+            .send(Outbound::Control(frame_open(
+                flow_id,
+                self.shared.config.stream_window_bytes,
+            )?))
             .await
             .map_err(|_| closed())?;
         Ok(stream)
@@ -90,15 +99,22 @@ impl MuxHandle {
         self.shared.flows.lock().expect("mux flow lock").len()
     }
 
-    pub(crate) fn has_stream_capacity(&self) -> bool {
-        self.active_streams() < self.shared.config.max_streams
-    }
-
-    pub(crate) fn is_send_congested(&self) -> bool {
+    pub(crate) fn pressure(&self) -> usize {
         let available = self.shared.connection_send_credit.available_permits();
         let peak = self.shared.connection_send_peak.load(Ordering::Relaxed);
-        available.saturating_mul(4) < peak
-            || self.shared.data_tx.capacity().saturating_mul(4) < self.shared.config.outbound_frames
+        let receive = *self
+            .shared
+            .connection_receive_credit
+            .lock()
+            .expect("mux credit lock");
+        let receive_peak = super::credit_units(self.shared.config.connection_window_bytes);
+        let queue = self.shared.config.outbound_frames;
+        // Fixed-point occupancy; no per-frame timestamps or flow scans.
+        let occupancy =
+            |free: usize, total: usize| total.saturating_sub(free) * 1024 / total.max(1);
+        occupancy(available, peak)
+            .max(occupancy(receive, receive_peak))
+            .max(occupancy(self.shared.data_tx.capacity(), queue))
     }
 
     #[cfg(test)]
@@ -117,6 +133,7 @@ impl MuxHandle {
         self.shared.close();
     }
 
+    #[cfg(test)]
     pub(crate) fn same_carrier(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.shared, &other.shared)
     }

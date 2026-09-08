@@ -251,7 +251,9 @@ Mux uses an initial 4 MiB stream window and 8 MiB connection window. Each side
 sends one WINDOW to extend its connection window. OPEN advertises the opener's
 stream extension; the receiver returns its stream extension with WINDOW.
 The selected transport profile sets final windows to 4/8, 8/16, or 16/32 MiB.
-Each shard permits 256 active streams and 512 queued outbound frame slots. Payload must obtain
+There is no fixed Mux logical-stream count limit. Each carrier has 512 queued
+outbound frame slots; each stream may have one DATA frame queued or being written.
+Payload must obtain
 both stream and connection credit before it enters the outbound queue.
 
 ```text
@@ -269,13 +271,26 @@ application write
 Both credit checks precede queue admission. A stream therefore cannot reserve
 payload beyond either advertised receive window.
 
-Client-side Shards open lazily in separate uplink and downlink sets. A new flow
-uses the least-loaded live Shard for its TLS direction. Its target density is
-derived from measured TLS setup latency: 16, 8, 4, or 2 active flows as setup
-latency crosses 30, 75, and 200 ms. Exhausting three quarters of connection
-credit or frame-queue capacity can open the next Shard earlier, up to 4 live
-Shards per direction. Once the pool is full, new flows reuse its least-loaded Shard. A symmetric `tcp/tcp` flow
-uses one duplex stream from the uplink set. A fully idle Shard closes after 30
+Client-side TLS Mux carriers share one session pool, with at most eight established
+or connecting carriers combined. Each TLS carrier is full duplex. New flows
+reuse idle carriers first. If all are busy and capacity remains, the new flow
+establishes another carrier; independent establishments run concurrently. At
+capacity, new flows use the carrier with the lowest maximum occupancy of send
+credit, receive credit, and outbound frame slots; stream count plus pending
+reservations breaks ties. Connecting slots also accept reservations, so a cold
+burst does not pile onto the first completed handshake. Each slot shares one
+initializer; cancellation allows a waiter to retry it. Failed expansion can
+fall back to an established carrier. There is
+no fixed stream density, latency threshold, background polling, or migration
+of established streams. This favors parallel throughput over minimizing the
+number of carriers for many idle logical streams.
+
+Receive queues use byte-credit admission rather than blocking the carrier reader
+on a per-flow frame count. Every DATA frame consumes at least one KiB of credit,
+bounding queued payload and DATA metadata across the carrier. Stream and lifecycle
+metadata still grow with live/pending streams; no fixed stream limit does not mean
+constant process memory. Authentication and application-level admission policies
+remain separate from Mux placement. A fully idle carrier closes after 30
 seconds. Portal applies the same timeout to an authenticated Mux carrier with
 no active streams. Sharding is runtime placement and does not add wire fields.
 

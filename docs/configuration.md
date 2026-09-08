@@ -221,11 +221,14 @@ has no health score or circuit breaker. Both carriers must be declared for
 `mix`; a single-carrier endpoint rejects a policy that selects the absent
 carrier.
 
-With `mux=1`, Shards open lazily according to active flow pressure. New flows
-use the least-loaded shard. TLS setup latency selects a target density of 16,
-8, 4, or 2 flows at 30, 75, and 200 ms, while connection-credit or queue
-pressure can expand earlier.
-Each direction has at most 4 shards. A shard closes after 30 seconds
+With `mux=1`, one session shares a pool of at most eight full-duplex TLS carriers.
+New flows reuse idle carriers; when all are busy and a slot is available,
+they establish another carrier. Establishments may run in parallel and count
+against the same eight slots. At capacity, flows choose the lowest credit/queue
+occupancy, breaking ties by live streams plus pending reservations. Connecting
+carriers also accept reservations to balance cold bursts. Existing streams do not migrate, and a full pool
+continues accepting new streams. There is no fixed Mux stream density or count limit.
+A carrier closes after 30 seconds
 fully idle. With `mux=0`, every TLS-carried
 Flow owns one on-demand lane that closes with the Flow. Mux applies when at
 least one direction is `tcp` or `mix`. `udp/udp&mux=1` canonicalizes to
@@ -308,19 +311,19 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 | `NOW_RELOAD_INTERVAL` | `1h` | Supplied-certificate reload interval |
 
 TLS Mux shares the transport profile's 4/8, 8/16, or 16/32 MiB stream/connection
-receive windows with QUIC. A Mux carrier permits 256 active streams and 512
+receive windows with QUIC. A Mux carrier has no fixed stream count limit and 512
 queued frame slots; queued payload remains charged against the connection
-window. The application adapts shard density to measured TLS setup latency and
-live carrier pressure, caps each direction at 4 shards, reuses the least-loaded
-shard after that, and retires
+window. Each flow has at most one DATA frame queued or being written, so a bulk
+writer cannot fill the shared queue. Receive queues are bounded by byte credit
+without blocking unrelated flows on per-flow frame counts. The application
+shares at most eight carriers across both directions and retires
 fully idle shards after 30 seconds. `NOW_MAX_TCP_FLOWS` is the hard
 per-session logical TCP limit shared by TLS and QUIC. `NOW_MAX_UDP_FLOWS` is the
 corresponding UDP limit shared by UoT and QUIC DATAGRAM. Excess flows fail
 without waiting for capacity. QUIC internally admits the sum of both limits as
 bidirectional streams; this derived capacity has no separate setting.
 
-Portal and Vector use the same QUIC profile regardless of negotiated protocol
-version or the client Mux setting.
+Portal and Vector use the same QUIC profile regardless of the client Mux setting.
 The stream/connection/send windows are respectively 4/8/8 MiB for `memory`,
 8/16/16 MiB for `balanced`, and 16/32/32 MiB for `throughput`. These are
 flow-control ceilings, not eager allocations. Larger windows are useful only

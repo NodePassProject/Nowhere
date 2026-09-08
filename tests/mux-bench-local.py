@@ -69,7 +69,7 @@ def run_flow(port, target_port, byte_count, barrier, results, index):
     try:
         sock = socket.create_connection(("127.0.0.1", port), timeout=60)
         sock.sendall(b"\x05\x01\x00")
-        if sock.recv(2) != b"\x05\x00":
+        if receive_bytes(sock, 2) != b"\x05\x00":
             raise RuntimeError("SOCKS authentication failed")
         sock.sendall(b"\x05\x01\x00\x01\x7f\x00\x00\x01" + struct.pack("!H", target_port))
         reply = receive_reply(sock)
@@ -147,8 +147,12 @@ def main():
     parser.add_argument("--profile", default="throughput")
     parser.add_argument("--proxy-host", default="127.0.0.1")
     parser.add_argument("--external-proxy", action="store_true")
+    parser.add_argument("--direct", action="store_true", help="loopback without Toxiproxy; RTT must be zero")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
+    if args.direct and args.rtt_ms != 0:
+        parser.error("--direct requires --rtt-ms 0")
+    proxy_port = 2000 if args.direct else 2001
 
     env = os.environ.copy()
     env.update({"NOW_TRANSPORT_MEMORY_PROFILE": args.profile, "RUST_LOG": "off"})
@@ -171,13 +175,13 @@ def main():
     server.start()
     try:
         wait_port(2000)
-        if not args.external_proxy:
+        if not args.external_proxy and not args.direct:
             api("DELETE", "/proxies/nowhere")
     except urllib.error.HTTPError as error:
         if error.code != 404:
             raise
     try:
-        if not args.external_proxy:
+        if not args.external_proxy and not args.direct:
             api("POST", "/proxies", {
                 "name": "nowhere", "listen": "0.0.0.0:2001", "upstream": "192.168.64.1:2000",
             })
@@ -187,12 +191,12 @@ def main():
                     "name": f"latency-{stream}", "type": "latency", "stream": stream,
                     "toxicity": 1.0, "attributes": {"latency": latency, "jitter": 0},
                 })
-        wait_port(2001, args.proxy_host)
+        wait_port(proxy_port, args.proxy_host)
         # Let a just-updated proxy path complete one RTT before the measured
         # client opens its first carrier. Transfer timing starts later.
         time.sleep(max(args.rtt_ms * 2 / 1000, 1.0))
         vector = subprocess.Popen(
-            [args.binary, f"vector://secret@{args.proxy_host}:2001?mux={args.mux}&socks=127.0.0.1:1080&log={log}"],
+            [args.binary, f"vector://secret@{args.proxy_host}:{proxy_port}?mux={args.mux}&socks=127.0.0.1:1080&log={log}"],
             env=env, stdout=output, stderr=output,
         )
         wait_port(1080)
@@ -236,6 +240,7 @@ def main():
         total = byte_count * args.flows
         transfer = max(durations)
         result = {
+            "binary": args.binary,
             "rtt_ms": args.rtt_ms, "flows": args.flows, "mux": int(args.mux),
             "profile": args.profile, "mib": total / 1024 / 1024,
             "seconds": round(transfer, 3), "mbps": round(total * 8 / transfer / 1_000_000, 2),

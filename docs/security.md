@@ -71,10 +71,12 @@ and DATA for unknown streams close the carrier. Late terminal and credit frames
 for a terminal stream are idempotent.
 
 The transport memory profile bounds Mux stream/connection windows at 4/8,
-8/16, or 16/32 MiB, and each Mux allows 256 active streams. With client `mux=1`,
-Vector or Portal `next` adapts a shard's target density to TLS setup latency and
-live connection pressure, caps each direction at 4 shards, distributes new flows to the
-least-loaded shard, and closes a fully idle shard after 30 seconds. One
+8/16, or 16/32 MiB. Mux has no fixed logical-stream count limit. With client `mux=1`,
+Vector or Portal `next` shares at most eight TLS carriers across both directions,
+reuses idle carriers before creating more, distributes flows by occupancy at capacity,
+and closes a fully idle carrier after 30 seconds. Stream and pending lifecycle
+metadata remain proportional to admitted streams; byte credit bounds DATA, not
+arbitrary OPEN traffic. One
 authenticated inbound Mux carrier is subject to the same fully idle timeout.
 One authenticated client session admits at most 1,024 concurrent logical TCP
 flows and 256 logical UDP flows across all of its carriers. UoT and QUIC

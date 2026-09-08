@@ -33,7 +33,7 @@ use crate::telemetry::{AccessOutcome, AccessSpan, RuntimeEvent, RuntimeKind, Run
 use super::config::CarrierMode;
 use super::flow_id::FlowLease;
 use super::route::{ResolvedRoute, RoutePlan};
-use super::session::{LinkGuard, MuxDirection, OpenedTls, QuicSession};
+use super::session::{LinkGuard, OpenedTls, QuicSession};
 use super::{PortalClient, VectorInner};
 mod tcp;
 
@@ -87,22 +87,17 @@ pub(super) async fn open_lane(
     client: Arc<PortalClient>,
     carrier: Carrier,
     flow_id: u32,
-    direction: MuxDirection,
 ) -> Result<PhysicalLane> {
     match carrier {
         Carrier::TlsTcp => {
-            let opened = client
-                .tls_manager
-                .open(flow_id, direction)
-                .await
-                .map_err(|error| {
-                    client.telemetry.emit_runtime(RuntimeEvent::new(
-                        RuntimeLevel::Warn,
-                        RuntimeKind::Carrier,
-                        format!("TLS carrier connection failed: {error}"),
-                    ));
-                    error
-                })?;
+            let opened = client.tls_manager.open(flow_id).await.map_err(|error| {
+                client.telemetry.emit_runtime(RuntimeEvent::new(
+                    RuntimeLevel::Warn,
+                    RuntimeKind::Carrier,
+                    format!("TLS carrier connection failed: {error}"),
+                ));
+                error
+            })?;
             match opened {
                 OpenedTls::Mux(stream) => {
                     let (reader, writer) = stream.into_split();
@@ -173,14 +168,12 @@ pub(super) async fn prepare_lanes(
     flow_id: u32,
 ) -> Result<Vec<PhysicalLane>> {
     if !route.split() {
-        return Ok(vec![
-            open_lane(client, route.uplink, flow_id, MuxDirection::Up).await?,
-        ]);
+        return Ok(vec![open_lane(client, route.uplink, flow_id).await?]);
     }
 
     let (uplink, downlink) = tokio::join!(
-        open_lane(client.clone(), route.uplink, flow_id, MuxDirection::Up,),
-        open_lane(client, route.downlink, flow_id, MuxDirection::Down),
+        open_lane(client.clone(), route.uplink, flow_id),
+        open_lane(client, route.downlink, flow_id),
     );
     match (uplink, downlink) {
         (Ok(uplink), Ok(downlink)) => Ok(vec![uplink, downlink]),
