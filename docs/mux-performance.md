@@ -129,7 +129,8 @@ more. At capacity, placement uses credit/queue occupancy, then live plus pending
 streams. Connecting slots accept reservations and share one initializer, so a
 cold burst is balanced before handshakes finish. There is no fixed Mux stream
 count limit, setup-latency density rule, or scheduling timer. Application session
-admission limits remain separate.
+admission limits were still present in these measurements; the subsequent
+consistent-admission cleanup removes them without changing pool placement.
 
 Each stream may have one queued/in-progress DATA frame. Receive queues rely on
 byte credit rather than a per-stream packet count, removing the slow-small-packet

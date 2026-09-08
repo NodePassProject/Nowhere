@@ -21,10 +21,6 @@ pub const DEFAULT_TELEMETRY_INTERVAL: Duration = Duration::from_secs(1);
 pub const MIN_TELEMETRY_INTERVAL: Duration = Duration::from_millis(250);
 /// Slowest supported structured telemetry cadence.
 pub const MAX_TELEMETRY_INTERVAL: Duration = Duration::from_secs(60);
-/// Default concurrent logical TCP flows per authenticated client session.
-pub const DEFAULT_MAX_TCP_FLOWS: u32 = 1024;
-/// Default concurrent logical UDP flows per authenticated client session.
-pub const DEFAULT_MAX_UDP_FLOWS: usize = 256;
 
 /// Parses the first value of each recognized URL query key without treating
 /// `+` as a space. Unknown keys and later duplicates are ignored.
@@ -108,16 +104,6 @@ pub fn init_dialer_ip(value: Option<&str>) -> String {
 /// Converts a Mbps value to bytes per second, preserving zero as "unlimited".
 pub fn rate_limit_bytes_per_second(mbps: i32) -> u64 {
     if mbps <= 0 { 0 } else { mbps as u64 * 125_000 }
-}
-
-/// Maximum concurrent logical TCP flows in one authenticated client session.
-pub fn max_tcp_flows() -> u32 {
-    env_int("NOW_MAX_TCP_FLOWS", DEFAULT_MAX_TCP_FLOWS as i32) as u32
-}
-
-/// Maximum concurrent logical UDP flows in one authenticated client session.
-pub fn max_udp_flows() -> usize {
-    env_int("NOW_MAX_UDP_FLOWS", DEFAULT_MAX_UDP_FLOWS as i32).max(1) as usize
 }
 
 /// Per-direction TCP relay buffer size.

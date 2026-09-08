@@ -15,24 +15,22 @@ use crate::protocol::FlowId;
 pub(super) struct FlowIdAllocator {
     next: AtomicU32,
     active: Mutex<HashSet<FlowId>>,
-    limit: usize,
 }
 
 impl FlowIdAllocator {
-    pub(super) fn new(limit: usize) -> Arc<Self> {
+    pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
             next: AtomicU32::new(1),
-            active: Mutex::new(HashSet::with_capacity(limit.min(4_096))),
-            limit,
+            active: Mutex::new(HashSet::new()),
         })
     }
 
     pub(super) fn allocate(self: &Arc<Self>) -> Result<FlowLease> {
         let mut active = self.active.lock().unwrap_or_else(|lock| lock.into_inner());
-        if active.len() >= self.limit {
-            bail!("vector::flow_id: active flow limit reached");
+        if active.len() == u32::MAX as usize {
+            bail!("vector::flow_id: flow identifier space exhausted");
         }
-        for _ in 0..=self.limit {
+        for _ in 0..=active.len() {
             let id = self.next.fetch_add(1, Ordering::Relaxed);
             let id = if id == 0 {
                 self.next.fetch_add(1, Ordering::Relaxed)

@@ -8,10 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use tokio::sync::Semaphore;
 
-use crate::common::{
-    DEFAULT_MAX_TCP_FLOWS, DEFAULT_MAX_UDP_FLOWS, DEFAULT_TELEMETRY_INTERVAL,
-    MAX_TELEMETRY_INTERVAL, MIN_TELEMETRY_INTERVAL,
-};
+use crate::common::{DEFAULT_TELEMETRY_INTERVAL, MAX_TELEMETRY_INTERVAL, MIN_TELEMETRY_INTERVAL};
 
 use super::DEFAULT_QUIC_UDP_QUEUE_BYTES;
 
@@ -25,13 +22,10 @@ const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_RELOAD_INTERVAL: Duration = Duration::from_secs(60 * 60);
-const DEFAULT_MAX_PENDING_PAIRS: usize = 1024;
 const DEFAULT_FLOW_PAIR_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct PortalRuntimeConfig {
-    pub(super) max_tcp_flows: u32,
-    pub(super) max_udp_flows: usize,
     pub(super) udp_queue_bytes: usize,
     pub(super) tcp_data_buf_size: usize,
     pub(super) udp_data_buf_size: usize,
@@ -44,15 +38,10 @@ pub(super) struct PortalRuntimeConfig {
     pub(super) telemetry_interval: Duration,
     pub(super) shutdown_timeout: Duration,
     pub(super) reload_interval: Duration,
-    pub(super) max_pending_pairs: usize,
     pub(super) flow_pair_timeout: Duration,
 }
 
 impl PortalRuntimeConfig {
-    pub(super) fn quic_bidi_stream_capacity(&self) -> u32 {
-        self.max_tcp_flows + self.max_udp_flows as u32
-    }
-
     pub(super) fn from_env() -> Result<Self> {
         Self::from_source(|name| match std::env::var(name) {
             Ok(value) => Ok(Some(value)),
@@ -67,16 +56,6 @@ impl PortalRuntimeConfig {
     where
         F: FnMut(&str) -> Result<Option<String>>,
     {
-        let max_tcp_flows = read_u32(&mut source, "NOW_MAX_TCP_FLOWS", DEFAULT_MAX_TCP_FLOWS)?;
-        let max_udp_flows = read_usize(
-            &mut source,
-            "NOW_MAX_UDP_FLOWS",
-            DEFAULT_MAX_UDP_FLOWS,
-            (u32::MAX as usize).min(Semaphore::MAX_PERMITS),
-        )?;
-        max_tcp_flows
-            .checked_add(max_udp_flows as u32)
-            .context("portal::config: NOW_MAX_TCP_FLOWS + NOW_MAX_UDP_FLOWS exceeds u32")?;
         let udp_queue_bytes = read_usize(
             &mut source,
             "NOW_QUIC_UDP_QUEUE_BYTES",
@@ -143,12 +122,6 @@ impl PortalRuntimeConfig {
         )?;
         let reload_interval =
             read_duration(&mut source, "NOW_RELOAD_INTERVAL", DEFAULT_RELOAD_INTERVAL)?;
-        let max_pending_pairs = read_usize(
-            &mut source,
-            "NOW_MAX_PENDING_PAIRS",
-            DEFAULT_MAX_PENDING_PAIRS,
-            isize::MAX as usize,
-        )?;
         let flow_pair_timeout = read_duration(
             &mut source,
             "NOW_FLOW_PAIR_TIMEOUT",
@@ -156,8 +129,6 @@ impl PortalRuntimeConfig {
         )?;
 
         Ok(Self {
-            max_tcp_flows,
-            max_udp_flows,
             udp_queue_bytes,
             tcp_data_buf_size,
             udp_data_buf_size,
@@ -170,26 +141,9 @@ impl PortalRuntimeConfig {
             telemetry_interval,
             shutdown_timeout,
             reload_interval,
-            max_pending_pairs,
             flow_pair_timeout,
         })
     }
-}
-
-fn read_u32<F>(source: &mut F, name: &str, default: u32) -> Result<u32>
-where
-    F: FnMut(&str) -> Result<Option<String>>,
-{
-    let Some(raw) = source(name)? else {
-        return Ok(default);
-    };
-    let value = raw
-        .parse::<u32>()
-        .with_context(|| format!("portal::config: invalid {name}={raw:?}"))?;
-    if value == 0 {
-        bail!("portal::config: {name} must be greater than zero: {raw:?}");
-    }
-    Ok(value)
 }
 
 fn read_usize<F>(source: &mut F, name: &str, default: usize, max: usize) -> Result<usize>

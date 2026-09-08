@@ -13,13 +13,11 @@ pub(crate) struct TcpTunnel {
     _lease: Option<FlowLease>,
     uplink: Carrier,
     downlink: Carrier,
-    _flow_permit: Option<OwnedSemaphorePermit>,
 }
 
 pub(crate) struct TcpTunnelGuard {
     _lanes: Vec<PhysicalLane>,
     _lease: Option<FlowLease>,
-    _flow_permit: Option<OwnedSemaphorePermit>,
 }
 
 impl TcpTunnel {
@@ -39,17 +37,8 @@ impl TcpTunnel {
             _lease,
             uplink: _,
             downlink: _,
-            _flow_permit,
         } = self;
-        (
-            reader,
-            writer,
-            TcpTunnelGuard {
-                _lanes,
-                _lease,
-                _flow_permit,
-            },
-        )
+        (reader, writer, TcpTunnelGuard { _lanes, _lease })
     }
 }
 
@@ -89,11 +78,6 @@ pub(crate) async fn open_tcp(
     target: &Target,
     hops: u8,
 ) -> std::result::Result<TcpTunnel, OpenFlowError> {
-    let flow_permit = client
-        .tcp_flow_permits
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| OpenFlowError::Setup(SetupResult::FlowLimit))?;
     let lease = client
         .flow_ids
         .allocate()
@@ -146,7 +130,6 @@ pub(crate) async fn open_tcp(
             _lease: Some(lease),
             uplink,
             downlink,
-            _flow_permit: Some(flow_permit),
         });
     }
 
@@ -196,7 +179,6 @@ pub(crate) async fn open_tcp(
         _lease: Some(lease),
         uplink,
         downlink,
-        _flow_permit: Some(flow_permit),
     })
 }
 

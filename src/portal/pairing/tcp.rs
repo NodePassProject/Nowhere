@@ -31,6 +31,7 @@ impl PairingRegistry {
         downlink_liveness: Option<BoxReader>,
     ) -> Result<Option<PairedTcp>, PairingError> {
         let session_id = session_id.into();
+        let quic_count = self.quic_flow_counter(session_id);
         if let Err(err) =
             self.validate_header_and_link(session_id, header, FlowKind::Tcp, target.as_ref(), &link)
         {
@@ -79,6 +80,7 @@ impl PairingRegistry {
                 metadata.clone(),
                 target.clone(),
                 link.quic_generation,
+                quic_count.clone(),
             ) {
                 Ok(claim) => claim,
                 Err(err) => {
@@ -97,7 +99,7 @@ impl PairingRegistry {
             let uplink = reader.expect("duplex TCP reader validated");
             let downlink = writer.take().expect("duplex TCP writer validated");
             let generations = link.quic_generation.into_iter().collect();
-            let lease = match self.activate_claim(key, claim_epoch, generations, None) {
+            let lease = match self.activate_claim(key, claim_epoch, generations) {
                 Ok(lease) => lease,
                 Err(err) => {
                     self.abandon_claim(key, claim_epoch);
@@ -193,6 +195,7 @@ impl PairingRegistry {
                 metadata.clone(),
                 target.clone(),
                 link.quic_generation,
+                quic_count.clone(),
             ) {
                 Ok(claim) => claim,
                 Err(error) => {
@@ -272,7 +275,7 @@ impl PairingRegistry {
                     .collect();
                 drop(links);
                 drop(guard);
-                let lease = match self.activate_claim(key, epoch, generations, None) {
+                let lease = match self.activate_claim(key, epoch, generations) {
                     Ok(lease) => lease,
                     Err(error) => {
                         self.abandon_claim(key, epoch);

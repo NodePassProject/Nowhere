@@ -53,20 +53,19 @@ the other family.
 
 ## Capacity
 
-The important memory bounds are the 1,024 concurrent TCP flows and 256 UDP flows
-per authenticated client session, the selected 4/8, 8/16, or 16/32 MiB
-per-stream/per-Mux receive
-windows, bounded reusable relay-buffer caches, and QUIC UDP
-queue/reassembly limits. UoT and QUIC DATAGRAM share the UDP flow limit. TLS
+Payload memory is controlled by the selected 4/8, 8/16, or 16/32 MiB
+per-stream/per-Mux receive windows, bounded reusable relay-buffer caches, and
+QUIC UDP queue/reassembly limits. Logical TCP, UDP, SOCKS, and pending-pair
+counts have no fixed application cap; metadata and sockets grow with concurrency.
+TLS
 shards originated with `mux=1` by Vector or a Portal `next` client adapt their
 pool to concurrent flow demand, stop at eight carriers per session
 across both directions, use lowest-occupancy placement, and
 close after 30 seconds fully idle. Frame queue slots do not bypass byte credit. Windows are granted as
 permits and payload is admitted incrementally.
 
-At a session flow limit, TCP setup returns a failure immediately. A SOCKS5 UDP
-packet whose logical route cannot be admitted receives no UDP response; the
-association remains available for existing routes.
+QUIC stream credit grows with live and pending QUIC flows plus setup headroom.
+Pairing and setup deadlines still reclaim incomplete requests.
 
 QUIC uses the shared `throughput` memory profile by default. Select `balanced`
 or `memory` when connection density matters more than a single flow's
@@ -75,7 +74,7 @@ bandwidth-delay product.
 ### TLS Shard placement
 
 An originating client shares one full-duplex TLS carrier pool across directions.
-Mux imposes no fixed stream count limit; session application admission is separate.
+Mux and application sessions impose no fixed logical-flow count limit.
 
 ```text
 new flow --> idle carrier? --> reuse

@@ -222,12 +222,15 @@ impl PortalSession {
                     FlowRole::Attach => (None, Some(Box::pin(send) as _)),
                     FlowRole::Duplex => (Some(Box::pin(recv) as _), Some(Box::pin(send) as _)),
                 };
-                match self
+                let paired = self
                     .portal
                     .pairing
                     .submit_tcp(self.session_key, header, target, link, reader, writer, None)
-                    .await
-                {
+                    .await;
+                self.conn.set_max_concurrent_bi_streams(
+                    self.portal.pairing.quic_stream_credit(self.session_key),
+                );
+                match paired {
                     Ok(Some(paired)) => {
                         let relay = super::relay::relay_paired_tcp(self.portal.clone(), paired);
                         if let Some(relay) = self.portal.relay_tasks.spawn_or_return(relay) {
@@ -278,12 +281,15 @@ impl PortalSession {
                         }
                     }
                 };
-                match self
+                let paired = self
                     .portal
                     .pairing
                     .submit_udp(self.session_key, header, target, link, half)
-                    .await
-                {
+                    .await;
+                self.conn.set_max_concurrent_bi_streams(
+                    self.portal.pairing.quic_stream_credit(self.session_key),
+                );
+                match paired {
                     Ok(Some(paired)) => {
                         let relay = super::relay::relay_paired_udp(self.portal.clone(), paired);
                         if let Some(relay) = self.portal.relay_tasks.spawn_or_return(relay) {

@@ -5,10 +5,10 @@
 
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use quinn::Connection;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{FlowKind, SessionId, Target};
@@ -165,7 +165,6 @@ pub(in crate::portal) struct PendingUdp {
     pub(in crate::portal) target: Option<Target>,
     pub(in crate::portal) uplink: Option<UdpUp>,
     pub(in crate::portal) downlink: Option<UdpDown>,
-    pub(in crate::portal) flow_permit: Option<Arc<OwnedSemaphorePermit>>,
     pub(in crate::portal) uplink_path: Option<LinkPath>,
     pub(in crate::portal) downlink_path: Option<LinkPath>,
     pub(in crate::portal) uplink_generation: Option<u64>,
@@ -199,20 +198,11 @@ pub(in crate::portal) struct PairedTcp {
     pub(in crate::portal) _flow_lease: FlowLease,
 }
 
+#[derive(Default)]
 pub(in crate::portal) struct LinkCounts {
     pub(in crate::portal) tcp: usize,
     pub(in crate::portal) udp: Option<ActiveQuic>,
-    pub(in crate::portal) udp_flow_budget: Arc<Semaphore>,
-}
-
-impl LinkCounts {
-    pub(in crate::portal) fn new(max_udp_flows: usize) -> Self {
-        Self {
-            tcp: 0,
-            udp: None,
-            udp_flow_budget: Arc::new(Semaphore::new(max_udp_flows)),
-        }
-    }
+    pub(in crate::portal) quic_flows: Arc<AtomicUsize>,
 }
 
 pub(in crate::portal) struct ActiveQuic {
@@ -221,6 +211,7 @@ pub(in crate::portal) struct ActiveQuic {
 }
 
 pub(in crate::portal) struct FlowClaim {
+    pub(in crate::portal) quic_count: Option<Arc<AtomicUsize>>,
     pub(in crate::portal) epoch: u64,
     pub(in crate::portal) metadata: Metadata,
     pub(in crate::portal) target: Option<Target>,
@@ -229,12 +220,19 @@ pub(in crate::portal) struct FlowClaim {
     pub(in crate::portal) quic_generations: Vec<u64>,
 }
 
+impl Drop for FlowClaim {
+    fn drop(&mut self) {
+        if let Some(count) = &self.quic_count {
+            count.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
 pub(in crate::portal) struct FlowLease {
     pub(in crate::portal) registry: std::sync::Weak<super::PairingRegistry>,
     pub(in crate::portal) key: FlowKey,
     pub(in crate::portal) epoch: u64,
     pub(in crate::portal) cancel: CancellationToken,
-    pub(in crate::portal) _udp_permit: Option<Arc<OwnedSemaphorePermit>>,
 }
 
 impl FlowLease {

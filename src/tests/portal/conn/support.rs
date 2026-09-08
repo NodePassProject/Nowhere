@@ -186,9 +186,6 @@ pub(super) async fn connect_test_quic_with_url_and_limits(
         let inner = Arc::get_mut(&mut portal.inner).unwrap();
         inner.udp_flow_limits = limits;
         inner.pairing = Arc::new(crate::portal::pairing::PairingRegistry::new(
-            inner.runtime.max_tcp_flows as usize,
-            limits.max_flows,
-            inner.runtime.max_pending_pairs,
             inner.runtime.flow_pair_timeout,
         ));
     }

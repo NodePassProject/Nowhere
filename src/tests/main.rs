@@ -33,11 +33,8 @@ fn help_text_documents_usage_and_configuration_surface() {
         "rate=<mbps>",
         "etar=<mbps>",
         "UDP-over-TCP (UoT)",
-        "NOW_MAX_TCP_FLOWS",
-        "NOW_MAX_UDP_FLOWS",
         "NOW_QUIC_UDP_QUEUE_BYTES",
         "NOW_TRANSPORT_MEMORY_PROFILE",
-        "NOW_MAX_PENDING_PAIRS",
         "NOW_FLOW_PAIR_TIMEOUT",
         "NOW_FLOW_SETUP_TIMEOUT",
         "NOW_MIX_FALLBACK_TIMEOUT",
@@ -53,7 +50,14 @@ fn help_text_documents_usage_and_configuration_surface() {
             "missing help text: {expected}"
         );
     }
-    for removed in ["alpn=<value>", "pool=<number>", "NOW_QUIC_MAX_UDP_FLOWS"] {
+    for removed in [
+        "NOW_MAX_TCP_FLOWS",
+        "NOW_MAX_UDP_FLOWS",
+        "NOW_MAX_PENDING_PAIRS",
+        "alpn=<value>",
+        "pool=<number>",
+        "NOW_QUIC_MAX_UDP_FLOWS",
+    ] {
         assert!(
             !HELP_TEXT.contains(removed),
             "removed help option: {removed}"

@@ -13,7 +13,6 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::timeout;
 
 use crate::common::socks::{

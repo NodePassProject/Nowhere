@@ -32,7 +32,6 @@ const DEFAULT_QUIC_UDP_QUEUE_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug)]
 struct UdpFlowLimits {
-    max_flows: usize,
     queue_bytes: usize,
 }
 

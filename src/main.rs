@@ -139,11 +139,8 @@ SOCKS5 inbound:
   SOCKS5 UDP fragmentation is not supported.
 
 Environment:
-  NOW_MAX_TCP_FLOWS         TCP flows per authenticated client session.
-  NOW_MAX_UDP_FLOWS         UDP flows per authenticated client session.
   NOW_QUIC_UDP_QUEUE_BYTES  Maximum queued/reassembling UDP bytes per QUIC connection.
   NOW_TRANSPORT_MEMORY_PROFILE   memory, balanced, or throughput. Default: throughput.
-  NOW_MAX_PENDING_PAIRS     Maximum pending logical-flow IDs per session.
   NOW_FLOW_PAIR_TIMEOUT     Timeout for completing a split logical flow.
   NOW_FLOW_SETUP_TIMEOUT    Timeout for waiting for a logical flow to become ready.
   NOW_MIX_FALLBACK_TIMEOUT  Primary Mix route preparation budget. Default: 1s.

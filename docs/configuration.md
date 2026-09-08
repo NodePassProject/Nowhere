@@ -289,11 +289,8 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `NOW_MAX_TCP_FLOWS` | `1024` | TCP flows per authenticated client session |
-| `NOW_MAX_UDP_FLOWS` | `256` | UDP flows per authenticated client session |
 | `NOW_QUIC_UDP_QUEUE_BYTES` | `4 MiB` | QUIC datagram and reassembly byte budget |
 | `NOW_TRANSPORT_MEMORY_PROFILE` | `throughput` | QUIC and TLS Mux profile: `memory`, `balanced`, or `throughput` |
-| `NOW_MAX_PENDING_PAIRS` | `1024` | Pending split-flow pairs per Portal session |
 | `NOW_FLOW_PAIR_TIMEOUT` | `15s` | Portal split-flow pairing deadline |
 | `NOW_FLOW_SETUP_TIMEOUT` | `20s` | Client wait for `SetupResult` |
 | `NOW_MIX_FALLBACK_TIMEOUT` | `1s` | Primary Mix route preparation budget before fallback |
@@ -317,11 +314,14 @@ window. Each flow has at most one DATA frame queued or being written, so a bulk
 writer cannot fill the shared queue. Receive queues are bounded by byte credit
 without blocking unrelated flows on per-flow frame counts. The application
 shares at most eight carriers across both directions and retires
-fully idle shards after 30 seconds. `NOW_MAX_TCP_FLOWS` is the hard
-per-session logical TCP limit shared by TLS and QUIC. `NOW_MAX_UDP_FLOWS` is the
-corresponding UDP limit shared by UoT and QUIC DATAGRAM. Excess flows fail
-without waiting for capacity. QUIC internally admits the sum of both limits as
-bidirectional streams; this derived capacity has no separate setting.
+fully idle shards after 30 seconds. There are no fixed application flow-count
+limits for TCP, UDP, SOCKS associations, or pending split pairs. The former
+`NOW_MAX_TCP_FLOWS`, `NOW_MAX_UDP_FLOWS`, and `NOW_MAX_PENDING_PAIRS` settings
+are removed and ignored. QUIC stream credit grows with live and pending QUIC
+flows, reserving setup headroom of at least 64 streams or 25% of that count.
+This avoids a fixed active-flow ceiling and excessive eager stream allocation.
+Byte budgets and setup, pairing, and idle deadlines still apply; per-flow
+metadata and target sockets grow with concurrency.
 
 Portal and Vector use the same QUIC profile regardless of the client Mux setting.
 The stream/connection/send windows are respectively 4/8/8 MiB for `memory`,

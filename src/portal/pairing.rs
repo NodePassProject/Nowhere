@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{Mutex, OwnedSemaphorePermit};
+use tokio::sync::Mutex;
 
 use crate::protocol::{
     Carrier, FlowErrorCode, FlowHeader, FlowKind, FlowResult, FlowRole, Target, write_flow_result,
@@ -74,19 +74,14 @@ pub(super) struct PairingRegistry {
     accepting: AtomicBool,
     pub(super) next_quic_generation: AtomicU64,
     next_epoch: AtomicU64,
-    pub(super) max_pending: usize,
     pub(super) timeout: Duration,
-    pub(super) max_tcp_flows: usize,
-    pub(super) max_udp_flows: usize,
 }
 
+// Bounded failure-history cache, independent of live/pending flow admission.
+const MAX_REJECTION_TOMBSTONES: usize = 1024;
+
 impl PairingRegistry {
-    pub(super) fn new(
-        max_tcp_flows: usize,
-        max_udp_flows: usize,
-        max_pending: usize,
-        timeout: Duration,
-    ) -> Self {
+    pub(super) fn new(timeout: Duration) -> Self {
         Self {
             tcp: Mutex::new(HashMap::new()),
             udp: Mutex::new(HashMap::new()),
@@ -96,10 +91,7 @@ impl PairingRegistry {
             accepting: AtomicBool::new(true),
             next_quic_generation: AtomicU64::new(1),
             next_epoch: AtomicU64::new(1),
-            max_pending,
             timeout,
-            max_tcp_flows,
-            max_udp_flows,
         }
     }
 
@@ -188,6 +180,7 @@ impl PairingRegistry {
         metadata: Metadata,
         target: Option<Target>,
         quic_generation: Option<u64>,
+        quic_count: Option<Arc<std::sync::atomic::AtomicUsize>>,
     ) -> Result<(u64, bool), PairingError> {
         let mut claims = self.claims.lock().expect("flow claim registry poisoned");
         // The claims lock is the drain/admission linearization point. Once
@@ -224,35 +217,16 @@ impl PairingRegistry {
             }
             return Ok((claim.epoch, false));
         }
-        if metadata.kind == FlowKind::Tcp
-            && claims
-                .iter()
-                .filter(|(flow, claim)| {
-                    flow.session_id == key.session_id && claim.metadata.kind == FlowKind::Tcp
-                })
-                .count()
-                >= self.max_tcp_flows
-        {
-            return Err(PairingError::new(
-                FlowErrorCode::FlowLimit,
-                "portal::pairing: TCP flow limit reached",
-            ));
-        }
-        if claims
-            .iter()
-            .filter(|(flow, claim)| flow.session_id == key.session_id && !claim.active)
-            .count()
-            >= self.max_pending
-        {
-            return Err(PairingError::new(
-                FlowErrorCode::FlowLimit,
-                "portal::pairing: pending flow limit reached",
-            ));
-        }
         let epoch = self.next_epoch.fetch_add(1, Ordering::Relaxed);
+        let quic_count = quic_count
+            .filter(|_| metadata.uplink == Carrier::Quic || metadata.downlink == Carrier::Quic);
+        if let Some(count) = &quic_count {
+            count.fetch_add(1, Ordering::Relaxed);
+        }
         claims.insert(
             key,
             FlowClaim {
+                quic_count,
                 epoch,
                 metadata,
                 target,
@@ -262,6 +236,31 @@ impl PairingRegistry {
             },
         );
         Ok((epoch, true))
+    }
+
+    fn quic_flow_counter(
+        &self,
+        session_id: SessionKey,
+    ) -> Option<Arc<std::sync::atomic::AtomicUsize>> {
+        self.links
+            .lock()
+            .expect("link registry poisoned")
+            .get(&session_id)
+            .map(|counts| counts.quic_flows.clone())
+    }
+
+    pub(super) fn quic_stream_credit(&self, session_id: SessionKey) -> quinn::VarInt {
+        // Quinn preallocates stream state. Keep a sliding headroom for setup,
+        // instead of advertising a huge fixed count or capping active flows.
+        let live = self
+            .quic_flow_counter(session_id)
+            .map_or(0, |count| count.load(Ordering::Relaxed));
+        // Quinn batches MAX_STREAMS updates at 1/8 of its window. Headroom
+        // must grow too, otherwise a fixed reserve eventually stalls updates.
+        quinn::VarInt::from_u32(
+            live.saturating_add((live / 4).max(64))
+                .min(u32::MAX as usize) as u32,
+        )
     }
 
     fn refresh_claim(&self, key: FlowKey) -> Result<u64, PairingError> {
@@ -292,7 +291,6 @@ impl PairingRegistry {
         key: FlowKey,
         epoch: u64,
         quic_generations: Vec<u64>,
-        udp_permit: Option<Arc<OwnedSemaphorePermit>>,
     ) -> Result<FlowLease, PairingError> {
         // `links -> claims` is the linearization barrier shared with QUIC
         // replacement.  A generation cannot become active after it has been
@@ -339,31 +337,6 @@ impl PairingRegistry {
             key,
             epoch,
             cancel,
-            _udp_permit: udp_permit,
-        })
-    }
-
-    fn acquire_udp_permit(
-        &self,
-        session_id: SessionKey,
-    ) -> Result<Arc<OwnedSemaphorePermit>, PairingError> {
-        let budget = self
-            .links
-            .lock()
-            .expect("link registry poisoned")
-            .get(&session_id)
-            .map(|counts| counts.udp_flow_budget.clone())
-            .ok_or_else(|| {
-                PairingError::new(
-                    FlowErrorCode::SessionReplaced,
-                    "portal::pairing: missing authenticated session",
-                )
-            })?;
-        budget.try_acquire_owned().map(Arc::new).map_err(|_| {
-            PairingError::new(
-                FlowErrorCode::FlowLimit,
-                "portal::pairing: UDP flow limit reached",
-            )
         })
     }
 
@@ -414,7 +387,7 @@ impl PairingRegistry {
                 let now = Instant::now();
                 rejections.retain(|_, rejection| rejection.expires_at > now);
                 if !rejections.contains_key(&key)
-                    && rejections.len() >= self.max_pending
+                    && rejections.len() >= MAX_REJECTION_TOMBSTONES
                     && let Some(oldest) = rejections
                         .iter()
                         .min_by_key(|(_, rejection)| rejection.expires_at)

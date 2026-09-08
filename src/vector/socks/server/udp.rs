@@ -54,9 +54,7 @@ pub(super) async fn run_udp_association(
     let client_endpoint = Arc::new(StdMutex::new(
         requested_port.map(|port| SocketAddr::new(control_peer.ip(), port)),
     ));
-    let max_flows = crate::common::max_udp_flows();
-    let mut flows: HashMap<SocksAddress, mpsc::Sender<QueuedLocalPacket>> =
-        HashMap::with_capacity(max_flows.min(64));
+    let mut flows: HashMap<SocksAddress, mpsc::Sender<QueuedLocalPacket>> = HashMap::new();
     let mut tasks = JoinSet::new();
     let mut packet = vec![0u8; SOCKS_UDP_PACKET_MAX];
     let mut control_byte = [0u8; 1];
@@ -105,9 +103,6 @@ pub(super) async fn run_udp_association(
                         Err(TrySendError::Closed(returned)) => payload = returned,
                     }
                     flows.remove(&target);
-                }
-                if flows.len() >= max_flows {
-                    continue;
                 }
                 let (sender, receiver) = mpsc::channel(64);
                 if sender.try_send(payload).is_err() {

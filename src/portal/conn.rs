@@ -121,9 +121,11 @@ async fn handle_connection(
         }
     };
     conn.set_receive_window(VarInt::from_u32(flow_control.connection_receive_window));
-    conn.set_max_concurrent_bi_streams(VarInt::from_u32(
-        portal.runtime.quic_bidi_stream_capacity(),
-    ));
+    conn.set_max_concurrent_bi_streams(
+        portal
+            .pairing
+            .quic_stream_credit(authenticated.session.session_key),
+    );
     drop(admission);
     let session = authenticated.session;
     let link_replaced = CancellationToken::new();

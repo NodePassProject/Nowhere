@@ -78,22 +78,9 @@ pub(in crate::vector) async fn serve_listener(
             _ = shutdown.cancelled() => break,
             accepted = listener.accept() => match accepted {
                 Ok((stream, peer)) => {
-                    let Ok(admission) = vector.socks_admission.clone().try_acquire_owned() else {
-                        vector.telemetry.emit_runtime(
-                            RuntimeEvent::new(
-                                RuntimeLevel::Warn,
-                                RuntimeKind::Listener,
-                                "SOCKS client limit exceeded",
-                            )
-                            .with_client(peer.to_string()),
-                        );
-                        drop(stream);
-                        continue;
-                    };
                     let vector = vector.clone();
                     let shutdown = shutdown.clone();
                     clients.spawn(async move {
-                        let _admission = admission;
                         if let Err(error) = handle_client(vector.clone(), stream, peer, shutdown).await {
                             vector.logger.debug(format_args!(
                                 "vector::socks::handle_client: {peer}: {error}"

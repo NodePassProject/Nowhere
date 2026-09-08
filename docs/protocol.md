@@ -289,8 +289,7 @@ Receive queues use byte-credit admission rather than blocking the carrier reader
 on a per-flow frame count. Every DATA frame consumes at least one KiB of credit,
 bounding queued payload and DATA metadata across the carrier. Stream and lifecycle
 metadata still grow with live/pending streams; no fixed stream limit does not mean
-constant process memory. Authentication and application-level admission policies
-remain separate from Mux placement. A fully idle carrier closes after 30
+constant process memory. Authentication remains separate from Mux placement. A fully idle carrier closes after 30
 seconds. Portal applies the same timeout to an authenticated Mux carrier with
 no active streams. Sharding is runtime placement and does not add wire fields.
 
@@ -427,7 +426,7 @@ SetupResult - 1 byte
 | `0x01` | INVALID_REQUEST | malformed or carrier-inconsistent setup |
 | `0x02` | METADATA_CONFLICT | OPEN and ATTACH metadata conflict |
 | `0x03` | PAIR_TIMEOUT | the matching split lane did not arrive |
-| `0x04` | FLOW_LIMIT | admission, session flow, or forwarding limit reached |
+| `0x04` | FLOW_LIMIT | admission or forwarding limit reached |
 | `0x05` | DIAL_FAILED | target or upstream connection failed |
 | `0x06` | SESSION_REPLACED | a newer authenticated carrier replaced this session state |
 | `0x07` | INTERNAL_ERROR | local processing failure |
@@ -543,14 +542,14 @@ ATTACH.
 
 ## 11. Runtime limits and failure scope
 
-One authenticated client session admits 1,024 concurrent logical TCP flows and
-256 concurrent logical UDP flows by default. Pending flows count toward the
-same limits. A full-duplex flow counts once regardless of its carrier
-combination. Admission at the limit returns FLOW_LIMIT without waiting.
+Application sessions impose no fixed TCP, UDP, or pending-pair count limit.
+Flow IDs remain unique within their wire identifier space. Byte flow control,
+queue budgets, and pairing/setup timeouts remain enforced.
 
-The QUIC bidirectional-stream ceiling is derived from both flow limits: 1,280
-by default. A QUIC TCP flow owns one reliable stream. A QUIC UDP flow owns one
-reliable control stream plus its DATAGRAM route.
+QUIC bidirectional-stream credit grows with live and pending QUIC flows, with
+setup headroom of max(64, live / 4). A QUIC TCP flow owns one reliable stream;
+a QUIC UDP flow owns one reliable control stream plus its DATAGRAM route.
+This is sliding transport credit, not a fixed application concurrency ceiling.
 
 Failure scope follows the physical carrier:
 

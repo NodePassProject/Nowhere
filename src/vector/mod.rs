@@ -29,8 +29,8 @@ use self::session::{ClientSignals, QuicManager, TlsManager};
 use self::tls::ClientTls;
 use crate::common::{
     LatencyTracker, LifeMode, LifeReason, LifeState, Lifecycle, Logger, ShutdownSignals,
-    max_tcp_flows, max_udp_flows, rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size,
-    telemetry_interval, udp_data_buf_size,
+    rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size, telemetry_interval,
+    udp_data_buf_size,
 };
 use crate::protocol::{Credentials, SESSION_ID_LEN};
 use crate::telemetry::TelemetryServer;
@@ -53,7 +53,6 @@ pub(super) struct VectorInner {
     rate_limiter: Option<Arc<RateLimiter>>,
     client: Arc<PortalClient>,
     local_udp_budget: Arc<Semaphore>,
-    socks_admission: Arc<Semaphore>,
     shutdown: CancellationToken,
 }
 
@@ -66,8 +65,6 @@ pub(crate) struct PortalClient {
     account_stats: bool,
     latency: Arc<LatencyTracker>,
     flow_ids: Arc<FlowIdAllocator>,
-    tcp_flow_permits: Arc<Semaphore>,
-    udp_flow_permits: Arc<Semaphore>,
     tls_manager: Arc<TlsManager>,
     quic: Arc<QuicManager>,
     route_seed: u64,
@@ -129,17 +126,13 @@ impl PortalClient {
             signals,
             shutdown.clone(),
         );
-        let tcp_limit = max_tcp_flows().max(1) as usize;
-        let udp_limit = max_udp_flows();
         Ok(Arc::new(Self {
             config,
             telemetry,
             stats,
             account_stats,
             latency,
-            flow_ids: FlowIdAllocator::new(tcp_limit.saturating_add(udp_limit)),
-            tcp_flow_permits: Arc::new(Semaphore::new(tcp_limit)),
-            udp_flow_permits: Arc::new(Semaphore::new(udp_limit)),
+            flow_ids: FlowIdAllocator::new(),
             tls_manager,
             quic,
             route_seed,
@@ -223,8 +216,6 @@ impl Vector {
         );
         let stats = Arc::new(Stats::default());
         let shutdown = CancellationToken::new();
-        let tcp_limit = max_tcp_flows().max(1) as usize;
-        let udp_limit = max_udp_flows();
         let read_bps = rate_limit_bytes_per_second(config.rate_mbps) as i64;
         let write_bps = rate_limit_bytes_per_second(config.etar_mbps) as i64;
         let rate_limiter = RateLimiter::new(read_bps, write_bps).map(Arc::new);
@@ -250,7 +241,6 @@ impl Vector {
                 rate_limiter,
                 client,
                 local_udp_budget: Arc::new(Semaphore::new(udp_queue_bytes)),
-                socks_admission: Arc::new(Semaphore::new(tcp_limit.saturating_add(udp_limit))),
                 shutdown,
             }),
         })

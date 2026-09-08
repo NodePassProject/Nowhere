@@ -18,12 +18,6 @@ fn parse(values: &[(&str, &str)]) -> anyhow::Result<PortalRuntimeConfig> {
 #[test]
 fn absent_values_use_the_existing_defaults() {
     let config = parse(&[]).unwrap();
-    assert_eq!(config.max_tcp_flows, DEFAULT_MAX_TCP_FLOWS);
-    assert_eq!(config.max_udp_flows, DEFAULT_MAX_UDP_FLOWS);
-    assert_eq!(
-        config.quic_bidi_stream_capacity(),
-        DEFAULT_MAX_TCP_FLOWS + DEFAULT_MAX_UDP_FLOWS as u32
-    );
     assert_eq!(config.udp_queue_bytes, DEFAULT_QUIC_UDP_QUEUE_BYTES);
     assert_eq!(config.tcp_data_buf_size, DEFAULT_TCP_DATA_BUF_SIZE);
     assert_eq!(config.udp_data_buf_size, DEFAULT_UDP_DATA_BUF_SIZE);
@@ -39,19 +33,15 @@ fn absent_values_use_the_existing_defaults() {
     );
     assert_eq!(config.shutdown_timeout, DEFAULT_SHUTDOWN_TIMEOUT);
     assert_eq!(config.reload_interval, DEFAULT_RELOAD_INTERVAL);
-    assert_eq!(config.max_pending_pairs, DEFAULT_MAX_PENDING_PAIRS);
     assert_eq!(config.flow_pair_timeout, DEFAULT_FLOW_PAIR_TIMEOUT);
 }
 
 #[test]
 fn all_integer_limits_reject_zero_instead_of_falling_back() {
     for name in [
-        "NOW_MAX_TCP_FLOWS",
-        "NOW_MAX_UDP_FLOWS",
         "NOW_QUIC_UDP_QUEUE_BYTES",
         "NOW_TCP_DATA_BUF_SIZE",
         "NOW_UDP_DATA_BUF_SIZE",
-        "NOW_MAX_PENDING_PAIRS",
     ] {
         let error = parse(&[(name, "0")]).unwrap_err().to_string();
         assert!(error.contains(name), "unexpected error for {name}: {error}");
@@ -60,8 +50,10 @@ fn all_integer_limits_reject_zero_instead_of_falling_back() {
 
 #[test]
 fn removed_quic_specific_udp_limit_is_not_an_input() {
-    let config = parse(&[("NOW_QUIC_MAX_UDP_FLOWS", "13")]).unwrap();
-    assert_eq!(config.max_udp_flows, DEFAULT_MAX_UDP_FLOWS);
+    assert_eq!(
+        parse(&[("NOW_QUIC_MAX_UDP_FLOWS", "13")]).unwrap(),
+        parse(&[]).unwrap()
+    );
 }
 
 #[test]
@@ -88,8 +80,6 @@ fn all_durations_reject_zero_and_invalid_syntax() {
 #[test]
 fn values_are_parsed_once_into_typed_fields() {
     let config = parse(&[
-        ("NOW_MAX_TCP_FLOWS", "77"),
-        ("NOW_MAX_UDP_FLOWS", "13"),
         ("NOW_QUIC_UDP_QUEUE_BYTES", "8192"),
         ("NOW_TCP_DATA_BUF_SIZE", "4096"),
         ("NOW_UDP_DATA_BUF_SIZE", "8192"),
@@ -102,14 +92,10 @@ fn values_are_parsed_once_into_typed_fields() {
         ("NOW_TELEMETRY_INTERVAL", "1700ms"),
         ("NOW_SHUTDOWN_TIMEOUT", "1800ms"),
         ("NOW_RELOAD_INTERVAL", "1900ms"),
-        ("NOW_MAX_PENDING_PAIRS", "19"),
         ("NOW_FLOW_PAIR_TIMEOUT", "2s"),
     ])
     .unwrap();
 
-    assert_eq!(config.max_tcp_flows, 77);
-    assert_eq!(config.max_udp_flows, 13);
-    assert_eq!(config.quic_bidi_stream_capacity(), 90);
     assert_eq!(config.udp_queue_bytes, 8192);
     assert_eq!(config.tcp_data_buf_size, 4096);
     assert_eq!(config.udp_data_buf_size, 8192);
@@ -122,7 +108,6 @@ fn values_are_parsed_once_into_typed_fields() {
     assert_eq!(config.telemetry_interval, Duration::from_millis(1700));
     assert_eq!(config.shutdown_timeout, Duration::from_millis(1800));
     assert_eq!(config.reload_interval, Duration::from_millis(1900));
-    assert_eq!(config.max_pending_pairs, 19);
     assert_eq!(config.flow_pair_timeout, Duration::from_secs(2));
 }
 
@@ -146,14 +131,19 @@ fn telemetry_interval_enforces_dashboard_bounds() {
 
 #[test]
 fn overflow_is_a_startup_error() {
-    assert!(parse(&[("NOW_MAX_TCP_FLOWS", "4294967296")]).is_err());
-    assert!(
-        parse(&[
-            ("NOW_MAX_TCP_FLOWS", "4294967295"),
-            ("NOW_MAX_UDP_FLOWS", "1"),
-        ])
-        .is_err()
-    );
     assert!(parse(&[("NOW_TCP_DATA_BUF_SIZE", "999999999999999999999999")]).is_err());
     assert!(parse(&[("NOW_HANDSHAKE_TIMEOUT", "999999999999999999999999h")]).is_err());
+}
+
+#[test]
+fn removed_application_count_limits_are_ignored() {
+    for name in [
+        "NOW_MAX_TCP_FLOWS",
+        "NOW_MAX_UDP_FLOWS",
+        "NOW_MAX_PENDING_PAIRS",
+    ] {
+        for value in ["0", "1", "invalid"] {
+            assert_eq!(parse(&[(name, value)]).unwrap(), parse(&[]).unwrap());
+        }
+    }
 }

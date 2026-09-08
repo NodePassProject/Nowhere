@@ -4,92 +4,44 @@
 use super::*;
 
 #[tokio::test]
-async fn tcp_flow_limit_is_scoped_to_each_authenticated_session() {
-    let mut registry = registry(8, Duration::from_secs(30));
-    Arc::get_mut(&mut registry).unwrap().max_tcp_flows = 1;
-    let stats = Arc::new(Stats::default());
-    let first_session = [0x31; SESSION_ID_LEN];
-    let second_session = [0x32; SESSION_ID_LEN];
-    let _first_guard = registry.register_tcp_link(first_session, stats.clone());
-    let _second_guard = registry.register_tcp_link(second_session, stats);
-
-    let (first_io, _) = tokio::io::duplex(64);
-    let (first_down, _) = tokio::io::duplex(64);
-    let first = registry
-        .submit_tcp(
-            first_session,
-            header(
-                FlowRole::Duplex,
-                1,
-                FlowKind::Tcp,
-                Carrier::TlsTcp,
-                Carrier::TlsTcp,
-            ),
-            Some(target("target.test:443")),
-            tcp_half("first"),
-            Some(Box::pin(first_io)),
-            Some(Box::pin(first_down)),
-            None,
-        )
-        .await
-        .unwrap()
-        .unwrap();
-
-    let (excess_io, _) = tokio::io::duplex(64);
-    let (excess_down, mut excess_peer) = tokio::io::duplex(64);
-    let error = registry
-        .submit_tcp(
-            first_session,
-            header(
-                FlowRole::Duplex,
-                2,
-                FlowKind::Tcp,
-                Carrier::TlsTcp,
-                Carrier::TlsTcp,
-            ),
-            Some(target("target.test:443")),
-            tcp_half("excess"),
-            Some(Box::pin(excess_io)),
-            Some(Box::pin(excess_down)),
-            None,
-        )
-        .await
-        .unwrap_pairing_error();
-    assert_eq!(error.code(), FlowErrorCode::FlowLimit);
-    assert_eq!(
-        read_flow_result(&mut excess_peer).await.unwrap(),
-        FlowResult::Reject(FlowErrorCode::FlowLimit)
-    );
-
-    let (other_io, _) = tokio::io::duplex(64);
-    let (other_down, _) = tokio::io::duplex(64);
-    let other = registry
-        .submit_tcp(
-            second_session,
-            header(
-                FlowRole::Duplex,
-                1,
-                FlowKind::Tcp,
-                Carrier::TlsTcp,
-                Carrier::TlsTcp,
-            ),
-            Some(target("target.test:443")),
-            tcp_half("other"),
-            Some(Box::pin(other_io)),
-            Some(Box::pin(other_down)),
-            None,
-        )
-        .await
-        .unwrap();
-    assert!(other.is_some());
-
-    drop(first);
-    drop(other);
+async fn tcp_sessions_admit_more_than_the_former_flow_limit() {
+    let registry = registry(Duration::from_secs(30));
+    let session = [0x31; SESSION_ID_LEN];
+    let _guard = registry.register_tcp_link(session, Arc::new(Stats::default()));
+    let mut held = Vec::new();
+    for id in 1..=2048 {
+        let (up, _) = tokio::io::duplex(64);
+        let (down, _) = tokio::io::duplex(64);
+        held.push(
+            registry
+                .submit_tcp(
+                    session,
+                    header(
+                        FlowRole::Duplex,
+                        id,
+                        FlowKind::Tcp,
+                        Carrier::TlsTcp,
+                        Carrier::TlsTcp,
+                    ),
+                    Some(target("target.test:443")),
+                    tcp_half("live"),
+                    Some(Box::pin(up)),
+                    Some(Box::pin(down)),
+                    None,
+                )
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    assert_eq!(registry.claims.lock().unwrap().len(), 2048);
+    drop(held);
+    assert!(registry.claims.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn drain_rejects_pending_and_new_flows_but_preserves_active_claims() {
-    let registry = registry(8, Duration::from_secs(30));
+    let registry = registry(Duration::from_secs(30));
     let stats = Arc::new(Stats::default());
     let session_id = [0x5a; SESSION_ID_LEN];
     let _tcp_guard = registry.register_tcp_link(session_id, stats);
@@ -201,7 +153,7 @@ async fn drain_rejects_pending_and_new_flows_but_preserves_active_claims() {
 
 #[tokio::test]
 async fn cancel_all_cancels_active_flows_without_waiting_for_pending_writer() {
-    let registry = registry(8, Duration::from_secs(60));
+    let registry = registry(Duration::from_secs(60));
     let stats = Arc::new(Stats::default());
     let session_id = [5; SESSION_ID_LEN];
     let tcp_guard = registry.register_tcp_link(session_id, stats.clone());
@@ -284,4 +236,42 @@ async fn cancel_all_cancels_active_flows_without_waiting_for_pending_writer() {
 
     drop(quic_guard);
     drop(tcp_guard);
+}
+
+#[tokio::test]
+async fn pending_pairs_exceed_former_limit_and_release_quic_credit_on_drain() {
+    let registry = registry(Duration::from_secs(30));
+    let session = [0x32; SESSION_ID_LEN];
+    let _guard = registry.register_tcp_link(session, Arc::new(Stats::default()));
+    let mut peers = Vec::new();
+    for id in 1..=2048 {
+        let (up, peer) = tokio::io::duplex(64);
+        peers.push(peer);
+        assert!(
+            registry
+                .submit_tcp(
+                    session,
+                    header(
+                        FlowRole::Open,
+                        id,
+                        FlowKind::Tcp,
+                        Carrier::TlsTcp,
+                        Carrier::Quic
+                    ),
+                    Some(target("target.test:443")),
+                    tcp_half("pending"),
+                    Some(Box::pin(up)),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert_eq!(registry.claims.lock().unwrap().len(), 2048);
+    assert_eq!(registry.quic_stream_credit(session).into_inner(), 2560);
+    registry.begin_drain().await;
+    assert!(registry.claims.lock().unwrap().is_empty());
+    assert_eq!(registry.quic_stream_credit(session).into_inner(), 64);
 }

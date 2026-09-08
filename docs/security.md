@@ -78,38 +78,21 @@ and closes a fully idle carrier after 30 seconds. Stream and pending lifecycle
 metadata remain proportional to admitted streams; byte credit bounds DATA, not
 arbitrary OPEN traffic. One
 authenticated inbound Mux carrier is subject to the same fully idle timeout.
-One authenticated client session admits at most 1,024 concurrent logical TCP
-flows and 256 logical UDP flows across all of its carriers. UoT and QUIC
-DATAGRAM flows share the UDP limit.
+Authenticated sessions have no fixed logical-flow count limit. Stream metadata,
+pending pairs, and target sockets grow with concurrency; byte windows do not
+bound their total memory use.
 Per-stream and connection credit plus bounded channel admission limit how much
 one stream can occupy. The finite frame queue has 512 slots, but
 payload admission is capped by the selected connection window; empty
-SYN/FIN/WINDOW frames cannot turn those slots into
+OPEN/CLOSE/WINDOW frames cannot turn those slots into
 retained application payload. These are credit ceilings rather than eagerly
 allocated payload buffers.
 
-```text
-authenticated client session
-    |
-    +-- TCP budget: 1,024 active flows
-    |     |
-    |     +-- dedicated TLS lane
-    |     +-- Mux stream --> adaptive TLS Shard
-    |     +-- QUIC reliable stream
-    |
-    +-- UDP budget: 256 active flows
-          |
-          +-- UoT stream --> dedicated TLS lane or Mux Shard
-          +-- QUIC control stream + DATAGRAM route
-```
-
-The TCP and UDP budgets are per authenticated session rather than process-wide.
-Multiple sessions using the same shared key receive independent flow budgets.
-All Shards from one session share its TCP or UDP admission budget. The shared
-key is a credential, not a stable user identity, so Portal does not aggregate
-these limits across every client that knows the same key. Operators control
-aggregate exposure through key distribution, host resource limits, and
-network-level admission policy.
+TCP, UoT, and QUIC flows all follow the same policy: byte budgets and lifecycle
+timeouts remain, without fixed application flow-count admission. QUIC expands
+stream credit with actual demand instead of preallocating a huge stream ceiling.
+Operators control aggregate exposure through key distribution, host resource
+limits, and network-level admission policy.
 
 Relay scratch buffers use bounded reuse caches: each process retains at most 64
 TCP buffers and 32 UDP buffers. A short-lived concurrency spike therefore

@@ -2,11 +2,12 @@ use super::*;
 
 #[test]
 fn allocator_never_reuses_an_active_id() {
-    let allocator = FlowIdAllocator::new(2);
+    let allocator = FlowIdAllocator::new();
     let first = allocator.allocate().unwrap();
     let second = allocator.allocate().unwrap();
     assert_ne!(first.id(), second.id());
-    assert!(allocator.allocate().is_err());
+    let extra: Vec<_> = (0..4096).map(|_| allocator.allocate().unwrap()).collect();
+    assert_eq!(extra.len(), 4096);
     let released = first.id();
     drop(first);
     let third = allocator.allocate().unwrap();
@@ -16,7 +17,7 @@ fn allocator_never_reuses_an_active_id() {
 
 #[test]
 fn allocator_skips_zero_at_wrap() {
-    let allocator = FlowIdAllocator::new(2);
+    let allocator = FlowIdAllocator::new();
     allocator.next.store(u32::MAX, Ordering::Relaxed);
     let max = allocator.allocate().unwrap();
     let wrapped = allocator.allocate().unwrap();

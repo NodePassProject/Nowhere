@@ -136,7 +136,6 @@ impl Portal {
         let write_bps = rate_limit_bytes_per_second(etar_limit) as i64;
         let rate_limiter = RateLimiter::new(read_bps, write_bps).map(Arc::new);
         let udp_flow_limits = UdpFlowLimits {
-            max_flows: runtime.max_udp_flows,
             queue_bytes: runtime.udp_queue_bytes,
         };
         let socks_endpoint = socks
@@ -201,9 +200,6 @@ impl Portal {
                 quic_server_config,
                 unauthenticated_admission: Arc::new(admission::UnauthenticatedAdmission::new()),
                 pairing: Arc::new(super::pairing::PairingRegistry::new(
-                    runtime.max_tcp_flows as usize,
-                    udp_flow_limits.max_flows,
-                    runtime.max_pending_pairs,
                     runtime.flow_pair_timeout,
                 )),
                 ready_gate: super::tasks::ReadyGate::default(),

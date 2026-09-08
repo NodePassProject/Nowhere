@@ -137,9 +137,7 @@ impl PairingRegistry {
     ) -> LinkGuard {
         let session_id = session_id.into();
         let mut links = self.links.lock().expect("link registry poisoned");
-        let counts = links
-            .entry(session_id)
-            .or_insert_with(|| super::state::LinkCounts::new(self.max_udp_flows));
+        let counts = links.entry(session_id).or_default();
         counts.tcp += 1;
         stats.link_tcp.fetch_add(1, Ordering::Relaxed);
         drop(links);
@@ -163,9 +161,7 @@ impl PairingRegistry {
         let generation = self.next_quic_generation.fetch_add(1, Ordering::Relaxed);
         let previous = {
             let mut links = self.links.lock().expect("link registry poisoned");
-            let counts = links
-                .entry(session_id)
-                .or_insert_with(|| super::state::LinkCounts::new(self.max_udp_flows));
+            let counts = links.entry(session_id).or_default();
             let previous = counts.udp.replace(ActiveQuic {
                 generation,
                 replacement,
