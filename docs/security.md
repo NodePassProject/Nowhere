@@ -89,7 +89,7 @@ retained application payload. These are credit ceilings rather than eagerly
 allocated payload buffers.
 
 TCP, UoT, and QUIC flows all follow the same policy: byte budgets and lifecycle
-timeouts remain, without fixed application flow-count admission. QUIC expands
+timeouts apply without fixed application flow-count admission. QUIC expands
 stream credit with actual demand instead of preallocating a huge stream ceiling.
 Operators control aggregate exposure through key distribution, host resource
 limits, and network-level admission policy.

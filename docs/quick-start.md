@@ -124,8 +124,7 @@ automatically:
 nowhere 'vector://secret@127.0.0.1:2000?up=tcp&down=tcp&mux=1&socks=127.0.0.1:1080'
 ```
 
-Nowhere 2 requires the fixed `nw2` ALPN at both ends and does not interoperate
-with the V1 wire protocol. There is no configurable ALPN parameter.
+Both peers use the fixed `nw2` ALPN. The ALPN is not configurable.
 `udp/udp&mux=1` is canonicalized to `mux=0` because no TLS lane can use it.
 
 ## 3. Use SOCKS5

@@ -1,21 +1,21 @@
 # Documentation
 
-The documentation has one source of truth for each concern:
+Each document owns one part of the Nowhere interface.
 
 | Need | Document |
 |---|---|
-| Run a local Portal and Vector | [Quick start](quick-start.md) |
-| Choose and operate a supported platform | [Platforms](platforms.md) |
-| Understand URL and environment options | [Configuration](configuration.md) |
-| Implement or inspect the wire format | [Protocol](protocol.md) |
-| Deploy and observe the processes | [Operations](operations.md) |
-| Review authentication and memory bounds | [Security](security.md) |
-| Understand version negotiation and peer interoperability | [Interoperability](compatibility.md) |
-| Implement another client or integration | [Integrations](integrations.md) |
+| Start a local Portal and Vector | [Quick start](quick-start.md) |
+| Configure URLs and runtime behavior | [Configuration](configuration.md) |
+| Deploy and observe processes | [Operations](operations.md) |
+| Choose a supported system | [Platforms](platforms.md) |
+| Review authentication and resource bounds | [Security](security.md) |
+| Understand peer and carrier contracts | [Interoperability](interoperability.md) |
+| Implement the wire format | [Protocol](protocol.md) |
+| Connect another client or service | [Integrations](integrations.md) |
 
-`configuration.md` is authoritative for command URLs and runtime settings.
-`protocol.md` is normative for bytes exchanged between peers. Portal and
-Vector share one internal bounded TLS Mux engine.
+[Configuration](configuration.md) defines command URLs and runtime settings.
+[Protocol](protocol.md) defines bytes exchanged between peers. The other guides
+describe how those interfaces are used and operated.
 
 Portal and Vector have the same transport behavior on Linux, macOS, and
 Windows. Platform-specific packaging, process control, filesystem paths, and

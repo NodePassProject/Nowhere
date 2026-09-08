@@ -21,9 +21,9 @@ otherwise.
 
 ## 1. Carrier model
 
-TLS/TCP and QUIC use TLS 1.3 with the sole ALPN `nw2`. A client that does not
-offer `nw2`, or a handshake that does not select exactly `nw2`, is rejected
-before Nowhere authentication. Nowhere 2 does not implement the V1 wire format.
+TLS/TCP and QUIC use TLS 1.3 with the sole ALPN `nw2`. A client offers `nw2`,
+and the server requires the handshake to select exactly `nw2` before Nowhere
+authentication.
 
 ### Command endpoint mapping
 
@@ -288,7 +288,7 @@ number of carriers for many idle logical streams.
 Receive queues use byte-credit admission rather than blocking the carrier reader
 on a per-flow frame count. Every DATA frame consumes at least one KiB of credit,
 bounding queued payload and DATA metadata across the carrier. Stream and lifecycle
-metadata still grow with live/pending streams; no fixed stream limit does not mean
+metadata grow with live/pending streams; no fixed stream limit does not mean
 constant process memory. Authentication remains separate from Mux placement. A fully idle carrier closes after 30
 seconds. Portal applies the same timeout to an authenticated Mux carrier with
 no active streams. Sharding is runtime placement and does not add wire fields.
@@ -543,8 +543,8 @@ ATTACH.
 ## 11. Runtime limits and failure scope
 
 Application sessions impose no fixed TCP, UDP, or pending-pair count limit.
-Flow IDs remain unique within their wire identifier space. Byte flow control,
-queue budgets, and pairing/setup timeouts remain enforced.
+Flow IDs are unique within their wire identifier space. Byte flow control,
+queue budgets, and pairing/setup timeouts apply.
 
 QUIC bidirectional-stream credit grows with live and pending QUIC flows, with
 setup headroom of max(64, live / 4). A QUIC TCP flow owns one reliable stream;

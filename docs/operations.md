@@ -65,7 +65,7 @@ close after 30 seconds fully idle. Frame queue slots do not bypass byte credit. 
 permits and payload is admitted incrementally.
 
 QUIC stream credit grows with live and pending QUIC flows plus setup headroom.
-Pairing and setup deadlines still reclaim incomplete requests.
+Pairing and setup deadlines reclaim incomplete requests.
 
 QUIC uses the shared `throughput` memory profile by default. Select `balanced`
 or `memory` when connection density matters more than a single flow's
