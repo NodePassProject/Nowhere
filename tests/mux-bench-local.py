@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run an end-to-end TLS Mux throughput/RSS sample through Toxiproxy."""
+"""Run an auxiliary TLS Mux throughput/RSS sample through Toxiproxy."""
 
 import argparse
 import json

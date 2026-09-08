@@ -51,7 +51,7 @@ container exec "$container_name" /toxiproxy-cli toxic add \
 container exec "$container_name" /toxiproxy-cli toxic add \
     -n latency_downstream -t latency -a "latency=$one_way_ms" -d nowhere >/dev/null
 
-python3 scripts/mux-bench.py \
+python3 tests/mux-bench-local.py \
     --binary "$binary" \
     --rtt-ms "$rtt_ms" \
     --flows "$flows" \

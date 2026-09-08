@@ -7,7 +7,7 @@ emulation.
 
 ```sh
 cargo build --release --locked
-scripts/bench-mux-local.sh 100 1 64 1
+tests/bench-mux-local.sh 100 1 64 1
 ```
 
 Hard throughput and RSS comparisons use `tests/bench-mux-netem.sh` on a Linux
