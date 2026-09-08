@@ -103,3 +103,20 @@ The current Mux header remains 8 bytes but uses separate OPEN, DATA, WINDOW,
 and CLOSE kinds. It is wire-incompatible with every earlier development Mux
 format. Historical results above remain useful as performance baselines; they
 do not demonstrate current wire interoperability.
+
+## 2026-09-08 nw2 frame smoke comparison
+
+The macOS Toxiproxy runner compared the saved `cc64358` binary with the
+OPEN/DATA/WINDOW/CLOSE implementation. Each cell is the median of three serial
+runs using the throughput profile.
+
+| Implementation | RTT | Flows | Payload | Throughput | Portal peak RSS | Vector peak RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| `cc64358` | 100 ms | 1 | 64 MiB | 900.17 Mbps | 21.53 MiB | 9.78 MiB |
+| nw2 frames | 100 ms | 1 | 64 MiB | 918.02 Mbps | 22.16 MiB | 9.98 MiB |
+| `cc64358` | 300 ms | 16 | 128 MiB | 1.690 Gbps | 69.77 MiB | 13.11 MiB |
+| nw2 frames | 300 ms | 16 | 128 MiB | 1.689 Gbps | 69.20 MiB | 12.61 MiB |
+
+Both smoke cells satisfy the 3% throughput and RSS thresholds. These results
+exercise the real binaries and carrier topology, but Toxiproxy's TCP
+termination means the Linux netem matrix remains the gating measurement.
