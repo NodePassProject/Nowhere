@@ -1,5 +1,82 @@
+use super::wire::{CLOSE_FIN, CLOSE_RESET, FrameHeader, encode_header};
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+#[test]
+fn production_idle_timeout_remains_thirty_seconds() {
+    assert_eq!(MUX_IDLE_TIMEOUT, Duration::from_secs(30));
+}
+
+async fn assert_raw_frame_closes_carrier(frame: &[u8]) {
+    let (left, mut peer) = tokio::io::duplex(1 << 20);
+    let (handle, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    peer.write_all(frame).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), handle.closed())
+        .await
+        .expect("invalid frame must close carrier");
+}
+
+#[tokio::test]
+async fn invalid_kind_and_unknown_flow_data_close_carrier() {
+    assert_raw_frame_closes_carrier(&[0xff, 0, 0, 0, 0, 0, 0, 1]).await;
+
+    let mut frame = encode_header(FrameHeader::data(99, 1).unwrap())
+        .unwrap()
+        .to_vec();
+    frame.push(0);
+    assert_raw_frame_closes_carrier(&frame).await;
+}
+
+#[tokio::test]
+async fn duplicate_open_and_credit_overflow_close_carrier() {
+    let open = encode_header(FrameHeader::open(7, 0).unwrap()).unwrap();
+    let mut duplicate = open.to_vec();
+    duplicate.extend_from_slice(&open);
+    assert_raw_frame_closes_carrier(&duplicate).await;
+
+    let overflow = encode_header(FrameHeader::window(0, u16::MAX as usize).unwrap()).unwrap();
+    assert_raw_frame_closes_carrier(&overflow).await;
+}
+
+#[tokio::test]
+async fn duplicate_close_and_late_stream_window_are_idempotent() {
+    let (left, mut peer) = tokio::io::duplex(1 << 20);
+    let (handle, mut incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    peer.write_all(&encode_header(FrameHeader::open(7, 0).unwrap()).unwrap())
+        .await
+        .unwrap();
+    let stream = incoming.accept().await.unwrap().unwrap();
+    let reset = encode_header(FrameHeader::close(7, CLOSE_RESET).unwrap()).unwrap();
+    peer.write_all(&reset).await.unwrap();
+    peer.write_all(&reset).await.unwrap();
+    peer.write_all(&encode_header(FrameHeader::window(7, 1).unwrap()).unwrap())
+        .await
+        .unwrap();
+    tokio::task::yield_now().await;
+    assert!(!handle.is_closed());
+    drop(stream);
+}
+
+#[tokio::test]
+async fn data_after_fin_closes_carrier() {
+    let (left, mut peer) = tokio::io::duplex(1 << 20);
+    let (handle, mut incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    peer.write_all(&encode_header(FrameHeader::open(8, 0).unwrap()).unwrap())
+        .await
+        .unwrap();
+    let _stream = incoming.accept().await.unwrap().unwrap();
+    peer.write_all(&encode_header(FrameHeader::close(8, CLOSE_FIN).unwrap()).unwrap())
+        .await
+        .unwrap();
+    let mut data = encode_header(FrameHeader::data(8, 1).unwrap())
+        .unwrap()
+        .to_vec();
+    data.push(0);
+    peer.write_all(&data).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), handle.closed())
+        .await
+        .expect("DATA after FIN must close carrier");
+}
 
 #[tokio::test]
 async fn idle_deadline_resets_when_a_stream_becomes_active() {

@@ -21,10 +21,9 @@ otherwise.
 
 ## 1. Carrier model
 
-TLS/TCP and QUIC use TLS 1.3 and negotiate a data-plane version through ALPN.
-Nowhere 2 offers `nw2` first and the default V1 value `now/1` second. A selected
-`nw2` carrier is V2; every accepted non-`nw2` carrier is V1, which in this
-implementation means exactly `now/1`.
+TLS/TCP and QUIC use TLS 1.3 with the sole ALPN `nw2`. A client that does not
+offer `nw2`, or a handshake that does not select exactly `nw2`, is rejected
+before Nowhere authentication. Nowhere 2 does not implement the V1 wire format.
 
 ### Command endpoint mapping
 
@@ -172,7 +171,7 @@ The shared key is 1–255 decoded bytes and is never transmitted. Authentication
 uses these fixed derivations:
 
 ```text
-salt      = SHA256("nowhere/now/1/auth-root")
+salt      = SHA256("nowhere/nw2/auth-root")
 auth_root = HMAC-SHA256(salt, shared_key)
 auth_key  = HMAC-SHA256(auth_root, "authentication" || 0x01)
 
@@ -184,9 +183,7 @@ tag       = first 16 bytes of
                         transport || exporter[32] || session_id[16])
 ```
 
-The 32-byte exporter uses label `EXPORTER-Nowhere-Auth` and empty context. The
-fixed derivation labels are shared by the compatible V1 and V2 paths in this
-release; the negotiated version does not change authentication bytes.
+The 32-byte exporter uses label `EXPORTER-Nowhere-Auth` and empty context.
 Authentication is bound to the current TLS connection; replaying a captured
 AuthFrame on another connection fails.
 
@@ -213,7 +210,7 @@ Mux frame.
 
 ### MuxHeader
 
-Every Mux frame starts with an 8-byte header. A DATA STREAM frame carries
+Every Mux frame starts with an 8-byte header. A DATA frame carries
 exactly `value` payload bytes; control frames carry no payload.
 
 ```text
@@ -221,46 +218,38 @@ MuxHeader - 8 bytes
 
  offset  0        1        2               4                       8
          +--------+--------+---------------+-----------------------+
-         | kind   | flags  | value         | flow_id               |
+         | kind   | code   | value         | flow_id               |
          | u8     | u8     | u16           | u32                   |
          +--------+--------+---------------+-----------------------+
 ```
 
 | `kind` | Name | `value` | `flow_id` |
 |---:|---|---|---|
-| `0x01` | STREAM | DATA length, or initial window extension with SYN | nonzero |
-| `0x02` | WINDOW | returned credit in 1 KiB units | `0` for connection, nonzero for stream |
+| `0x01` | OPEN | opener receive-window extension in 1 KiB units | nonzero |
+| `0x02` | DATA | payload length, 1..65535 | nonzero |
+| `0x03` | WINDOW | returned credit in 1 KiB units | `0` for connection, nonzero for stream |
+| `0x04` | CLOSE | always `0` | nonzero |
 
-For STREAM, the low three flag bits are:
+OPEN, DATA, and WINDOW require `code=0`. OPEN carries no payload and extends
+the opener's 4 MiB initial stream receive window. The runtime emits DATA
+payloads of at most 32 KiB.
 
-```text
-flags byte
+CLOSE carries no payload. `code=0` is FIN half-close and `code=1` is RESET.
+Other codes are invalid.
 
- bit     7                   3   2     1     0
-         +---------------------+-----+-----+-----+
-         | reserved            | RST | FIN | SYN |
-         +---------------------+-----+-----+-----+
-```
-
-- `SYN=0x01` creates the logical stream. It is isolated, carries no payload,
-  and `value` extends the peer's 4 MiB initial stream window in 1 KiB units.
-- `FIN=0x02` half-closes the sender after optional payload is delivered.
-- `RST=0x04` resets the stream. It MUST be the only flag and `value` MUST be 0.
-- All other flag bits MUST be zero.
-
-WINDOW uses `flags=0`, carries no payload, and requires nonzero credit in 1 KiB
+WINDOW carries no payload and requires nonzero credit in 1 KiB
 units. A
 WINDOW with `flow_id=0` replenishes connection credit; a nonzero ID replenishes
 that logical stream. Credit that would exceed the configured window closes the
 carrier. A late stream-local WINDOW for an already closed stream is ignored.
 
-STREAM data for an unknown flow is a carrier error. Late FIN or RST processing
+DATA for an unknown flow is a carrier error. Late or duplicate CLOSE processing
 is idempotent. Closing the physical Mux carrier fails every logical stream on
 that carrier.
 
-The runtime emits at most 32 KiB of data per STREAM frame. Mux uses an initial
-4 MiB stream window and 8 MiB connection window. Each side sends one WINDOW to
-extend its connection window and includes its stream-window extension in SYN.
+Mux uses an initial 4 MiB stream window and 8 MiB connection window. Each side
+sends one WINDOW to extend its connection window. OPEN advertises the opener's
+stream extension; the receiver returns its stream extension with WINDOW.
 The selected transport profile sets final windows to 4/8, 8/16, or 16/32 MiB.
 Each shard permits 256 active streams and 512 queued outbound frame slots. Payload must obtain
 both stream and connection credit before it enters the outbound queue.

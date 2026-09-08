@@ -142,12 +142,6 @@ impl PairingRegistry {
         target: Option<&Target>,
         link: &LinkHalf,
     ) -> Result<(), PairingError> {
-        if link.path.version != session_id.version {
-            return Err(PairingError::new(
-                FlowErrorCode::MetadataConflict,
-                "portal::pairing: carrier protocol version mismatch",
-            ));
-        }
         if header.kind != expected_kind {
             return Err(PairingError::new(
                 FlowErrorCode::InvalidRequest,

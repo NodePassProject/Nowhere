@@ -26,7 +26,7 @@ pub(super) use self::tcp::handle_tcp_incoming;
 use super::PortalInner;
 use super::admission::UnauthenticatedGuard;
 use crate::common::rate_limit_bytes_per_second;
-use crate::protocol::ProtocolVersion;
+use crate::protocol::ALPN;
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel};
 
 pub(super) async fn handle_incoming(
@@ -57,61 +57,51 @@ pub(super) async fn handle_incoming(
         // Keep them silent to avoid log amplification.
         Err(_) => return,
     };
-    let version = match conn
+    let valid_alpn = conn
         .handshake_data()
         .and_then(|data| data.downcast::<HandshakeData>().ok())
-        .and_then(|data| ProtocolVersion::from_alpn(data.protocol.as_deref()).ok())
-    {
-        Some(version) => version,
-        None => {
-            conn.close(VarInt::from_u32(1), b"unsupported protocol");
-            portal.logger.debug(format_args!(
-                "portal::conn::handle_incoming: invalid negotiated QUIC protocol"
-            ));
-            return;
-        }
-    };
-    handle_connection(portal, conn, version, admission, shutdown).await;
+        .is_some_and(|data| data.protocol.as_deref() == Some(ALPN));
+    if !valid_alpn {
+        conn.close(VarInt::from_u32(1), b"unsupported protocol");
+        portal.logger.debug(format_args!(
+            "portal::conn::handle_incoming: invalid negotiated QUIC protocol"
+        ));
+        return;
+    }
+    handle_connection(portal, conn, admission, shutdown).await;
 }
 
 /// Runs authentication and then dispatches accepted streams/datagrams.
 async fn handle_connection(
     portal: Arc<PortalInner>,
     conn: Connection,
-    version: ProtocolVersion,
     admission: UnauthenticatedGuard,
     shutdown: CancellationToken,
 ) {
     let auth_deadline = authentication_deadline(portal.runtime.handshake_timeout);
-    let authenticated = match authenticate_connection(
-        portal.clone(),
-        conn.clone(),
-        version,
-        auth_deadline,
-        &shutdown,
-    )
-    .await
-    {
-        AuthenticationOutcome::Success(authenticated) => authenticated,
-        AuthenticationOutcome::Failure(err) => {
-            let (code, reason) = authentication_failure_close();
-            conn.close(code, reason);
-            drop(admission);
-            portal.telemetry.emit_runtime(
-                RuntimeEvent::new(
-                    RuntimeLevel::Warn,
-                    RuntimeKind::Authentication,
-                    format!("QUIC authentication failed: {err}"),
-                )
-                .with_client(conn.remote_address().to_string()),
-            );
-            portal.logger.error(format_args!(
-                "portal::conn::handle_connection: authentication failed: {err}"
-            ));
-            return;
-        }
-        AuthenticationOutcome::Shutdown => return,
-    };
+    let authenticated =
+        match authenticate_connection(portal.clone(), conn.clone(), auth_deadline, &shutdown).await
+        {
+            AuthenticationOutcome::Success(authenticated) => authenticated,
+            AuthenticationOutcome::Failure(err) => {
+                let (code, reason) = authentication_failure_close();
+                conn.close(code, reason);
+                drop(admission);
+                portal.telemetry.emit_runtime(
+                    RuntimeEvent::new(
+                        RuntimeLevel::Warn,
+                        RuntimeKind::Authentication,
+                        format!("QUIC authentication failed: {err}"),
+                    )
+                    .with_client(conn.remote_address().to_string()),
+                );
+                portal.logger.error(format_args!(
+                    "portal::conn::handle_connection: authentication failed: {err}"
+                ));
+                return;
+            }
+            AuthenticationOutcome::Shutdown => return,
+        };
     if portal.drain.is_cancelled() {
         conn.close(VarInt::from_u32(0), b"");
         drop(admission);

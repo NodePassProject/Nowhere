@@ -1,19 +1,32 @@
 # TLS Mux performance baseline
 
-The local benchmark runs a real Vector, Toxiproxy-delayed TCP/TLS carrier,
-Portal, and TCP target. It synchronizes the application transfers, reports
-payload throughput, and samples peak RSS for both Nowhere processes every
-100 ms.
+The auxiliary macOS benchmark runs Vector, Toxiproxy, Portal, and a TCP target.
+Toxiproxy terminates and re-originates TCP, so its latency results are useful
+for quick development comparisons but are not packet-level TCP network
+emulation.
 
 ```sh
 cargo build --release --locked
 scripts/bench-mux-local.sh 100 1 64 1
 ```
 
-Arguments are RTT in milliseconds, concurrent flows, MiB per flow, `mux=0|1`,
-and an optional binary path. Run samples serially so their fixed local ports do
-not overlap. Apple Container's default kernel does not provide the netem qdisc,
-so the local runner uses bidirectional Toxiproxy latency on the real carrier.
+Hard throughput and RSS comparisons use `tests/bench-mux-netem.sh` on a Linux
+host with network namespaces and the `netem` qdisc. The harness delays only the
+physical carrier veth and samples RSS every 10 ms.
+
+```sh
+sudo tests/bench-mux-matrix.py \
+  --baseline /path/to/baseline/nowhere \
+  --current target/release/nowhere \
+  --output mux-matrix.json
+```
+
+The fixed matrix is RTT 0/30/100/200/300 ms by 1/4/16 flows, with three serial
+samples per cell and median comparison. One-flow payloads are 64 MiB except
+32 MiB at 300 ms; four flows total 64 MiB and sixteen flows total 128 MiB.
+Throughput may not regress by more than 3%. Per-process peak RSS may not rise by
+more than the larger of 5% or 2 MiB. The runner also records non-gating 0.1%
+loss observations at 100 ms/1 flow and 300 ms/16 flows.
 
 ## 2026-09-07 development baseline
 
@@ -46,8 +59,9 @@ increasing the profile budgets.
 
 ## 2026-09-08 adaptive pass
 
-This pass retains the minimal 8-byte STREAM/WINDOW wire format and the 1/8-window
-credit-return threshold. A 1/16 threshold did not improve throughput and would
+These historical results used the former 8-byte STREAM/WINDOW development
+format and the 1/8-window credit-return threshold. A 1/16 threshold did not
+improve throughput and would
 send more control frames. Generic TCP relay reads now transfer a pooled buffer
 lease into `Bytes`, so the allocation returns to the existing transport pool
 when the last payload owner drops. Mux-to-relay reads continue to hand off their
@@ -82,3 +96,10 @@ completed. The 100 and 300 ms sustained samples were run from fresh proxy
 containers; the benchmark now records carrier topology alongside throughput and
 RSS so future comparisons can distinguish pool-size changes from data-path
 changes.
+
+## Current Nowhere 2 frame boundary
+
+The current Mux header remains 8 bytes but uses separate OPEN, DATA, WINDOW,
+and CLOSE kinds. It is wire-incompatible with every earlier development Mux
+format. Historical results above remain useful as performance baselines; they
+do not demonstrate current wire interoperability.

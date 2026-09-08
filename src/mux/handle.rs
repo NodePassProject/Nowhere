@@ -73,10 +73,9 @@ impl MuxHandle {
         let stream = self.shared.insert_flow(flow_id, terminal_permit, false)?;
         self.shared
             .data_tx
-            .send(Outbound {
+            .send(Outbound::Frame {
                 header: frame_open(flow_id, self.shared.config.stream_window_bytes)?,
                 payload: super::MuxChunk::empty(),
-                flushed: None,
             })
             .await
             .map_err(|_| closed())?;

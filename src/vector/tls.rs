@@ -22,7 +22,7 @@ use tokio_rustls::{TlsConnector, client::TlsStream};
 use crate::common::{
     AddressFamily, certificate_sha256, dial_tcp_from_local_ip_family, handshake_timeout,
 };
-use crate::protocol::{ProtocolVersion, SUPPORTED_ALPNS, TLS_EXPORTER_LEN, TlsExporter};
+use crate::protocol::{ALPN, TLS_EXPORTER_LEN, TlsExporter};
 
 use super::config::PortalClientConfig;
 
@@ -77,7 +77,7 @@ impl ClientTls {
                 }))
                 .with_no_client_auth()
         };
-        client.alpn_protocols = SUPPORTED_ALPNS.iter().map(|alpn| alpn.to_vec()).collect();
+        client.alpn_protocols = vec![ALPN.to_vec()];
         client.enable_early_data = false;
 
         let server_name =
@@ -108,7 +108,7 @@ impl ClientTls {
         endpoint: &str,
         dialer_ip: &str,
         family: AddressFamily,
-    ) -> Result<(TlsStream<TcpStream>, TlsExporter, ProtocolVersion)> {
+    ) -> Result<(TlsStream<TcpStream>, TlsExporter)> {
         let stream =
             dial_tcp_from_local_ip_family(dialer_ip, endpoint, handshake_timeout(), family)
                 .await
@@ -124,25 +124,33 @@ impl ClientTls {
         .await
         .map_err(|_| anyhow!("vector::tls::connect_tcp: TLS handshake timeout"))?
         .context("vector::tls::connect_tcp: TLS handshake failed")?;
+        require_nw2(tls.get_ref().1.alpn_protocol())
+            .context("vector::tls::connect_tcp: invalid negotiated protocol")?;
         let mut exporter = [0u8; TLS_EXPORTER_LEN];
         tls.get_ref()
             .1
             .export_keying_material(&mut exporter, EXPORTER_LABEL, Some(&[]))
             .context("vector::tls::connect_tcp: TLS exporter failed")?;
-        let version = ProtocolVersion::from_alpn(tls.get_ref().1.alpn_protocol())
-            .context("vector::tls::connect_tcp: invalid negotiated protocol")?;
-        Ok((tls, exporter, version))
+        Ok((tls, exporter))
     }
 }
 
-pub(super) fn quic_protocol_version(connection: &Connection) -> Result<ProtocolVersion> {
+pub(super) fn require_quic_nw2(connection: &Connection) -> Result<()> {
     let handshake = connection
         .handshake_data()
         .ok_or_else(|| anyhow!("vector::tls: QUIC handshake data unavailable"))?
         .downcast::<HandshakeData>()
         .map_err(|_| anyhow!("vector::tls: unexpected QUIC handshake data"))?;
-    ProtocolVersion::from_alpn(handshake.protocol.as_deref())
+    require_nw2(handshake.protocol.as_deref())
         .context("vector::tls: invalid QUIC negotiated protocol")
+}
+
+fn require_nw2(alpn: Option<&[u8]>) -> Result<()> {
+    match alpn {
+        Some(ALPN) => Ok(()),
+        Some(_) => bail!("unsupported negotiated ALPN"),
+        None => bail!("peer did not negotiate ALPN"),
+    }
 }
 
 #[derive(Clone)]

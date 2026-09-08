@@ -111,7 +111,7 @@ async fn late_attach_receives_original_open_pair_timeout() {
             .is_none()
     );
     let tcp_key = FlowKey {
-        session_id: tcp_session.into(),
+        session_id: tcp_session,
         flow_id: 16,
     };
     tokio::time::timeout(Duration::from_secs(1), async {
@@ -171,7 +171,7 @@ async fn late_attach_receives_original_open_pair_timeout() {
             .is_none()
     );
     let udp_key = FlowKey {
-        session_id: udp_session.into(),
+        session_id: udp_session,
         flow_id: 17,
     };
     tokio::time::timeout(Duration::from_secs(1), async {

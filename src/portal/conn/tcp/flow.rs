@@ -81,7 +81,6 @@ pub(super) async fn process_flow<R, W>(
         None
     };
     let path = crate::portal::pairing::LinkPath {
-        version: session_id.version,
         peer: peer.to_string(),
         local: local.map_or_else(|| portal.endpoint_addr.clone(), |value| value.to_string()),
     };

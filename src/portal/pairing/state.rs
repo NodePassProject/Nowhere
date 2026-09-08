@@ -11,28 +11,12 @@ use quinn::Connection;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::protocol::{FlowKind, ProtocolVersion, SessionId, Target};
+use crate::protocol::{FlowKind, SessionId, Target};
 
 pub(in crate::portal) type BoxReader = Pin<Box<dyn crate::transport::AsyncReadAny>>;
 pub(in crate::portal) type BoxWriter = Pin<Box<dyn crate::transport::AsyncWriteAny>>;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(in crate::portal) struct SessionKey {
-    pub(in crate::portal) version: ProtocolVersion,
-    pub(in crate::portal) id: SessionId,
-}
-
-impl SessionKey {
-    pub(in crate::portal) const fn new(version: ProtocolVersion, id: SessionId) -> Self {
-        Self { version, id }
-    }
-}
-
-impl From<SessionId> for SessionKey {
-    fn from(id: SessionId) -> Self {
-        Self::new(ProtocolVersion::V2, id)
-    }
-}
+pub(in crate::portal) type SessionKey = SessionId;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(in crate::portal) struct FlowKey {
@@ -65,7 +49,6 @@ pub(in crate::portal) struct PendingTcp {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::portal) struct LinkPath {
-    pub(in crate::portal) version: ProtocolVersion,
     pub(in crate::portal) peer: String,
     pub(in crate::portal) local: String,
 }

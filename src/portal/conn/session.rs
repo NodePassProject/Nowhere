@@ -57,7 +57,6 @@ pub(in crate::portal) struct DatagramReadyRequest {
 impl PortalSession {
     fn link_path(&self) -> crate::portal::pairing::LinkPath {
         crate::portal::pairing::LinkPath {
-            version: self.session_key.version,
             peer: self.conn.remote_address().to_string(),
             local: self.conn.local_ip().map_or_else(
                 || self.portal.endpoint_addr.clone(),

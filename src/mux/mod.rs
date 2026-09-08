@@ -150,6 +150,7 @@ struct FlowState {
     pending_receive_credit: usize,
     window_queued: bool,
     local_parts: u8,
+    remote_fin: bool,
 }
 
 enum Inbound {
@@ -158,10 +159,12 @@ enum Inbound {
     Reset,
 }
 
-struct Outbound {
-    header: FrameHeader,
-    payload: MuxChunk,
-    flushed: Option<oneshot::Sender<io::Result<()>>>,
+enum Outbound {
+    Frame {
+        header: FrameHeader,
+        payload: MuxChunk,
+    },
+    Flush(oneshot::Sender<io::Result<()>>),
 }
 
 impl MuxChunk {
@@ -258,6 +261,7 @@ impl Shared {
                 pending_receive_credit: initial_credit,
                 window_queued: advertise_window && initial_credit != 0,
                 local_parts: 2,
+                remote_fin: false,
             },
         );
         let active_streams = flows.len();
@@ -294,6 +298,7 @@ impl Shared {
             return;
         }
         self.flows.lock().expect("mux flow lock").clear();
+        self.connection_send_credit.close();
         self.active_streams_tx.send_replace(0);
         self.closed_notify.notify_waiters();
     }
@@ -325,6 +330,12 @@ impl Shared {
         let flow = flows.get_mut(&flow_id).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "frame for unknown mux flow")
         })?;
+        if flow.remote_fin {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "DATA received after mux FIN",
+            ));
+        }
         if flow.receive_credit < charge || *connection < charge {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -340,6 +351,9 @@ impl Shared {
         if self.closed.load(Ordering::Acquire) {
             return;
         }
+        let previous = self
+            .pending_connection_credit
+            .fetch_add(charge, Ordering::AcqRel);
         let (flow_ready, flow_notify) = {
             let mut connection = self
                 .connection_receive_credit
@@ -365,7 +379,7 @@ impl Shared {
                         .min(u16::MAX as usize);
                 (ready, flow.pending_receive_credit >= threshold)
             } else {
-                return;
+                (false, false)
             }
         };
         if flow_ready {
@@ -374,9 +388,6 @@ impl Shared {
                 .expect("mux ready-flow lock")
                 .push_back(flow_id);
         }
-        let previous = self
-            .pending_connection_credit
-            .fetch_add(charge, Ordering::AcqRel);
         let threshold = credit_units(self.config.connection_window_bytes / WINDOW_UPDATE_DIVISOR)
             .min(u16::MAX as usize);
         if flow_notify || previous.saturating_add(charge) >= threshold {

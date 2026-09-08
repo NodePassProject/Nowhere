@@ -27,13 +27,12 @@ pub(in crate::vector) enum MuxDirection {
 
 pub(in crate::vector) enum OpenedTls {
     Dedicated(Box<TlsLane>),
-    Mux(MuxStream, ProtocolVersion),
+    Mux(MuxStream),
 }
 
 #[derive(Clone)]
 struct TlsMux {
     handle: MuxHandle,
-    version: ProtocolVersion,
     target_density: usize,
 }
 
@@ -85,14 +84,13 @@ impl TlsManager {
                 .handle
                 .open_stream(flow_id)
                 .await
-                .map(|stream| OpenedTls::Mux(stream, shard.version))
+                .map(OpenedTls::Mux)
                 .map_err(Into::into);
         }
         let connect_started = Instant::now();
         let lane = self.connect_lane().await?;
         let TlsLane {
             mut stream,
-            version,
             pending_auth,
             _link,
             latency,
@@ -110,7 +108,6 @@ impl TlsManager {
         drop(incoming);
         let shard = TlsMux {
             handle,
-            version,
             target_density: mux_target_density(connect_started.elapsed()),
         };
         self.mux(direction).lock().await.push(shard.clone());
@@ -125,7 +122,7 @@ impl TlsManager {
             .handle
             .open_stream(flow_id)
             .await
-            .map(|stream| OpenedTls::Mux(stream, version))
+            .map(OpenedTls::Mux)
             .map_err(Into::into)
     }
 
@@ -189,7 +186,7 @@ impl TlsManager {
             .endpoint
             .as_ref()
             .ok_or_else(|| anyhow!("vector::session::TlsManager: TCP carrier is not configured"))?;
-        let (stream, exporter, version) = self
+        let (stream, exporter) = self
             .tls
             .connect_tcp(endpoint, &self.dialer_ip, *family)
             .await?;
@@ -203,7 +200,6 @@ impl TlsManager {
         );
         Ok(TlsLane {
             stream,
-            version,
             pending_auth: Some(auth),
             _link: LinkGuard::new(self.stats.clone(), self.telemetry.clone(), false),
             latency,

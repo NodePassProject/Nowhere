@@ -6,12 +6,12 @@ use std::io::IoSlice;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use super::wire::FLAG_FIN;
+use super::wire::CLOSE_FIN;
 use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::oneshot;
 
-use super::driver::{closed, frame_stream, send_data};
+use super::driver::{closed, frame_close, send_data};
 use super::{FRAME_BYTES, FlowReader, FlowWriter, Inbound, MuxChunk, MuxStream, Outbound};
 
 fn copy_payload(payload: &[u8]) -> Bytes {
@@ -220,16 +220,11 @@ impl AsyncWrite for FlowWriter {
         }
         if self.pending_action.is_none() {
             let shared = self.shared.clone();
-            let flow_id = self.flow_id;
             self.pending_action = Some(Box::pin(async move {
                 let (tx, rx) = oneshot::channel();
                 shared
                     .data_tx
-                    .send(Outbound {
-                        header: frame_stream(flow_id, 0, 0)?,
-                        payload: MuxChunk::empty(),
-                        flushed: Some(tx),
-                    })
+                    .send(Outbound::Flush(tx))
                     .await
                     .map_err(|_| closed())?;
                 rx.await.map_err(|_| closed())?
@@ -253,10 +248,9 @@ impl AsyncWrite for FlowWriter {
             self.pending_action = Some(Box::pin(async move {
                 shared
                     .data_tx
-                    .send(Outbound {
-                        header: frame_stream(flow_id, FLAG_FIN, 0)?,
+                    .send(Outbound::Frame {
+                        header: frame_close(flow_id, CLOSE_FIN)?,
                         payload: MuxChunk::empty(),
-                        flushed: None,
                     })
                     .await
                     .map_err(|_| closed())

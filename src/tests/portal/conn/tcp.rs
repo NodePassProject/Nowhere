@@ -25,8 +25,8 @@ use crate::protocol::{
 
 use super::super::*;
 use super::support::{
-    TestSocksAuth, connect_test_tls, spawn_test_socks5_tcp, spawn_test_socks5_udp, test_target,
-    tls_auth_frame,
+    TestSocksAuth, connect_test_tls, connect_test_tls_with_alpns, spawn_test_socks5_tcp,
+    spawn_test_socks5_udp, test_target, tls_auth_frame,
 };
 
 fn duplex_setup(flow_id: u32, kind: FlowKind, target: &str) -> Vec<u8> {
@@ -41,6 +41,36 @@ fn duplex_setup(flow_id: u32, kind: FlowKind, target: &str) -> Vec<u8> {
     .to_vec();
     setup.extend_from_slice(&write_request_frame(&test_target(target)).unwrap());
     setup
+}
+
+#[tokio::test]
+async fn portal_rejects_client_hello_without_nw2() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listen_addr = listener.local_addr().unwrap();
+    let portal = Portal::new(
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
+        Logger::new(LogLevel::None, false),
+    )
+    .unwrap();
+    let portal_inner = portal.inner.clone();
+    let shutdown = CancellationToken::new();
+    let child_shutdown = shutdown.clone();
+    let server_task = tokio::spawn(async move {
+        let (stream, peer) = listener.accept().await.unwrap();
+        let admission = portal_inner
+            .unauthenticated_admission
+            .try_acquire(peer.ip())
+            .unwrap();
+        handle_tcp_incoming(portal_inner, stream, peer, admission, child_shutdown).await;
+    });
+
+    assert!(
+        connect_test_tls_with_alpns(listen_addr, vec![b"now/1".to_vec()])
+            .await
+            .is_err()
+    );
+    shutdown.cancel();
+    server_task.await.unwrap();
 }
 
 #[tokio::test]
@@ -383,7 +413,7 @@ async fn tls_mux_carrier_closes_after_becoming_fully_idle() {
         .unwrap();
     let mut window = [0_u8; 8];
     tls.read_exact(&mut window).await.unwrap();
-    assert_eq!(window[0], 0x02);
+    assert_eq!(window[0], 0x03);
     assert_eq!(&window[4..], &[0, 0, 0, 0]);
     let mut byte = [0_u8; 1];
     let read = tls.read(&mut byte).await;

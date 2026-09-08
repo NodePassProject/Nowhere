@@ -64,9 +64,9 @@ family, because doing so would change the user's declared service edge.
 ## Alternate clients
 
 Implementers should follow [Protocol](protocol.md). QUIC uses native reliable
-streams and DATAGRAM frames, never TLS Mux framing. V2 clients offer `nw2` and
-the compatible V1 value `now/1`; the negotiated value selects the version for
-that carrier. A Mux TLS connection places the `0xff` marker after
+streams and DATAGRAM frames, never TLS Mux framing. Clients must offer `nw2`,
+and the negotiated ALPN must be exactly `nw2`. A Mux TLS connection places
+the `0xff` marker after
 authentication; a dedicated lane places its FlowHeader there instead. Portal
 accepts both forms on the same TLS listener and selects the decoder from that
 first byte.

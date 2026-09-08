@@ -231,10 +231,9 @@ Flow owns one on-demand lane that closes with the Flow. Mux applies when at
 least one direction is `tcp` or `mix`. `udp/udp&mux=1` canonicalizes to
 `mux=0`.
 
-Portal and Vector offer fixed ALPNs in the order `nw2`, `now/1`. V2 peers select
-`nw2`; a V2 peer talking to a default V1 peer selects `now/1`. The
-`alpn` query is ignored under the normal unknown-parameter rule. Protocol
-version and Mux are independent settings. Portal's `mux` option controls only
+Portal and Vector use only the fixed ALPN `nw2`. A peer that does not offer
+`nw2` cannot establish a carrier. The `alpn` query is ignored under the
+normal unknown-parameter rule. Portal's `mux` option controls only
 its `next` client. Inbound Portal connections accept a `0xff`-marked Mux carrier
 or an unmarked dedicated lane on the same listener.
 

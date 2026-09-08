@@ -65,7 +65,6 @@ fn target(value: &str) -> Target {
 
 fn path(label: &str) -> LinkPath {
     LinkPath {
-        version: crate::protocol::ProtocolVersion::V2,
         peer: format!("{label}.client:1234"),
         local: "portal.test:2000".into(),
     }
@@ -84,7 +83,7 @@ fn available_udp_permits(registry: &PairingRegistry, session_id: SessionId) -> u
         .links
         .lock()
         .expect("link registry poisoned")
-        .get(&session_id.into())
+        .get(&session_id)
         .expect("registered session")
         .udp_flow_budget
         .available_permits()
@@ -131,5 +130,3 @@ mod rejection;
 mod replacement;
 #[path = "pairing/udp.rs"]
 mod udp;
-#[path = "pairing/version.rs"]
-mod version;

@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{Carrier, ProtocolVersion};
+use crate::protocol::Carrier;
 
 use super::process::{now_unix_ms, process_incarnation, process_uid};
 
@@ -140,7 +140,6 @@ pub(crate) struct AccessStart {
     pub(crate) id: u64,
     pub(crate) timestamp_ms: u64,
     pub(crate) protocol: TrafficProtocol,
-    pub(crate) wire_version: Option<ProtocolVersion>,
     pub(crate) flow_id: Option<u64>,
     pub(crate) session_tag: Option<String>,
     pub(crate) client: Option<String>,
@@ -156,7 +155,6 @@ pub(crate) struct AccessStarted {
     pub(crate) id: u64,
     pub(crate) timestamp_ms: u64,
     pub(crate) protocol: TrafficProtocol,
-    pub(crate) wire_version: Option<ProtocolVersion>,
     pub(crate) flow_id: Option<u64>,
     pub(crate) session_tag: Option<String>,
     pub(crate) client: Option<String>,
@@ -174,7 +172,6 @@ pub(crate) struct AccessFinished {
     pub(crate) timestamp_ms: u64,
     pub(crate) duration_ms: u64,
     pub(crate) protocol: TrafficProtocol,
-    pub(crate) wire_version: Option<ProtocolVersion>,
     pub(crate) flow_id: Option<u64>,
     pub(crate) session_tag: Option<String>,
     pub(crate) client: Option<String>,

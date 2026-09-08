@@ -66,7 +66,7 @@ A receiver charges both windows before delivery and returns credit only after
 application consumption. Closing the carrier releases queued payload.
 
 The fixed maximum frame payload is 65,535 bytes and the runtime emits at most
-32 KiB per STREAM frame. Malformed kinds, flags, IDs, lengths, window overflow,
+32 KiB per DATA frame. Malformed kinds, codes, IDs, lengths, window overflow,
 and DATA for unknown streams close the carrier. Late terminal and credit frames
 for a terminal stream are idempotent.
 

@@ -29,7 +29,7 @@ async fn client_prefers_fixed_v2_alpn() {
             .with_no_client_auth()
             .with_single_cert(vec![certificate], key)
             .unwrap();
-    server.alpn_protocols = vec![b"nw2".to_vec(), b"now/1".to_vec()];
+    server.alpn_protocols = vec![b"nw2".to_vec()];
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = listener.local_addr().unwrap();
     let server_task = tokio::spawn(async move {
@@ -38,7 +38,7 @@ async fn client_prefers_fixed_v2_alpn() {
     });
     let raw = format!("vector://secret@{endpoint}?alpn=private/2&socks=127.0.0.1:1080");
 
-    let (_, _, version) = ClientTls::new(&config(&raw))
+    let _ = ClientTls::new(&config(&raw))
         .unwrap()
         .connect_tcp(
             &endpoint.to_string(),
@@ -47,7 +47,6 @@ async fn client_prefers_fixed_v2_alpn() {
         )
         .await
         .unwrap();
-    assert_eq!(version, ProtocolVersion::V2);
     server_task.await.unwrap().unwrap();
 }
 
@@ -88,7 +87,7 @@ enum TestPin {
     Invalid,
 }
 
-async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<ProtocolVersion> {
+async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<()> {
     let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
     let certificate: CertificateDer<'static> = generated.cert.into();
     let fingerprint = certificate_sha256(&certificate);
@@ -102,7 +101,7 @@ async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<Protoc
             .with_no_client_auth()
             .with_single_cert(vec![certificate], key)
             .unwrap();
-    server.alpn_protocols = vec![b"now/1".to_vec()];
+    server.alpn_protocols = vec![b"nw2".to_vec()];
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = listener.local_addr().unwrap();
     let server_task = tokio::spawn(async move {
@@ -133,20 +132,47 @@ async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<Protoc
             crate::common::AddressFamily::Any,
         )
         .await
-        .map(|(_, _, version)| version);
+        .map(|_| ());
     let _ = tokio::time::timeout(Duration::from_secs(1), server_task).await;
     result
 }
 
 #[tokio::test]
-async fn default_v1_tcp_server_is_detected() {
-    assert_eq!(
-        test_pinned_handshake(TestPin::Omitted, None).await.unwrap(),
-        ProtocolVersion::V1
+async fn tcp_server_without_nw2_is_rejected() {
+    let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
+    let certificate: CertificateDer<'static> = generated.cert.into();
+    let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
+        generated.signing_key.serialize_der(),
+    ));
+    let mut server =
+        rustls::ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate], key)
+            .unwrap();
+    server.alpn_protocols = vec![b"now/1".to_vec()];
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let _ = TlsAcceptor::from(Arc::new(server)).accept(stream).await;
+    });
+    let raw = format!("vector://secret@{endpoint}?socks=127.0.0.1:1080");
+    assert!(
+        ClientTls::new(&config(&raw))
+            .unwrap()
+            .connect_tcp(
+                &endpoint.to_string(),
+                "auto",
+                crate::common::AddressFamily::Any
+            )
+            .await
+            .is_err()
     );
 }
 
-async fn negotiate_quic(server_alpns: Vec<Vec<u8>>) -> Result<ProtocolVersion> {
+async fn negotiate_quic(server_alpns: Vec<Vec<u8>>) -> Result<()> {
     let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
     let certificate: CertificateDer<'static> = generated.cert.into();
     let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
@@ -177,24 +203,16 @@ async fn negotiate_quic(server_alpns: Vec<Vec<u8>>) -> Result<ProtocolVersion> {
     let mut client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap())?;
     client.set_default_client_config(tls.quic_client_config()?);
     let connection = client.connect(address, &tls.quic_server_name())?.await?;
-    let version = quic_protocol_version(&connection)?;
+    require_quic_nw2(&connection)?;
     connection.close(quinn::VarInt::from_u32(0), b"");
     let _ = server_task.await;
-    Ok(version)
+    Ok(())
 }
 
 #[tokio::test]
-async fn quic_prefers_v2_and_falls_back_to_default_v1() {
-    assert_eq!(
-        negotiate_quic(vec![b"nw2".to_vec(), b"now/1".to_vec()])
-            .await
-            .unwrap(),
-        ProtocolVersion::V2
-    );
-    assert_eq!(
-        negotiate_quic(vec![b"now/1".to_vec()]).await.unwrap(),
-        ProtocolVersion::V1
-    );
+async fn quic_requires_nw2() {
+    negotiate_quic(vec![b"nw2".to_vec()]).await.unwrap();
+    assert!(negotiate_quic(vec![b"now/1".to_vec()]).await.is_err());
     assert!(negotiate_quic(vec![b"private/2".to_vec()]).await.is_err());
 }
 

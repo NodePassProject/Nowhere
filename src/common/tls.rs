@@ -15,7 +15,7 @@ use quinn::crypto::rustls::QuicServerConfig;
 use rustls::crypto::ring;
 use url::Url;
 
-use crate::protocol::SUPPORTED_ALPNS;
+use crate::protocol::ALPN;
 
 pub(crate) use self::tls_cert::certificate_sha256;
 use self::tls_cert::{ReloadingCertResolver, new_self_signed_cert};
@@ -109,7 +109,7 @@ pub(crate) fn new_server_configs_with_reload_interval(
 
     server_crypto.max_early_data_size = 0;
     server_crypto.send_half_rtt_data = false;
-    server_crypto.alpn_protocols = SUPPORTED_ALPNS.iter().map(|alpn| alpn.to_vec()).collect();
+    server_crypto.alpn_protocols = vec![ALPN.to_vec()];
     let quic_crypto = QuicServerConfig::try_from(server_crypto.clone())
         .map_err(|e| anyhow!("common::tls::new_server_configs: QUIC TLS config failed: {e}"))?;
     logger.event(format_args!("CERT_SHA256|{cert_sha256}"));

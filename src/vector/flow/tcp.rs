@@ -13,7 +13,6 @@ pub(crate) struct TcpTunnel {
     _lease: Option<FlowLease>,
     uplink: Carrier,
     downlink: Carrier,
-    version: ProtocolVersion,
     _flow_permit: Option<OwnedSemaphorePermit>,
 }
 
@@ -32,10 +31,6 @@ impl TcpTunnel {
         (self.uplink, self.downlink)
     }
 
-    pub(crate) fn protocol_version(&self) -> ProtocolVersion {
-        self.version
-    }
-
     pub(crate) fn into_parts(self) -> (BoxReader, BoxWriter, TcpTunnelGuard) {
         let Self {
             reader,
@@ -44,7 +39,6 @@ impl TcpTunnel {
             _lease,
             uplink: _,
             downlink: _,
-            version: _,
             _flow_permit,
         } = self;
         (
@@ -130,7 +124,6 @@ pub(crate) async fn open_tcp(
             downlink,
             hops,
         };
-        let version = lane.version;
         let pending_auth = lane.take_pending_auth();
         write_open_request(
             lane.writer.as_mut().expect("lane writer"),
@@ -153,14 +146,12 @@ pub(crate) async fn open_tcp(
             _lease: Some(lease),
             uplink,
             downlink,
-            version,
             _flow_permit: Some(flow_permit),
         });
     }
 
     let mut downlink_lane = lanes.pop().expect("downlink lane");
     let mut uplink_lane = lanes.pop().expect("uplink lane");
-    let version = uplink_lane.version;
     let open_header = FlowHeader {
         role: FlowRole::Open,
         flow_id,
@@ -205,7 +196,6 @@ pub(crate) async fn open_tcp(
         _lease: Some(lease),
         uplink,
         downlink,
-        version,
         _flow_permit: Some(flow_permit),
     })
 }

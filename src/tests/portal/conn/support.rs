@@ -71,6 +71,15 @@ impl ServerCertVerifier for AcceptAnyServerCertificate {
 pub(super) async fn connect_test_tls(
     listen_addr: SocketAddr,
 ) -> tokio_rustls::client::TlsStream<TcpStream> {
+    connect_test_tls_with_alpns(listen_addr, vec![b"nw2".to_vec()])
+        .await
+        .unwrap()
+}
+
+pub(super) async fn connect_test_tls_with_alpns(
+    listen_addr: SocketAddr,
+    alpns: Vec<Vec<u8>>,
+) -> std::io::Result<tokio_rustls::client::TlsStream<TcpStream>> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut client_config = rustls::ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS13])
@@ -78,16 +87,15 @@ pub(super) async fn connect_test_tls(
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(AcceptAnyServerCertificate))
         .with_no_client_auth();
-    client_config.alpn_protocols = vec![b"now/1".to_vec()];
+    client_config.alpn_protocols = alpns;
     let connector = TlsConnector::from(Arc::new(client_config));
-    let stream = TcpStream::connect(listen_addr).await.unwrap();
+    let stream = TcpStream::connect(listen_addr).await?;
     connector
         .connect(
             ServerName::try_from("localhost").unwrap().to_owned(),
             stream,
         )
         .await
-        .unwrap()
 }
 
 pub(super) fn tls_auth_frame(
@@ -207,7 +215,7 @@ pub(super) async fn connect_test_quic_with_url_and_limits(
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(AcceptAnyServerCertificate))
         .with_no_client_auth();
-    rustls_config.alpn_protocols = vec![b"now/1".to_vec()];
+    rustls_config.alpn_protocols = vec![b"nw2".to_vec()];
     let quic_crypto = QuicClientConfig::try_from(rustls_config).unwrap();
     let mut client_endpoint =
         quinn::Endpoint::client(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
@@ -236,7 +244,7 @@ pub(super) async fn connect_test_quic_to(listen_addr: SocketAddr) -> (quinn::End
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(AcceptAnyServerCertificate))
         .with_no_client_auth();
-    rustls_config.alpn_protocols = vec![b"now/1".to_vec()];
+    rustls_config.alpn_protocols = vec![b"nw2".to_vec()];
     let quic_crypto = QuicClientConfig::try_from(rustls_config).unwrap();
     let mut endpoint = quinn::Endpoint::client(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
     endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(quic_crypto)));

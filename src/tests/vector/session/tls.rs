@@ -7,7 +7,6 @@ use tokio::io::AsyncReadExt;
 fn shard(handle: MuxHandle) -> TlsMux {
     TlsMux {
         handle,
-        version: ProtocolVersion::V2,
         target_density: 4,
     }
 }

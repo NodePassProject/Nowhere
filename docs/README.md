@@ -90,8 +90,8 @@ before service traffic is accepted. The full syntax and error rules are in
 | `mux=0` | Dedicated lane per flow | Native streams/datagrams | One flow per carrier |
 | `mux=1` | Shared bounded Mux | Native streams/datagrams | Assigned flows close with the carrier |
 
-V2 peers negotiate the fixed `nw2` ALPN and fall back to the default V1 value
-`now/1` for compatibility. The client-side route-policy matrix is:
+Nowhere 2 peers negotiate the fixed `nw2` ALPN. Peers without `nw2` cannot
+complete a Nowhere 2 carrier handshake. The client-side route-policy matrix is:
 
 | `up` ↓ / `down` → | `tcp` | `udp` | `mix` |
 |---|---|---|---|

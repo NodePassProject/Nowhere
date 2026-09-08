@@ -20,7 +20,7 @@ pub const AUTH_TAG_LEN: usize = 16;
 /// Length of the fixed authentication frame.
 pub const AUTH_FRAME_LEN: usize = SESSION_ID_LEN + AUTH_TAG_LEN;
 
-const AUTH_ROOT_SALT_LABEL: &[u8] = b"nowhere/now/1/auth-root";
+const AUTH_ROOT_SALT_LABEL: &[u8] = b"nowhere/nw2/auth-root";
 const AUTH_KEY_INFO: &[u8] = b"authentication";
 
 /// Authentication key derived once from the configured shared key.
