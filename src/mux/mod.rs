@@ -64,7 +64,14 @@ impl MuxConfig {
         }
     }
     fn validate(self) -> io::Result<Self> {
-        if self.stream_window_bytes < FRAME_BYTES
+        if self.stream_window_bytes < BASE_STREAM_WINDOW_BYTES
+            || self.stream_window_bytes > MAX_STREAM_WINDOW_BYTES
+            || self.connection_window_bytes < BASE_CONNECTION_WINDOW_BYTES
+            || self.connection_window_bytes > MAX_CONNECTION_WINDOW_BYTES
+            || !self.stream_window_bytes.is_multiple_of(CREDIT_UNIT_BYTES)
+            || !self
+                .connection_window_bytes
+                .is_multiple_of(CREDIT_UNIT_BYTES)
             || self.connection_window_bytes < self.stream_window_bytes
             || self.max_streams == 0
             || self.outbound_frames == 0
@@ -138,7 +145,7 @@ struct Shared {
     incoming_tx: mpsc::Sender<MuxStream>,
     active_streams_tx: watch::Sender<usize>,
     closed: AtomicBool,
-    closed_notify: Notify,
+    closed_notify: tokio_util::sync::CancellationToken,
     #[cfg(test)]
     borrowed_write_copies: AtomicUsize,
 }
@@ -214,7 +221,7 @@ impl Drop for ReceiveCredit {
 impl Shared {
     async fn reserve_terminal(&self) -> io::Result<mpsc::OwnedPermit<FlowId>> {
         tokio::select! {
-            _ = self.closed_notify.notified() => Err(closed()),
+            _ = self.closed_notify.cancelled() => Err(closed()),
             permit = self.terminal_tx.clone().reserve_owned() => permit.map_err(|_| closed()),
         }
     }
@@ -297,10 +304,15 @@ impl Shared {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
         }
-        self.flows.lock().expect("mux flow lock").clear();
+        let mut flows = self.flows.lock().expect("mux flow lock");
+        for flow in flows.values() {
+            flow.send_credit.close();
+        }
+        flows.clear();
+        drop(flows);
         self.connection_send_credit.close();
         self.active_streams_tx.send_replace(0);
-        self.closed_notify.notify_waiters();
+        self.closed_notify.cancel();
     }
 
     fn send_credit(&self, flow_id: FlowId) -> io::Result<Arc<Semaphore>> {
@@ -315,6 +327,9 @@ impl Shared {
     fn remove_flow(&self, flow_id: FlowId) -> Option<FlowState> {
         let mut flows = self.flows.lock().expect("mux flow lock");
         let removed = flows.remove(&flow_id);
+        if let Some(flow) = &removed {
+            flow.send_credit.close();
+        }
         let active_streams = flows.len();
         drop(flows);
         self.active_streams_tx.send_replace(active_streams);
@@ -351,9 +366,6 @@ impl Shared {
         if self.closed.load(Ordering::Acquire) {
             return;
         }
-        let previous = self
-            .pending_connection_credit
-            .fetch_add(charge, Ordering::AcqRel);
         let (flow_ready, flow_notify) = {
             let mut connection = self
                 .connection_receive_credit
@@ -388,6 +400,9 @@ impl Shared {
                 .expect("mux ready-flow lock")
                 .push_back(flow_id);
         }
+        let previous = self
+            .pending_connection_credit
+            .fetch_add(charge, Ordering::AcqRel);
         let threshold = credit_units(self.config.connection_window_bytes / WINDOW_UPDATE_DIVISOR)
             .min(u16::MAX as usize);
         if flow_notify || previous.saturating_add(charge) >= threshold {

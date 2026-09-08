@@ -327,3 +327,68 @@ async fn concurrent_streams_cross_the_connection_window() {
         task.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn closing_carrier_wakes_exhausted_stream_credit() {
+    let (left, right) = tokio::io::duplex(1024);
+    let (handle, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    let mut stream = handle.open_stream(501).await.unwrap();
+    let credit = handle.shared.send_credit(501).unwrap();
+    let permits = credit.available_permits();
+    credit
+        .clone()
+        .acquire_many_owned(permits as u32)
+        .await
+        .unwrap()
+        .forget();
+    let write = tokio::spawn(async move { stream.write_all(b"blocked").await });
+    tokio::task::yield_now().await;
+    assert!(!write.is_finished());
+    handle.close();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), write)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    drop(right);
+}
+
+#[tokio::test]
+async fn closing_carrier_interrupts_blocked_io_and_releases_shared_state() {
+    let (left, _right) = tokio::io::duplex(1);
+    let (handle, incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    let weak = Arc::downgrade(&handle.shared);
+    tokio::task::yield_now().await;
+    handle.close();
+    drop(handle);
+    drop(incoming);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while weak.upgrade().is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("blocked I/O must release carrier state after close");
+}
+
+#[test]
+fn profiles_outside_wire_window_limits_are_rejected() {
+    for (stream, connection) in [
+        (MIB, 8 * MIB),
+        (4 * MIB, 4 * MIB),
+        (32 * MIB, 32 * MIB),
+        (4 * MIB + 1, 8 * MIB),
+    ] {
+        assert!(
+            MuxConfig {
+                stream_window_bytes: stream,
+                connection_window_bytes: connection,
+                ..MuxConfig::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+}

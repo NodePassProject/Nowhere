@@ -87,6 +87,13 @@ impl TlsManager {
                 .map(OpenedTls::Mux)
                 .map_err(Into::into);
         }
+        if self.mux(direction).lock().await.len() >= TLS_MUX_MAX_SHARDS_PER_DIRECTION {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "TLS mux pool has no stream capacity",
+            )
+            .into());
+        }
         let connect_started = Instant::now();
         let lane = self.connect_lane().await?;
         let TlsLane {

@@ -56,19 +56,30 @@ async fn portal_rejects_client_hello_without_nw2() {
     let shutdown = CancellationToken::new();
     let child_shutdown = shutdown.clone();
     let server_task = tokio::spawn(async move {
-        let (stream, peer) = listener.accept().await.unwrap();
-        let admission = portal_inner
-            .unauthenticated_admission
-            .try_acquire(peer.ip())
-            .unwrap();
-        handle_tcp_incoming(portal_inner, stream, peer, admission, child_shutdown).await;
+        for _ in 0..3 {
+            let (stream, peer) = listener.accept().await.unwrap();
+            let admission = portal_inner
+                .unauthenticated_admission
+                .try_acquire(peer.ip())
+                .unwrap();
+            handle_tcp_incoming(
+                portal_inner.clone(),
+                stream,
+                peer,
+                admission,
+                child_shutdown.clone(),
+            )
+            .await;
+        }
     });
 
-    assert!(
-        connect_test_tls_with_alpns(listen_addr, vec![b"now/1".to_vec()])
-            .await
-            .is_err()
-    );
+    for alpns in [vec![b"now/1".to_vec()], vec![b"private/2".to_vec()], vec![]] {
+        assert!(
+            connect_test_tls_with_alpns(listen_addr, alpns)
+                .await
+                .is_err()
+        );
+    }
     shutdown.cancel();
     server_task.await.unwrap();
 }

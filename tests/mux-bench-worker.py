@@ -134,11 +134,11 @@ def client(args):
     }, sort_keys=True))
 
 
-def wait_port(port):
+def wait_port(port, host):
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            with socket.create_connection((host, port), timeout=0.2):
                 return
         except OSError:
             time.sleep(0.05)
@@ -152,6 +152,7 @@ def main():
     target_parser.add_argument("--port", type=int, required=True)
     wait_parser = sub.add_parser("wait")
     wait_parser.add_argument("--port", type=int, required=True)
+    wait_parser.add_argument("--host", default="127.0.0.1")
     client_parser = sub.add_parser("client")
     client_parser.add_argument("--flows", type=int, required=True)
     client_parser.add_argument("--bytes", type=int, required=True)
@@ -163,7 +164,7 @@ def main():
     if args.role == "target":
         target(args.port)
     elif args.role == "wait":
-        wait_port(args.port)
+        wait_port(args.port, args.host)
     else:
         client(args)
 

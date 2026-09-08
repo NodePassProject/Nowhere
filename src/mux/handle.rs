@@ -49,7 +49,7 @@ impl MuxHandle {
             incoming_tx,
             active_streams_tx,
             closed: AtomicBool::new(false),
-            closed_notify: Notify::new(),
+            closed_notify: tokio_util::sync::CancellationToken::new(),
             #[cfg(test)]
             borrowed_write_copies: AtomicUsize::new(0),
         });
@@ -152,7 +152,7 @@ impl MuxHandle {
         if self.is_closed() {
             return;
         }
-        self.shared.closed_notify.notified().await;
+        self.shared.closed_notify.cancelled().await;
     }
 }
 

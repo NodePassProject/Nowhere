@@ -45,7 +45,7 @@ pub(super) async fn send_data(
 }
 
 pub(super) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<Shared>) {
-    let result: io::Result<()> = async {
+    let operation = async {
         let mut data_frames = 0_u8;
         loop {
             if shared.closed.load(std::sync::atomic::Ordering::Acquire) {
@@ -53,7 +53,7 @@ pub(super) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<
             }
             let mut encoded = [0; HEADER_LEN];
             tokio::select! {
-                _ = shared.closed_notify.notified() => return Ok(()),
+                _ = shared.closed_notify.cancelled() => return Ok(()),
                 result = reader.read_exact(&mut encoded) => { result?; }
             }
             let header = decode_header(&encoded).map_err(invalid)?;
@@ -64,7 +64,7 @@ pub(super) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<
             let mut payload = vec![0; payload_len];
             if payload_len != 0 {
                 tokio::select! {
-                    _ = shared.closed_notify.notified() => return Ok(()),
+                    _ = shared.closed_notify.cancelled() => return Ok(()),
                     result = reader.read_exact(&mut payload) => { result?; }
                 }
             }
@@ -82,8 +82,12 @@ pub(super) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<
                 }
             }
         }
-    }
-    .await;
+    };
+    let result: io::Result<()> = tokio::select! {
+        biased;
+        _ = shared.closed_notify.cancelled() => return,
+        result = operation => result,
+    };
     if result.is_err() {
         shared.close();
     }
@@ -174,7 +178,7 @@ pub(super) async fn run_terminals(shared: Arc<Shared>, mut terminal_rx: mpsc::Re
             return;
         }
         let flow_id = tokio::select! {
-            _ = shared.closed_notify.notified() => return,
+            _ = shared.closed_notify.cancelled() => return,
             flow_id = terminal_rx.recv() => flow_id,
         };
         let Some(flow_id) = flow_id else { return };
@@ -182,7 +186,7 @@ pub(super) async fn run_terminals(shared: Arc<Shared>, mut terminal_rx: mpsc::Re
             continue;
         };
         let sent = tokio::select! {
-            _ = shared.closed_notify.notified() => return,
+            _ = shared.closed_notify.cancelled() => return,
             sent = shared.data_tx.send(Outbound::Frame {
                 header,
                 payload: MuxChunk::empty(),
@@ -202,7 +206,7 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
     let mut control = Vec::with_capacity(8 * 64);
     let mut headers = Vec::with_capacity(8 * 256);
     let mut pending_item = None;
-    let result: io::Result<()> = async {
+    let operation = async {
         loop {
             if shared.closed.load(std::sync::atomic::Ordering::Acquire) {
                 return Ok(());
@@ -212,7 +216,7 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
             } else {
                 tokio::select! {
                     biased;
-                    _ = shared.closed_notify.notified() => return Ok(()),
+                    _ = shared.closed_notify.cancelled() => return Ok(()),
                     _ = shared.control_notify.notified() => {
                         write_pending_windows(&mut writer, &shared, &mut control).await?;
                         continue;
@@ -254,8 +258,12 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
                 }
             }
         }
-    }
-    .await;
+    };
+    let result: io::Result<()> = tokio::select! {
+        biased;
+        _ = shared.closed_notify.cancelled() => return,
+        result = operation => result,
+    };
     if result.is_err() {
         shared.close();
     }

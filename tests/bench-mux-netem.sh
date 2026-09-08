@@ -53,7 +53,7 @@ ip netns exec "$portal_ns" python3 "$worker" target --port 19000 &
 target_pid=$!
 ip netns exec "$portal_ns" env NOW_TRANSPORT_MEMORY_PROFILE=throughput "$binary" 'portal://secret@10.203.0.1/tcp:2000?log=none' &
 portal_pid=$!
-ip netns exec "$portal_ns" python3 "$worker" wait --port 2000
+ip netns exec "$portal_ns" python3 "$worker" wait --port 2000 --host 10.203.0.1
 
 ip netns exec "$vector_ns" env NOW_TRANSPORT_MEMORY_PROFILE=throughput "$binary" "vector://secret@10.203.0.1/tcp:2000?mux=$mux&socks=127.0.0.1:1080&log=none" &
 vector_pid=$!
