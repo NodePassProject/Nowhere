@@ -31,6 +31,7 @@ use crate::protocol::{
     encode_auth_frame, encode_udp_close,
 };
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel, TelemetryHub};
+use crate::transport::MorphTcpStream;
 use crate::transport::{Stats, transport_flow_control};
 
 use super::config::PortalClientConfig;
@@ -61,15 +62,15 @@ impl ClientSignals {
 }
 
 pub(super) struct TlsLane {
-    pub(super) stream: TlsStream<tokio::net::TcpStream>,
+    pub(super) stream: TlsStream<MorphTcpStream<tokio::net::TcpStream>>,
     pending_auth: Option<AuthFrame>,
     _link: LinkGuard,
     latency: LatencyGuard,
 }
 
 pub(super) struct TlsLaneParts {
-    pub(super) reader: tokio::io::ReadHalf<TlsStream<tokio::net::TcpStream>>,
-    pub(super) writer: tokio::io::WriteHalf<TlsStream<tokio::net::TcpStream>>,
+    pub(super) reader: tokio::io::ReadHalf<TlsStream<MorphTcpStream<tokio::net::TcpStream>>>,
+    pub(super) writer: tokio::io::WriteHalf<TlsStream<MorphTcpStream<tokio::net::TcpStream>>>,
     pub(super) pending_auth: Option<AuthFrame>,
     pub(super) link: LinkGuard,
     pub(super) latency: LatencyGuard,

@@ -34,7 +34,7 @@ fn empty_host_listens_on_both_wildcard_families() {
     assert_eq!(portal.inner.network_mode, NetworkMode::Mix);
     assert_eq!(
         portal.effective_url(),
-        "portal://*:2000?tls=1&rate=0&etar=0&dial=127.0.0.1&socks=none&next=none"
+        "portal://*:2000?tls=1&rate=0&etar=0&dial=127.0.0.1&morph=0&socks=none&next=none"
     );
 }
 
@@ -154,7 +154,7 @@ fn native_next_defaults_to_tcp_without_mux_and_redacts_the_shared_key() {
     assert_eq!(portal.inner.outbound.next_endpoint(), "relay.example:2080");
     assert_eq!(
         portal.inner.outbound.next_transport().as_deref(),
-        Some("up=tcp down=tcp mux=0 sni=none pin=none")
+        Some("up=tcp down=tcp mux=0 sni=none pin=none morph=0")
     );
     let effective = portal.effective_url();
     assert!(effective.contains("next=relay.example:2080"));
@@ -180,7 +180,9 @@ fn native_next_omitted_directions_keep_independent_tcp_defaults_and_explicit_mux
                 assert_eq!(portal.inner.network_mode, NetworkMode::Udp);
                 assert_eq!(
                     portal.inner.outbound.next_transport().as_deref(),
-                    Some(format!("up={up} down={down} mux={mux} sni=none pin=none").as_str()),
+                    Some(
+                        format!("up={up} down={down} mux={mux} sni=none pin=none morph=0").as_str()
+                    ),
                     "{raw}"
                 );
                 assert!(
@@ -210,7 +212,7 @@ fn native_next_uses_shared_endpoint_grammar_and_single_carrier_defaults() {
     );
     assert_eq!(
         portal.inner.outbound.next_transport().as_deref(),
-        Some("up=udp down=udp mux=0 sni=none pin=none")
+        Some("up=udp down=udp mux=0 sni=none pin=none morph=0")
     );
 }
 
@@ -228,7 +230,7 @@ fn native_next_reuses_transport_identity_and_source_binding() {
     assert_eq!(portal.inner.outbound.next_endpoint(), "[::1]:2080");
     assert_eq!(
         portal.inner.outbound.next_transport().as_deref(),
-        Some("up=tcp down=tcp mux=1 sni=origin.example pin=abc")
+        Some("up=tcp down=tcp mux=1 sni=origin.example pin=abc morph=0")
     );
     assert!(
         portal
@@ -315,7 +317,7 @@ fn native_next_accepts_mix_and_normalizes_pure_udp_mux() {
         .unwrap();
         assert_eq!(
             portal.inner.outbound.next_transport().as_deref(),
-            Some(format!("up={up} down={down} mux={mux} sni=none pin=none").as_str()),
+            Some(format!("up={up} down={down} mux={mux} sni=none pin=none morph=0").as_str()),
         );
         assert!(
             portal
@@ -406,6 +408,8 @@ fn portal_url_contract_rejects_invalid_structure_and_selected_values() {
         "portal://secret@127.0.0.1:2000?socks=",
         "portal://secret@127.0.0.1:2000?rate=-1",
         "portal://secret@127.0.0.1:2000?dial=not-an-ip",
+        "portal://secret@127.0.0.1:2000?morph=",
+        "portal://secret@127.0.0.1:2000?morph=2",
         "portal://secret@127.0.0.1:0",
         "portal://secret@127.0.0.1",
     ] {
@@ -414,6 +418,24 @@ fn portal_url_contract_rejects_invalid_structure_and_selected_values() {
             "URL unexpectedly accepted: {raw}"
         );
     }
+}
+
+#[test]
+fn outer_morph_controls_local_and_next_carriers() {
+    let portal = Portal::new(
+        Url::parse(
+            "portal://local-key@127.0.0.1:2000?morph=1&next=upstream-key@origin.example:2080",
+        )
+        .unwrap(),
+        test_logger(),
+    )
+    .unwrap();
+    assert!(portal.inner.morph_keys.is_some());
+    assert_eq!(
+        portal.inner.outbound.next_transport().as_deref(),
+        Some("up=tcp down=tcp mux=0 sni=none pin=none morph=1")
+    );
+    assert!(portal.effective_url().contains("&morph=1&"));
 }
 
 #[test]

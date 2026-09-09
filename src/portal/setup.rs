@@ -17,6 +17,7 @@ use crate::common::{
 };
 use crate::protocol::Credentials;
 use crate::telemetry::{InstanceRole, TelemetryHub};
+use crate::transport::MorphKeys;
 use crate::transport::{Buffers, RateLimiter, Stats};
 use crate::vector::{PortalClient, PortalClientConfig};
 
@@ -24,7 +25,7 @@ use super::listener::configure_transport;
 use super::{NetworkMode, Portal, PortalInner, UdpFlowLimits, admission, outbound::PortalOutbound};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
-    "tls", "crt", "key", "rate", "etar", "dial", "socks", "next", "log",
+    "tls", "crt", "key", "rate", "etar", "dial", "morph", "socks", "next", "log",
 ];
 const PORTAL_UPSTREAM_PARAMETERS: &[&str] = &["up", "down", "mux", "sni", "pin"];
 
@@ -79,6 +80,10 @@ impl Portal {
             service_endpoint.host = "*".to_owned();
         }
         let credentials = Credentials::new(&parsed_url)?;
+        let morph = query.get("morph").is_some_and(|value| value == "1");
+        let morph_keys = morph
+            .then(|| MorphKeys::from_url(&parsed_url))
+            .transpose()?;
         let runtime = super::config::PortalRuntimeConfig::from_env()
             .map_err(|e| anyhow::anyhow!("Portal configuration: invalid runtime setting: {e}"))?;
         let network_mode =
@@ -130,7 +135,12 @@ impl Portal {
             .map_err(|e| anyhow::anyhow!("Portal endpoint: failed to resolve UDP address: {e}"))?
             .unwrap_or_default();
 
-        configure_transport(&mut quic_server_config, runtime.udp_idle_timeout, None)?;
+        configure_transport(
+            &mut quic_server_config,
+            runtime.udp_idle_timeout,
+            None,
+            morph_keys.is_some(),
+        )?;
 
         let read_bps = rate_limit_bytes_per_second(rate_limit) as i64;
         let write_bps = rate_limit_bytes_per_second(etar_limit) as i64;
@@ -147,7 +157,8 @@ impl Portal {
             |(config, _)| format!("next={} {}", config.endpoint(), config.effective_route()),
         );
         let telemetry_summary = format!(
-            "listen={endpoint_addr} tls={tls_mode} rate={rate_limit} etar={etar_limit} dial={dialer_ip} socks={socks_endpoint} {next_summary}",
+            "listen={endpoint_addr} tls={tls_mode} rate={rate_limit} etar={etar_limit} dial={dialer_ip} morph={} socks={socks_endpoint} {next_summary}",
+            u8::from(morph),
         );
         let telemetry = TelemetryHub::for_current_process(
             InstanceRole::Portal,
@@ -170,6 +181,7 @@ impl Portal {
         Ok(Self {
             inner: Arc::new(PortalInner {
                 credentials,
+                morph_keys,
                 tls_mode,
                 network_mode,
                 endpoint_addr,
@@ -228,6 +240,11 @@ fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<(
         && !matches!(tls.as_str(), "1" | "2")
     {
         anyhow::bail!("tls=1 or tls=2 required");
+    }
+    if let Some(morph) = query.get("morph")
+        && !matches!(morph.as_str(), "0" | "1")
+    {
+        anyhow::bail!("morph must be 0 or 1");
     }
     let tls_is_ca = query.get("tls").is_some_and(|value| value == "2");
     let has_crt = query.contains_key("crt");

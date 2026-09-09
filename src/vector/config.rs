@@ -15,9 +15,10 @@ use crate::common::socks::{
 use crate::common::{
     CarrierEndpoint, DEFAULT_DIALER_IP, ServiceEndpoint, query_first, validate_endpoint_url_input,
 };
+use crate::transport::MorphKeys;
 
 const VECTOR_QUERY_KEYS: &[&str] = &[
-    "up", "down", "mux", "sni", "pin", "rate", "etar", "socks", "log",
+    "up", "down", "mux", "sni", "pin", "rate", "etar", "morph", "socks", "log",
 ];
 
 /// Whether a client originates dedicated or Mux TLS carriers.
@@ -83,6 +84,8 @@ pub(crate) struct PortalClientConfig {
     pub(crate) up: CarrierMode,
     pub(crate) down: CarrierMode,
     pub(crate) mux: MuxMode,
+    pub(crate) morph: bool,
+    pub(crate) morph_keys: Option<MorphKeys>,
     pub(crate) sni: Option<String>,
     pub(crate) pin: Option<String>,
     pub(crate) dialer_ip: String,
@@ -117,6 +120,12 @@ impl PortalClientConfig {
         } else {
             mux
         };
+        let morph = match query.get("morph").map(String::as_str) {
+            None | Some("0") => false,
+            Some("1") => true,
+            Some(_) => bail!("{context}: morph must be 0 or 1"),
+        };
+        let morph_keys = morph.then(|| MorphKeys::from_url(url)).transpose()?;
         let sni = query
             .get("sni")
             .filter(|value| !value.is_empty() && value.as_str() != "none")
@@ -140,6 +149,8 @@ impl PortalClientConfig {
             up,
             down,
             mux,
+            morph,
+            morph_keys,
             sni,
             pin,
             dialer_ip: dialer_ip.to_owned(),
@@ -188,12 +199,13 @@ impl PortalClientConfig {
 
     pub(crate) fn effective_route(&self) -> String {
         format!(
-            "up={} down={} mux={} sni={} pin={}",
+            "up={} down={} mux={} sni={} pin={} morph={}",
             self.up,
             self.down,
             self.mux,
             self.sni.as_deref().unwrap_or("none"),
             self.pin.as_deref().unwrap_or("none"),
+            u8::from(self.morph),
         )
     }
 }
@@ -248,6 +260,8 @@ pub(crate) struct VectorConfig {
     pub(super) up: CarrierMode,
     pub(super) down: CarrierMode,
     pub(super) mux: MuxMode,
+    pub(super) morph: bool,
+    pub(super) morph_keys: Option<MorphKeys>,
     pub(super) sni: Option<String>,
     pub(super) pin: Option<String>,
     pub(super) rate_mbps: i32,
@@ -280,6 +294,8 @@ impl VectorConfig {
             up: portal.up,
             down: portal.down,
             mux: portal.mux,
+            morph: portal.morph,
+            morph_keys: portal.morph_keys,
             sni: portal.sni,
             pin: portal.pin,
             rate_mbps,
@@ -294,6 +310,8 @@ impl VectorConfig {
             up: self.up,
             down: self.down,
             mux: self.mux,
+            morph: self.morph,
+            morph_keys: self.morph_keys.clone(),
             sni: self.sni.clone(),
             pin: self.pin.clone(),
             dialer_ip: DEFAULT_DIALER_IP.to_owned(),
@@ -320,7 +338,7 @@ impl VectorConfig {
 
     pub(super) fn effective_url(&self) -> String {
         format!(
-            "vector://{}?up={}&down={}&mux={}&sni={}&pin={}&rate={}&etar={}&socks={}",
+            "vector://{}?up={}&down={}&mux={}&sni={}&pin={}&rate={}&etar={}&morph={}&socks={}",
             self.portal_endpoint(),
             self.up,
             self.down,
@@ -329,6 +347,7 @@ impl VectorConfig {
             self.pin.as_deref().unwrap_or("none"),
             self.rate_mbps,
             self.etar_mbps,
+            u8::from(self.morph),
             self.socks.endpoint(),
         )
     }

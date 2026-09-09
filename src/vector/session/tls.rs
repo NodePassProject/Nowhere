@@ -176,7 +176,7 @@ impl TlsManager {
             .connect_tcp(endpoint, &self.dialer_ip, *family)
             .await?;
         let latency = self.latency.register();
-        latency.update_tcp(stream.get_ref().0);
+        latency.update_tcp(stream.get_ref().0.get_ref());
         let auth = encode_auth_frame(
             self.auth_key,
             AuthTransport::TlsTcp,

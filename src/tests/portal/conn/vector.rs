@@ -119,11 +119,16 @@ async fn reserve_udp_port_except(excluded: u16) -> (u16, UdpSocket) {
 }
 
 async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
+    start_runtime_with_morph(up, down, mux, false).await
+}
+
+async fn start_runtime_with_morph(up: &str, down: &str, mux: u8, morph: bool) -> TestRuntime {
     let (tcp_port, tcp_reservation) = reserve_tcp_port().await;
     let (udp_port, udp_reservation) = reserve_udp_port_except(tcp_port).await;
     let portal = Portal::new(
         Url::parse(&format!(
-            "portal://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?log=none"
+            "portal://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?log=none&morph={}",
+            u8::from(morph)
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -150,7 +155,8 @@ async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
     let (socks_port, socks_reservation) = reserve_tcp_port().await;
     let vector = Vector::new(
         Url::parse(&format!(
-            "vector://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?log=none&up={up}&down={down}&mux={mux}&socks=127.0.0.1:{socks_port}"
+            "vector://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?log=none&up={up}&down={down}&mux={mux}&morph={}&socks=127.0.0.1:{socks_port}",
+            u8::from(morph)
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -167,6 +173,44 @@ async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
         vector_task,
         portal_stats,
         socks,
+    }
+}
+
+#[tokio::test]
+async fn morph_relays_every_fixed_tcp_udp_route() {
+    for (up, down) in [
+        ("tcp", "tcp"),
+        ("tcp", "udp"),
+        ("udp", "tcp"),
+        ("udp", "udp"),
+    ] {
+        let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_address = target.local_addr().unwrap();
+        let echo = tokio::spawn(async move {
+            let (mut stream, _) = target.accept().await.unwrap();
+            let mut request = [0u8; 5];
+            stream.read_exact(&mut request).await.unwrap();
+            assert_eq!(&request, b"morph");
+            stream.write_all(b"works").await.unwrap();
+        });
+        let runtime = start_runtime_with_morph(up, down, 0, true).await;
+        timeout(TEST_TIMEOUT, async {
+            let mut socks = TcpStream::connect(runtime.socks).await.unwrap();
+            negotiate_socks(&mut socks).await;
+            socks
+                .write_all(&ip_request(1, target_address))
+                .await
+                .unwrap();
+            read_ipv4_reply(&mut socks).await;
+            socks.write_all(b"morph").await.unwrap();
+            let mut response = [0u8; 5];
+            socks.read_exact(&mut response).await.unwrap();
+            assert_eq!(&response, b"works", "up={up} down={down}");
+        })
+        .await
+        .unwrap();
+        echo.await.unwrap();
+        runtime.stop().await;
     }
 }
 

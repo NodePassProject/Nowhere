@@ -332,12 +332,13 @@ impl Portal {
     /// Returns the effective startup URL that is logged for operators.
     pub(super) fn effective_url(&self) -> String {
         let base = format!(
-            "portal://{}?tls={}&rate={}&etar={}&dial={}&socks={}&next={}",
+            "portal://{}?tls={}&rate={}&etar={}&dial={}&morph={}&socks={}&next={}",
             self.inner.endpoint_addr,
             self.inner.tls_mode,
             self.inner.rate_limit,
             self.inner.etar_limit,
             self.inner.outbound.dialer_ip(),
+            u8::from(self.inner.morph_keys.is_some()),
             self.inner.outbound.socks_endpoint(),
             self.inner.outbound.next_endpoint(),
         );
@@ -345,7 +346,12 @@ impl Portal {
             .outbound
             .next_transport()
             .map_or(base.clone(), |transport| {
-                format!("{base}&{}", transport.replace(' ', "&"))
+                let upstream = transport
+                    .split_whitespace()
+                    .filter(|option| !option.starts_with("morph="))
+                    .collect::<Vec<_>>()
+                    .join("&");
+                format!("{base}&{upstream}")
             })
     }
 
@@ -357,7 +363,11 @@ impl Portal {
         bind_carrier(
             &self.inner.udp_bind_addrs,
             self.inner.allow_udp_family_degrade,
-            |addr| listen_endpoint(self.inner.quic_server_config.clone(), addr),
+            |addr| listen_endpoint(
+                self.inner.quic_server_config.clone(),
+                addr,
+                self.inner.morph_keys.clone(),
+            ),
             |addr, error| self.inner.logger.warn(format_args!(
                 "portal::listen_endpoints: UDP address family unavailable for {addr}; continuing: {error:#}"
             )),

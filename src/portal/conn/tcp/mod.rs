@@ -26,6 +26,7 @@ use crate::portal::admission::UnauthenticatedGuard;
 use crate::portal::pairing::SessionKey;
 use crate::protocol::{ALPN, AuthTransport, read_auth_frame};
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel};
+use crate::transport::MorphTcpStream;
 
 use self::flow::process_flow;
 use super::auth::{authentication_deadline, wait_for_auth_deadline};
@@ -91,11 +92,13 @@ pub(super) async fn handle_tcp_incoming_with_timeouts(
     }
     let local = stream.local_addr().ok();
     let server_config = portal.tls_server_config.clone();
+    let morph_keys = portal.morph_keys.clone();
     let tls_stream = match tokio::select! {
         biased;
         _ = shutdown.cancelled() => return,
         _ = portal.drain.cancelled() => return,
         result = timeout(portal.runtime.handshake_timeout, async move {
+            let stream = MorphTcpStream::server(stream, morph_keys);
             let start = LazyConfigAcceptor::new(rustls::server::Acceptor::default(), stream).await?;
             let offers_nw2 = start
                 .client_hello()
@@ -174,7 +177,7 @@ pub(super) async fn handle_tcp_incoming_with_timeouts(
         Err(_) => return,
     };
     let session_key = session_id;
-    if let Err(err) = SockRef::from(tls_stream.get_ref().0).set_keepalive(true) {
+    if let Err(err) = SockRef::from(tls_stream.get_ref().0.get_ref()).set_keepalive(true) {
         portal.logger.debug(format_args!(
             "portal::conn::tcp: TCP keepalive failed: {err}"
         ));
@@ -225,7 +228,7 @@ pub(super) async fn handle_tcp_incoming_with_timeouts(
 
 async fn handle_mux(
     portal: Arc<PortalInner>,
-    tls_stream: tokio_rustls::server::TlsStream<TcpStream>,
+    tls_stream: tokio_rustls::server::TlsStream<MorphTcpStream<TcpStream>>,
     session_key: SessionKey,
     peer: SocketAddr,
     local: Option<SocketAddr>,

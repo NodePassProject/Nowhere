@@ -121,13 +121,34 @@ impl QuicManager {
             }
             None => SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 0),
         };
-        let mut endpoint = Endpoint::client(bind)
+        let socket = std::net::UdpSocket::bind(bind)
             .with_context(|| format!("vector::session::QuicManager: bind {bind} failed"))?;
+        socket
+            .set_nonblocking(true)
+            .context("vector::session::QuicManager: failed to configure UDP socket")?;
+        let runtime = quinn::default_runtime()
+            .ok_or_else(|| anyhow!("vector::session::QuicManager: no async runtime found"))?;
+        let socket = runtime
+            .wrap_udp_socket(socket)
+            .context("vector::session::QuicManager: failed to initialize UDP runtime socket")?;
+        let morph_enabled = self.config.morph_keys.is_some();
+        let socket = crate::transport::wrap_morph_udp_socket(
+            socket,
+            self.config.morph_keys.as_ref().map(|keys| keys.udp_key()),
+        )?;
+        let mut endpoint = Endpoint::new_with_abstract_socket(
+            crate::transport::morph_endpoint_config(morph_enabled)?,
+            None,
+            socket,
+            runtime,
+        )
+        .context("vector::session::QuicManager: failed to create QUIC endpoint")?;
         let mut client_config = self.tls.quic_client_config()?;
         configure_quic_transport(
             &mut client_config,
             udp_idle_timeout(),
             Duration::from_secs(15),
+            morph_enabled,
         )?;
         endpoint.set_default_client_config(client_config);
         let connecting = endpoint
@@ -372,6 +393,7 @@ fn configure_quic_transport(
     config: &mut quinn::ClientConfig,
     idle_timeout: Duration,
     keepalive_interval: Duration,
+    morph_enabled: bool,
 ) -> Result<()> {
     let flow_control = transport_flow_control()?;
     let mut transport = quinn::TransportConfig::default();
@@ -384,6 +406,7 @@ fn configure_quic_transport(
     transport.max_idle_timeout(Some(quinn::IdleTimeout::try_from(idle_timeout)?));
     transport.keep_alive_interval(Some(keepalive_interval));
     transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
+    crate::transport::configure_morph_mtu(&mut transport, morph_enabled);
     config.transport_config(Arc::new(transport));
     Ok(())
 }

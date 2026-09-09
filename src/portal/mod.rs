@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 use crate::common::{Lifecycle, Logger, TLSMode};
 use crate::protocol::Credentials;
 use crate::telemetry::TelemetryHub;
-use crate::transport::{Buffers, RateLimiter, Stats};
+use crate::transport::{Buffers, MorphKeys, RateLimiter, Stats};
 
 use self::config::PortalRuntimeConfig;
 pub(crate) use self::mode::NetworkMode;
@@ -43,6 +43,7 @@ pub struct Portal {
 
 struct PortalInner {
     credentials: Credentials,
+    morph_keys: Option<MorphKeys>,
     tls_mode: TLSMode,
     network_mode: NetworkMode,
     endpoint_addr: String,

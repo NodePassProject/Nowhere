@@ -23,6 +23,7 @@ use crate::common::{
     AddressFamily, certificate_sha256, dial_tcp_from_local_ip_family, handshake_timeout,
 };
 use crate::protocol::{ALPN, TLS_EXPORTER_LEN, TlsExporter};
+use crate::transport::{MorphKeys, MorphTcpStream};
 
 use super::config::PortalClientConfig;
 
@@ -33,6 +34,7 @@ pub(super) const EXPORTER_LABEL: &[u8] = b"EXPORTER-Nowhere-Auth";
 pub(super) struct ClientTls {
     rustls: Arc<rustls::ClientConfig>,
     server_name: ServerName<'static>,
+    morph_keys: Option<MorphKeys>,
 }
 
 impl ClientTls {
@@ -86,6 +88,7 @@ impl ClientTls {
         Ok(Self {
             rustls: Arc::new(client),
             server_name,
+            morph_keys: config.morph_keys.clone(),
         })
     }
 
@@ -108,7 +111,7 @@ impl ClientTls {
         endpoint: &str,
         dialer_ip: &str,
         family: AddressFamily,
-    ) -> Result<(TlsStream<TcpStream>, TlsExporter)> {
+    ) -> Result<(TlsStream<MorphTcpStream<TcpStream>>, TlsExporter)> {
         let stream =
             dial_tcp_from_local_ip_family(dialer_ip, endpoint, handshake_timeout(), family)
                 .await
@@ -116,6 +119,7 @@ impl ClientTls {
         stream
             .set_nodelay(true)
             .context("vector::tls::connect_tcp: failed to set TCP_NODELAY")?;
+        let stream = MorphTcpStream::client(stream, self.morph_keys.clone())?;
         let connector = TlsConnector::from(self.rustls.clone());
         let tls = timeout(
             handshake_timeout(),

@@ -201,11 +201,12 @@ impl Vector {
             telemetry_interval().context("vector::Vector::new: invalid NOW_TELEMETRY_INTERVAL")?;
         let credentials = Credentials::new(&parsed_url)?;
         let telemetry_summary = format!(
-            "portal={} up={} down={} mux={} socks={}",
+            "portal={} up={} down={} mux={} morph={} socks={}",
             config.portal_endpoint(),
             config.up,
             config.down,
             config.mux,
+            u8::from(config.morph),
             config.socks.endpoint(),
         );
         let telemetry = TelemetryHub::for_current_process(

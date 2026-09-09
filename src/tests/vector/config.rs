@@ -201,8 +201,29 @@ fn effective_url_uses_canonical_order_and_prints_identity_options() {
     .unwrap();
     assert_eq!(
         config.effective_url(),
-        "vector://example.com:2000?up=tcp&down=tcp&mux=1&sni=relay.example&pin=abc&rate=1&etar=2&socks=:1080"
+        "vector://example.com:2000?up=tcp&down=tcp&mux=1&sni=relay.example&pin=abc&rate=1&etar=2&morph=0&socks=:1080"
     );
+}
+
+#[test]
+fn morph_is_strict_optional_and_uses_the_first_value() {
+    let disabled = parse("vector://secret@example.com:2000?socks=:1080").unwrap();
+    assert!(!disabled.morph);
+    assert!(disabled.morph_keys.is_none());
+
+    let enabled = parse("vector://secret@example.com:2000?morph=1&morph=0&socks=:1080").unwrap();
+    assert!(enabled.morph);
+    assert!(enabled.morph_keys.is_some());
+    assert!(enabled.effective_url().contains("&morph=1&"));
+
+    for value in ["", "2", "true"] {
+        assert!(
+            parse(&format!(
+                "vector://secret@example.com:2000?morph={value}&socks=:1080"
+            ))
+            .is_err()
+        );
+    }
 }
 
 #[test]
@@ -267,6 +288,21 @@ fn upstream_authority_decodes_reserved_key_bytes_and_ipv6() {
         credentials,
         crate::protocol::Credentials::from_shared_key(b"part@key").unwrap()
     );
+}
+
+#[test]
+fn upstream_morph_derives_from_the_nested_shared_key() {
+    let query = HashMap::from([("morph".to_owned(), "1".to_owned())]);
+    let (config, _) = PortalClientConfig::from_upstream_authority(
+        "upstream-key@origin.example:2080",
+        &query,
+        "auto",
+    )
+    .unwrap();
+    let actual = config.morph_keys.unwrap().udp_key();
+
+    assert_eq!(actual, MorphKeys::derive(b"upstream-key").udp_key());
+    assert_ne!(actual, MorphKeys::derive(b"outer-key").udp_key());
 }
 
 #[test]
