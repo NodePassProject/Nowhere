@@ -4,9 +4,16 @@
 //! Optional keyed wire transform below TLS and QUIC.
 
 use std::fmt;
+use std::io;
 
 use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use sha2::Sha256;
+
+mod tcp;
+
+pub(crate) use tcp::MorphTcpStream;
+
+const NONCE_LEN: usize = 12;
 const MORPH_ROOT_SALT: &[u8] = b"nowhere/morph";
 const TCP_C2S_INFO: &[u8] = b"tcp c2s";
 const TCP_S2C_INFO: &[u8] = b"tcp s2c";
@@ -62,6 +69,13 @@ fn hkdf_expand_one(root: MorphKey, info: &[u8]) -> MorphKey {
     mac.update(&[1]);
     mac.finalize().into_bytes().into()
 }
+
+fn exhausted() -> io::Error {
+    io::Error::other("Morph TCP keystream exhausted")
+}
+
+#[cfg(test)]
+use tcp::apply_at;
 
 #[cfg(test)]
 #[path = "../tests/transport/morph.rs"]
