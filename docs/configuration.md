@@ -66,6 +66,7 @@ portal://shared-key@host:port?tls=1&log=info
 portal://shared-key@*:2000?tls=1&log=info
 portal://shared-key@*/tcp:2006/udp:2017?tls=1&log=info
 portal://shared-key@host/tcp4:2006/udp6:2017?tls=1&log=info
+portal://shared-key@*:2000?tls=1&morph=1&log=info
 ```
 
 The compact `host:port` form enables TLS/TCP and QUIC/UDP on the same port.
@@ -103,6 +104,7 @@ sockets instead of relying on an operating-system dual-stack default.
 | `crt`, `key` | PEM paths, required with `tls=2` | — |
 | `rate`, `etar` | Mbps, `0` disables limit | `0` |
 | `dial` | `auto` or local IP | `auto` |
+| `morph` | `0` bare TLS/QUIC wire, `1` keyed wire transform | `0` |
 | `socks` | outbound SOCKS5 configuration | disabled |
 | `next` | `shared-key@host:port` or explicit carrier endpoint | disabled |
 | `up`, `down` | native next-hop policy: `tcp`, `udp`, or `mix` | only carrier, otherwise `tcp` |
@@ -116,6 +118,10 @@ upstream hop. Protocol version is negotiated independently with the next
 Portal. These upstream options are ignored when `next` is absent or `none`.
 `socks` and `next` are mutually exclusive outbound paths.
 
+`morph=1` controls both the Portal listener and its native `next` client. The
+listener derives Morph keys from the outer Portal key; the `next` client derives
+them from the key inside `next`. The nested value never carries an inner query.
+
 ## Vector URL
 
 ```text
@@ -123,6 +129,7 @@ vector://shared-key@host:port?up=tcp&down=tcp&socks=127.0.0.1:1080
 vector://shared-key@host/tcp:2006?socks=127.0.0.1:1080
 vector://shared-key@host/udp6:2017?socks=127.0.0.1:1080
 vector://shared-key@host/tcp:2006/udp:2017?up=tcp&down=udp&socks=127.0.0.1:1080
+vector://shared-key@host:2000?morph=1&socks=127.0.0.1:1080
 ```
 
 Vector uses the TCP carrier port only for TLS and the UDP carrier port only for
@@ -144,6 +151,7 @@ traffic. The transport default does not enable Mux; omitted `mux` remains `0`.
 | `sni` | verified DNS name, or `none` | `none` |
 | `pin` | certificate SHA-256 pin, or `none` | `none` |
 | `rate`, `etar` | Mbps, `0` disables limit | `0` |
+| `morph` | `0` bare TLS/QUIC wire, `1` keyed wire transform | `0` |
 | `socks` | required local listen address, optionally credentials | — |
 | `log` | logging threshold | `info` |
 
@@ -162,7 +170,7 @@ over IPv6. A carrier or family chosen locally does not constrain the next hop.
 
 `next` must contain exactly one encoded shared key, `@`, and one endpoint. Its
 host must be concrete; `*` is invalid. It has no inner query or fragment.
-`up`, `down`, `mux`, `sni`, and `pin` remain query parameters of the outer
+`up`, `down`, `mux`, `sni`, `pin`, and `morph` remain query parameters of the outer
 Portal URL. Reserved bytes in the nested key are percent-encoded once and are
 decoded once when the upstream credentials are built.
 
@@ -176,18 +184,18 @@ family boundary to recover from a failure.
 ```text
 Portal URL
     |
-    +-- listener: endpoint path, tls, crt, key
+    +-- listener: endpoint path, tls, crt, key, morph
     +-- relay:    rate, etar, dial, log
     |
     +-- outbound path
           |
           +-- direct target access
           +-- socks  --> SOCKS5 proxy --> target
-          +-- next   --> {up, down, mux, sni, pin} --> Portal
+          +-- next   --> {up, down, mux, sni, pin, morph} --> Portal
 
 Vector URL
     |
-    +-- Portal client: up, down, mux, sni, pin
+    +-- Portal client: up, down, mux, sni, pin, morph
     +-- SOCKS5 edge:   socks
     +-- relay:         rate, etar, log
 ```
@@ -239,6 +247,13 @@ Portal and Vector use only the fixed ALPN `nw2`. A peer that does not offer
 normal unknown-parameter rule. Portal's `mux` option controls only
 its `next` client. Inbound Portal connections accept a `0xff`-marked Mux carrier
 or an unmarked dedicated lane on the same listener.
+
+Morph is hop-local and has no negotiation or fallback. Both endpoints must
+configure the same value. Compact `HOST:PORT` endpoints apply it to TCP and
+UDP on the shared port; explicit paths apply it only to the carrier entries
+present in the path. Values other than `0` and `1`, including an empty value,
+are configuration errors. Duplicate `morph` keys follow the general rule that
+the first recognized value wins.
 
 For `tls=2`, `crt` and `key` are native filesystem paths. Quote the complete
 URL when a Windows path, space, `&`, or another shell-significant character is

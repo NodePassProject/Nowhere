@@ -50,6 +50,8 @@ Configuration integrations should preserve these invariants:
 - reserve `*` and compact empty hosts for Portal listeners;
 - keep `next` policy in the outer Portal query rather than adding an inner
   query to the nested endpoint.
+- emit `morph=1` only when both peers on that hop implement the Morph wire
+  transform; omission and `morph=0` are equivalent.
 
 Portal accepts `portal://key@:2000` as the compact wildcard alias. Explicit
 Portal listeners use `portal://key@*/tcp:2006/udp:2017`. Vector and native
@@ -78,6 +80,7 @@ An alternate client provides:
 - nonzero Flow IDs unique among active flows in that session;
 - matching OPEN and ATTACH metadata for split-carrier flows;
 - bounded retry and reconnection behavior after carrier failure.
+- the exact Morph HKDF and ChaCha20 socket wrapper when `morph=1` is selected.
 
 The command URL is not transmitted. It selects the remote socket used for each
 physical carrier; the negotiated ALPN, AuthFrame transport byte, and FlowHeader
@@ -99,7 +102,11 @@ dedicated or Mux TLS when TCP can be selected and defaults to `0`; it has no
 effect without `next` and canonicalizes to `0` for `udp/udp`. Authentication,
 flow setup, bounds, and failure semantics are identical at every hop.
 
+The outer `morph=0|1` applies to both the inbound listener and the native next
+client. The two sides derive from their respective endpoint keys, so a relay
+does not reuse its inbound Morph keys on the next hop.
+
 The nested value contains no scheme, query, or fragment. Percent-encoded key
-bytes are decoded exactly once. `up`, `down`, `mux`, `sni`, and `pin` stay on
+bytes are decoded exactly once. `up`, `down`, `mux`, `sni`, `pin`, and `morph` stay on
 the outer Portal URL, while the outer `dial` address also constrains the local
 family used for upstream TCP and UDP sockets.
