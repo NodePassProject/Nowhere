@@ -3,48 +3,34 @@
 </p>
 
 <p align="center">
-  <strong>Two-transport encrypted relay with independently split directions</strong>
+  <strong>One relay. Two carriers. Independent directions.</strong>
 </p>
 
 <p align="center">
-  A cross-platform encrypted relay that composes TLS/TCP and QUIC/UDP<br>
-  independently for upload and download.
+  A cross-platform relay that composes TLS/TCP and QUIC/UDP<br>
+  independently for every flow.
 </p>
 
 <p align="center">
-  <a href="#live-operations">Live operations</a> &middot;
   <a href="#how-it-works">Architecture</a> &middot;
   <a href="#quick-start">Quick start</a> &middot;
+  <a href="#live-operations">Live operations</a> &middot;
   <a href="docs/README.md">Documentation</a> &middot;
   <a href="docs/protocol.md">Wire protocol</a>
 </p>
 
-Nowhere gives one service edge two encrypted carrier families. A local
-**Vector** accepts SOCKS5 traffic; a remote **Portal** authenticates carriers,
-opens targets, and relays data. Every logical flow chooses its uplink and
-downlink independently instead of forcing both directions onto one transport.
+Nowhere joins TLS/TCP and QUIC/UDP behind one service edge. **Vector** accepts
+local SOCKS5 traffic; **Portal** authenticates carriers and reaches the target.
+Each flow selects its uplink and downlink independently.
 
 | Core property | What it means |
 | --- | --- |
-| One service edge | TLS/TCP and QUIC/UDP share one host, credential, and lifecycle, with independent ports and address families |
-| Split directions | Uplink and downlink independently select TLS/TCP or QUIC/UDP |
-| Complete ingress | SOCKS5 CONNECT carries TCP; UDP ASSOCIATE carries UDP |
-| Native chaining | A Portal can forward directly to another Portal without a loopback SOCKS5 conversion |
-| Local observability | The same binary discovers running instances and renders live telemetry metrics |
-
-## Live operations
-
-<p align="center">
-  <img src="assets/nowhere.gif" width="1280" alt="Nowhere TUI showing live traffic histories, connection and carrier metrics, privacy-aware access logs, runtime events, filtering, pause, and help">
-</p>
-
-The read-only TUI discovers Portal and Vector instances for the current user.
-It presents traffic, carriers, process metrics, Access logs, and Runtime logs
-without owning the service lifecycle. Start it from another terminal:
-
-```bash
-nowhere tui
-```
+| Unified edge | TLS/TCP and QUIC/UDP share one identity and lifecycle |
+| Split routing | Uplink and downlink choose their carrier independently |
+| Optional Morph | A keyed transform masks the TLS/QUIC wire image |
+| TCP and UDP | SOCKS5 CONNECT and UDP ASSOCIATE are both supported |
+| Native chaining | Portal forwards directly to Portal with no local proxy loop |
+| Built-in telemetry | The same binary discovers and inspects live instances |
 
 ## How it works
 
@@ -68,10 +54,8 @@ nowhere tui
                                   +------------+                          +------------+
 ```
 
-Every service URL has one shared host and either a compact or explicit
-endpoint. The compact form enables both carriers on one port. The explicit
-form enables only the listed carriers and gives each one its own port and
-address-family policy.
+Each service URL uses either a compact endpoint for both carriers on one port,
+or an explicit endpoint that assigns carriers, ports, and address families.
 
 | Endpoint | Meaning |
 |---|---|
@@ -80,17 +64,14 @@ address-family policy.
 | `@*/udp:2017` | QUIC/UDP only, IPv4 and IPv6 |
 | `@*/tcp4:2006/udp6:2017` | TLS/TCP on IPv4 and QUIC/UDP on IPv6 |
 
-`*` is a Portal listen host. Vector and `next` use a concrete IP address or
-hostname. The compact Portal form also accepts an empty host, so `@:2000` and
-`@*:2000` have the same meaning. See
-[Configuration](docs/configuration.md) for the complete grammar, validation
-rules, DNS behavior, family availability, and canonical output.
+`*` is reserved for Portal listeners; Vector and `next` require a concrete
+address or hostname. On Portal, `@:2000` is shorthand for `@*:2000`. The full
+grammar is documented in [Configuration](docs/configuration.md).
 
-### One flow, two transport decisions
+### Independent uplink and downlink
 
-Vector's `up` and `down` parameters accept `tcp`, `udp`, or `mix`. When both
-carriers are available, omitted directions select TCP. Mux remains disabled
-unless `mux=1` is set:
+`up` and `down` accept `tcp`, `udp`, or `mix`. With both carriers available,
+the default is TCP; `mux=1` enables TLS multiplexing.
 
 | `up` ↓ / `down` → | `tcp` | `udp` | `mix` |
 |---|---|---|---|
@@ -98,37 +79,62 @@ unless `mux=1` is set:
 | `udp` | QT | QQ | QT ↔ QQ |
 | `mix` | TT ↔ QT | TQ ↔ QQ | TT ↔ QQ |
 
-T means TLS/TCP and Q means QUIC/UDP, with uplink first. Each mixed cell makes
-one stateless 50/50 choice per flow; `mix/mix` produces only TT or QQ. The
-primary route has a `NOW_MIX_FALLBACK_TIMEOUT` budget (default `1s`), then the
-other route is attempted once with a new flow ID. FlowHeader carries only the
-resolved concrete pair, and no fallback occurs after its write begins. Portal
-`next=` applies the same policy independently per hop.
+T is TLS/TCP and Q is QUIC/UDP, with uplink first. `mix` makes one 50/50 choice
+per flow and may try the alternate route once before commitment. Portal
+`next=` applies the same policy independently on each hop.
 
-## Engineered for a small data path
+## Data path
 
-The data path uses compact binary frames, connection-bound authentication,
-reusable buffers, bounded queues, and native QUIC streams and DATAGRAMs. TLS
-flows use dedicated lanes or lazily opened Mux Shards. Detailed framing and
-resource bounds live in [Protocol](docs/protocol.md) and
-[Security](docs/security.md).
+Authentication belongs to each physical carrier; routing belongs to each
+logical flow. Once Portal returns `READY`, application data travels as a plain
+byte stream or QUIC DATAGRAM payload.
 
-### Native Portal chaining
+```text
+Carrier bootstrap                 Logical flow
 
-A relay Portal can terminate the incoming TLS/QUIC carrier and open the next
-Nowhere flow directly with the same transport engine used by Vector:
++----------------+                +----------------+----------+-------------+
+| AuthFrame      |                | FlowHeader     | Target?  | Payload ... |
+| 32 bytes       |                | 5 bytes        | variable | after READY |
++----------------+                +----------------+----------+-------------+
+        |                                  |
+        +-- TLS: dedicated lane or Mux     +-- TCP: reliable byte stream
+        +-- QUIC: first stream only        +-- UDP: UoT or QUIC DATAGRAM
+```
+
+Frames are compact, queues are bounded, and hot-path buffers are reused. See
+[Protocol](docs/protocol.md) for the wire contract and
+[Security](docs/security.md) for trust boundaries.
+
+### Morph
+
+`morph=1` masks the bare TLS/QUIC wire image with a transform derived from the
+shared key:
+
+```text
+TCP  client -> server   [ nonce 12B ][ ChaCha20-XOR(TLS stream) ]
+     server -> client                [ ChaCha20-XOR(TLS stream) ]
+
+UDP  each datagram      [ nonce 12B ][ ChaCha20-XOR(QUIC datagram) ]
+```
+
+Both endpoints on a hop must enable it. Morph is wire masking, with no protocol
+camouflage or added security semantics. See [Protocol](docs/protocol.md).
+
+### Native chaining
+
+A Portal can open the next Nowhere hop directly:
 
 ```bash
 nowhere \
   'portal://relay-key@:2000?next=origin-key@origin.example:2000&up=udp&down=udp'
 ```
 
-`next` is lazy and mutually exclusive with outbound `socks`. Portal forwarding
-uses the native flow protocol and is bounded to seven hops.
+`next` is lazy, mutually exclusive with outbound `socks`, and bounded to seven
+hops.
 
 ## Quick start
 
-Building from source requires a supported target and a stable Rust toolchain.
+Use a stable Rust toolchain on a supported target.
 
 ### 1. Build
 
@@ -138,7 +144,7 @@ cargo build --release --locked
 
 ### 2. Start Portal
 
-The compact endpoint accepts TLS/TCP and QUIC/UDP on port `2000`:
+Listen on TLS/TCP and QUIC/UDP at port `2000`:
 
 ```bash
 ./target/release/nowhere 'portal://change-me@127.0.0.1:2000'
@@ -146,54 +152,60 @@ The compact endpoint accepts TLS/TCP and QUIC/UDP on port `2000`:
 
 ### 3. Start Vector
 
-This Vector exposes SOCKS5 on `127.0.0.1:1080`:
+Expose SOCKS5 on `127.0.0.1:1080`:
 
 ```bash
 ./target/release/nowhere \
   'vector://change-me@127.0.0.1:2000?up=tcp&down=tcp&socks=127.0.0.1:1080'
 ```
 
-Mux, split-carrier, certificate, and chaining examples are in the
-[configuration guide](docs/configuration.md) and
-[quick start](docs/quick-start.md).
+More examples are available in [Configuration](docs/configuration.md) and the
+[extended quick start](docs/quick-start.md).
 
 ### 4. Inspect
 
-Open another terminal and run:
+Open the local TUI from another terminal:
 
 ```bash
 ./target/release/nowhere tui
 ```
 
-## Before public deployment
+## Live operations
 
-The local examples omit `sni`, which disables certificate verification. A
-public Portal should use a CA-trusted certificate with strict verification:
+<p align="center">
+  <img src="assets/nowhere.gif" width="1280" alt="Nowhere TUI showing live traffic histories, connection and carrier metrics, privacy-aware access logs, runtime events, filtering, pause, and help">
+</p>
+
+The read-only TUI discovers local Portal and Vector instances and presents
+traffic, carrier, process, and log data without controlling their lifecycle.
+
+## Public deployment
+
+The local examples disable certificate verification by omitting `sni`. Public
+deployments should use a trusted certificate and verified server name:
 
 ```bash
 nowhere 'portal://change-me@:2000?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
 nowhere 'vector://change-me@relay.example:2000?sni=relay.example&socks=127.0.0.1:1080'
 ```
 
-Certificate pinning is also available. Review the
-[security model](docs/security.md) and [configuration](docs/configuration.md)
-before exposing a Portal publicly.
+Certificate pinning is also available. Review [Security](docs/security.md) and
+[Configuration](docs/configuration.md) before exposing a Portal.
 
-## Operational boundaries
+## Platform scope
 
-Portal, Vector, relay, TUI, and local discovery run on every supported
-platform; process telemetry varies by operating system. See
-[Platforms](docs/platforms.md) and [Operations](docs/operations.md).
+Portal, Vector, relay, TUI, and discovery share the supported platform matrix;
+process telemetry varies by operating system. See [Platforms](docs/platforms.md)
+and [Operations](docs/operations.md).
 
-## Documentation map
+## Documentation
 
-Start with the [documentation index](docs/README.md). It links the focused
-guides for configuration, protocol, security, operations, platforms, and
-integrations.
+The [documentation index](docs/README.md) covers configuration, protocol,
+security, operations, platforms, and integrations.
 
 ## Development
 
-Run the project checks on a supported host:
+Run the standard checks on a supported host:
 
 ```bash
 cargo fmt --all -- --check
@@ -202,25 +214,20 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
 ```
 
-On macOS with [Apple Container](https://github.com/apple/container), the
-reusable Linux check environment remains available:
+On macOS, [Apple Container](https://github.com/apple/container) provides the
+reusable Linux check environment:
 
 ```bash
 ./scripts/check-linux.sh
 ```
 
-CI runs the project on Linux, macOS, and Windows. Release packaging covers
-Linux GNU/musl on x86-64 and AArch64, macOS on Apple Silicon, and Windows
-x86-64 MSVC.
-
-Protocol changes must update the normative wire document and protocol-vector
-tests in the same change.
+CI covers Linux, macOS, and Windows. Release packaging covers Linux GNU/musl on
+x86-64 and AArch64, macOS on Apple Silicon, and Windows x86-64 MSVC. Protocol
+changes must update the wire document and protocol vectors together.
 
 ## License
 
 Nowhere is licensed under the [GNU General Public License v3.0](LICENSE).
-Distributions of original or modified binaries must comply with the GPLv3
-source and notice requirements.
 
 ---
 
