@@ -10,8 +10,10 @@ use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use sha2::Sha256;
 
 mod tcp;
+mod udp;
 
 pub(crate) use tcp::MorphTcpStream;
+pub(crate) use udp::{configure_morph_mtu, morph_endpoint_config, wrap_morph_udp_socket};
 
 const NONCE_LEN: usize = 12;
 const MORPH_ROOT_SALT: &[u8] = b"nowhere/morph";
@@ -76,6 +78,8 @@ fn exhausted() -> io::Error {
 
 #[cfg(test)]
 use tcp::apply_at;
+#[cfg(test)]
+use udp::{MorphUdpSocket, UdpBuffers, generate_nonce};
 
 #[cfg(test)]
 #[path = "../tests/transport/morph.rs"]
