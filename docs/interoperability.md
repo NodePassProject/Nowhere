@@ -28,6 +28,20 @@ listener. Vector and `next` endpoints require a dialable host.
 Endpoint syntax selects local sockets and is not transmitted on the wire. The
 complete grammar and validation rules are in [Configuration](configuration.md).
 
+## Morph contract
+
+Peers use `morph=1` on both ends of a hop or `morph=0` on both ends. Morph has
+no in-band marker or negotiation. TCP has one client-generated 12-byte nonce
+and direction-specific keys; UDP has one 12-byte nonce per datagram and one
+shared UDP key. The exact HKDF labels, counter origin, byte limits, and wire
+layout are normative in [Protocol](protocol.md).
+
+Implementations must preserve TCP stream offsets across partial I/O and treat
+each GSO/GRO segment as a separate UDP datagram. QUIC sees the decoded packet
+length; the physical UDP path sees 12 additional bytes. Interoperability tests
+should use fixed derivation and ChaCha20 vectors before attempting a live TLS
+or QUIC handshake.
+
 ## TLS lane contract
 
 | Mux setting | TLS behavior | Failure scope |

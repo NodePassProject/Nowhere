@@ -50,6 +50,8 @@ the other family.
 | Startup reports no matching address | DNS results and the carrier's `4` or `6` suffix |
 | Startup reports address in use | Each transport/port pair and any duplicate service instance |
 | Vector rejects `up`, `down`, or `mix` | The remote endpoint must declare every selected carrier |
+| Morph peers cannot handshake | Both ends need the same `morph` value and shared key |
+| QUIC fails only with Morph | The UDP path must carry at least 1212-byte payloads and allow MTU probes |
 
 ## Capacity
 
@@ -70,6 +72,13 @@ Pairing and setup deadlines reclaim incomplete requests.
 QUIC uses the shared `throughput` memory profile by default. Select `balanced`
 or `memory` when connection density matters more than a single flow's
 bandwidth-delay product.
+
+Morph adds 12 bytes once per TCP connection and 12 bytes to every UDP
+datagram. It preserves TCP payload length and keeps GSO/GRO batching when the
+platform provides it. UDP socket buffers reserve space for the outer nonce;
+Quinn measures decoded QUIC datagram sizes and performs path MTU discovery with
+12 bytes reserved for the outer nonce. UDP nonce batches come from a user-space
+CSPRNG seeded once per socket from the operating system.
 
 ### TLS Shard placement
 

@@ -54,6 +54,63 @@ so split OPEN and ATTACH lanes can pair across carrier ports and IP families.
 Address family is never negotiated on the wire; reachability and family
 filtering complete before TLS or QUIC authentication.
 
+### Morph socket layer
+
+When the command endpoint has `morph=1`, a keyed transform sits below TLS/TCP
+or QUIC/UDP. It changes the socket wire image and is removed before bytes reach
+rustls or Quinn. There is no magic, version, negotiation, fallback, padding,
+framing protocol, TLS parser, or QUIC parser.
+
+The decoded shared-key bytes are the HKDF input:
+
+```text
+morph_root = HKDF-Extract-SHA256(
+    salt = ASCII("nowhere/morph"),
+    IKM  = shared_key
+)
+
+tcp_c2s_key = HKDF-Expand-SHA256(morph_root, ASCII("tcp c2s"), 32)
+tcp_s2c_key = HKDF-Expand-SHA256(morph_root, ASCII("tcp s2c"), 32)
+udp_key     = HKDF-Expand-SHA256(morph_root, ASCII("udp"), 32)
+```
+
+Labels contain exactly the shown ASCII bytes and no trailing NUL. The cipher
+is IETF ChaCha20 with a 256-bit key, 96-bit nonce, and internal block counter
+starting at zero.
+
+For TCP, the active connector generates one nonce and sends it before TLS:
+
+```text
+client -> server: nonce[12] || ChaCha20-XOR(TLS bytes, tcp_c2s_key, nonce)
+server -> client:              ChaCha20-XOR(TLS bytes, tcp_s2c_key, nonce)
+```
+
+The server sends no Morph prefix. Each direction has an independent stream
+offset. TLS bytes retain their length and the connection adds exactly 12 bytes.
+A direction stops before counter exhaustion, after at most `2^38 - 64`
+transformed bytes, and never wraps or rekeys.
+
+For UDP, every socket datagram is independent in either direction:
+
+```text
+wire datagram = nonce[12] || ChaCha20-XOR(QUIC datagram, udp_key, nonce)
+```
+
+TCP nonces come directly from the operating system CSPRNG. Each UDP socket
+seeds a user-space ChaCha20 CSPRNG from the operating system once and generates
+nonce batches from that stream. Receivers drop wire datagrams of 12 bytes or
+fewer. Morph adds 12 bytes to every QUIC datagram, including Retry, stateless
+reset, handshake, application, and MTU-probe packets. QUIC's 1200-byte minimum
+therefore requires a path capable of carrying a 1212-byte UDP payload. With
+Morph enabled, Quinn's default 1452-byte path-MTU discovery upper bound is
+reduced to 1440 bytes, keeping the transformed UDP payload at 1452 bytes.
+
+The command URL controls Morph for every carrier declared by that endpoint.
+For Portal chaining, the outer `morph` value controls both adjacent hops while
+each hop derives keys from its own shared key. Morph adds no authentication,
+integrity, replay defense, traffic-analysis resistance, or session security;
+the TLS/QUIC and AuthFrame layers retain those responsibilities.
+
 One client session has one random 16-byte `session_id`. Every physical carrier
 is authenticated with that ID, so Portal can pair logical lanes belonging to
 the same client session.

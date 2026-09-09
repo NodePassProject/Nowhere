@@ -22,6 +22,26 @@ TLS is version 1.3. Deployments may use a certificate pin, normal system-root
 verification with SNI, or the explicitly configured unverified certificate
 mode used by generated local certificates.
 
+## Morph boundary
+
+With `morph=1`, HKDF-SHA256 derives separate TCP client-to-server,
+TCP server-to-client, and UDP keys from the endpoint shared key. ChaCha20 XOR
+then masks the TLS stream or each QUIC datagram below the secure transport.
+The nonce is public: TCP carries one 12-byte client nonce per connection and
+UDP carries one 12-byte nonce per datagram.
+
+An observer without the shared key cannot directly recover the bare TLS/QUIC
+wire image or feed captured bytes directly to a generic TLS/QUIC parser. Morph
+does not authenticate bytes, detect modification, reject replay, hide lengths
+or timing, imitate HTTPS, or provide session security. TLS/QUIC and AuthFrame
+remain mandatory. Random nonces can collide, UDP maintains no replay state,
+and TCP does not remember previously used client nonces. Shared keys therefore
+need adequate entropy; HKDF does not make a guessable key expensive to search.
+
+Morph has no negotiation or downgrade path. A missing setting or wrong key
+appears as a TLS/QUIC handshake failure or timeout rather than a distinct
+authenticated Morph error.
+
 ## Endpoint exposure
 
 The service endpoint is also the network exposure policy. A compact Portal
