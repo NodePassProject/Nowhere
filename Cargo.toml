@@ -10,6 +10,7 @@ readme = "README.md"
 [dependencies]
 anyhow = "1.0.104"
 bytes = "1.12.1"
+chacha20 = "0.10.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 crossterm = "0.29.0"
 getrandom = "0.4.3"

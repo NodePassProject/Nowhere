@@ -53,8 +53,22 @@ impl Credentials {
         if parsed_url.password().is_some() {
             bail!("password credentials are not supported; put the shared key before '@'");
         }
-        let shared_key = decode_url_username(parsed_url)?;
+        let shared_key = Self::decode_shared_key(parsed_url)?;
         Self::from_shared_key(&shared_key)
+    }
+
+    pub(crate) fn decode_shared_key(parsed_url: &Url) -> Result<Vec<u8>> {
+        if parsed_url.password().is_some() {
+            bail!("password credentials are not supported; put the shared key before '@'");
+        }
+        let shared_key = decode_url_username(parsed_url)?;
+        if shared_key.is_empty() {
+            bail!("missing shared key before '@'");
+        }
+        if shared_key.len() > u8::MAX as usize {
+            bail!("shared key exceeds the 255-byte limit");
+        }
+        Ok(shared_key)
     }
 
     /// Derives credentials directly from non-empty shared-key bytes.
