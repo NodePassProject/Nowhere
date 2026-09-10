@@ -215,13 +215,6 @@ impl MorphWriteReady for tokio::net::TcpStream {
     }
 }
 
-#[cfg(test)]
-impl MorphWriteReady for tokio::io::DuplexStream {
-    fn poll_morph_write_ready(&self, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-}
-
 impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
     fn poll_write(
         mut self: Pin<&mut Self>,

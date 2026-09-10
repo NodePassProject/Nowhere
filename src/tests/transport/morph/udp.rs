@@ -29,21 +29,25 @@ fn udp_nonce_generator_fills_batches_from_one_stream() {
 #[test]
 fn udp_nonce_generator_reseeds_before_exhaustion_and_retries_failures() {
     let mut generator = UdpNonceGenerator::from_seed([3; 32]);
-    generator.generated = UDP_NONCE_STREAM_LIMIT - NONCE_LEN as u64 + 1;
+    generator.generated = UDP_NONCE_STREAM_LIMIT;
     let mut nonce = [9; NONCE_LEN];
 
     let error = generator
         .generate_with_reseed(&mut nonce, || Err(io::Error::other("no entropy")))
         .unwrap_err();
     assert_eq!(error.to_string(), "no entropy");
-    assert_eq!(generator.generated, UDP_NONCE_STREAM_LIMIT - 11);
+    assert_eq!(generator.generated, UDP_NONCE_STREAM_LIMIT);
     assert_eq!(nonce, [9; NONCE_LEN]);
 
     generator
         .generate_with_reseed(&mut nonce, || Ok([4; 32]))
         .unwrap();
     assert_eq!(generator.generated, NONCE_LEN as u64);
-    assert_ne!(nonce, [9; NONCE_LEN]);
+    let mut expected = [0; NONCE_LEN];
+    UdpNonceGenerator::from_seed([4; 32])
+        .generate_with_reseed(&mut expected, || panic!("fresh stream must not reseed"))
+        .unwrap();
+    assert_eq!(nonce, expected);
 }
 
 #[test]

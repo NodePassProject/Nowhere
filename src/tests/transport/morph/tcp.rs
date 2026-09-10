@@ -13,6 +13,12 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 use super::super::*;
 
+impl super::super::tcp::MorphWriteReady for tokio::io::DuplexStream {
+    fn poll_morph_write_ready(&self, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
 fn hex<const N: usize>(value: &str) -> [u8; N] {
     assert_eq!(value.len(), N * 2);
     let mut bytes = [0; N];
@@ -116,7 +122,6 @@ fn tcp_waits_for_write_readiness_before_copying_or_xoring() {
     let keys = MorphKeys::derive(b"shared");
     let mut client = MorphTcpStream::client(inner, Some(keys)).unwrap();
     set_tcp_nonce(&mut client, [11; NONCE_LEN]);
-    client.morph.as_mut().unwrap().write_prefix_pos = NONCE_LEN;
     let waker = Waker::noop();
     let mut context = Context::from_waker(waker);
 
@@ -124,7 +129,13 @@ fn tcp_waits_for_write_readiness_before_copying_or_xoring() {
         Pin::new(&mut client).poll_write(&mut context, b"payload"),
         Poll::Pending
     ));
-    assert_eq!(writes.load(Ordering::Relaxed), 0);
+    // Only the nonce prefix reaches the underlying stream.
+    assert_eq!(writes.load(Ordering::Relaxed), 1);
+    assert!(matches!(
+        Pin::new(&mut client).poll_write(&mut context, b"payload"),
+        Poll::Pending
+    ));
+    assert_eq!(writes.load(Ordering::Relaxed), 1);
     assert!(client.morph.as_ref().unwrap().write_buffer.is_empty());
 }
 
