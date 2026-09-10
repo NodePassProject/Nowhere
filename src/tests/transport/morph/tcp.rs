@@ -101,7 +101,7 @@ impl AsyncWrite for PendingWriteStream {
     }
 }
 
-impl MorphWriteReady for PendingWriteStream {
+impl super::super::tcp::MorphWriteReady for PendingWriteStream {
     fn poll_morph_write_ready(&self, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Pending
     }
