@@ -65,6 +65,7 @@ fn morph_endpoint_reserves_the_udp_nonce_overhead() {
 struct FakeUdpSocket {
     sent: StdMutex<Vec<(Vec<u8>, Option<usize>)>>,
     receive: StdMutex<VecDeque<(Vec<u8>, RecvMeta)>>,
+    receive_lengths: StdMutex<Vec<usize>>,
 }
 
 #[derive(Debug)]
@@ -106,6 +107,7 @@ impl AsyncUdpSocket for FakeUdpSocket {
         let Some((packet, packet_meta)) = self.receive.lock().unwrap().pop_front() else {
             return Poll::Pending;
         };
+        self.receive_lengths.lock().unwrap().push(bufs[0].len());
         bufs[0][..packet.len()].copy_from_slice(&packet);
         meta[0] = packet_meta;
         Poll::Ready(Ok(1))
@@ -133,39 +135,48 @@ async fn udp_preserves_gso_datagram_boundaries() {
         key,
         buffers: Mutex::new(UdpBuffers::from_seed([1; 32])),
     };
-    socket
-        .try_send(&Transmit {
-            destination: "127.0.0.1:2".parse().unwrap(),
-            ecn: None,
-            contents: b"abcdef",
-            segment_size: Some(3),
-            src_ip: None,
-        })
-        .unwrap();
-    let (wire, stride) = raw.sent.lock().unwrap().pop().unwrap();
-    assert_eq!(stride, Some(15));
-    assert_eq!(wire.len(), 30);
+    for plain in [
+        b"abcdef".as_slice(),
+        b"abcde".as_slice(),
+        b"ghijkl".as_slice(),
+    ] {
+        socket
+            .try_send(&Transmit {
+                destination: "127.0.0.1:2".parse().unwrap(),
+                ecn: None,
+                contents: plain,
+                segment_size: Some(3),
+                src_ip: None,
+            })
+            .unwrap();
+        let (wire, stride) = raw.sent.lock().unwrap().pop().unwrap();
+        assert_eq!(stride, Some(15));
+        assert_eq!(wire.len(), plain.len() + 2 * NONCE_LEN);
+        assert_ne!(&wire[..NONCE_LEN], &wire[15..15 + NONCE_LEN]);
 
-    raw.receive.lock().unwrap().push_back((
-        wire,
-        RecvMeta {
-            addr: "127.0.0.1:2".parse().unwrap(),
-            len: 30,
-            stride: 15,
-            ecn: None,
-            dst_ip: None,
-        },
-    ));
-    let mut output = [0u8; 6];
-    let mut bufs = [IoSliceMut::new(&mut output)];
-    let mut meta = [RecvMeta::default()];
-    let count = poll_fn(|cx| socket.poll_recv(cx, &mut bufs, &mut meta))
-        .await
-        .unwrap();
-    assert_eq!(count, 1);
-    assert_eq!(&output, b"abcdef");
-    assert_eq!(meta[0].len, 6);
-    assert_eq!(meta[0].stride, 3);
+        let wire_len = wire.len();
+        raw.receive.lock().unwrap().push_back((
+            wire,
+            RecvMeta {
+                addr: "127.0.0.1:2".parse().unwrap(),
+                len: wire_len,
+                stride: 15,
+                ecn: None,
+                dst_ip: None,
+            },
+        ));
+        let mut output = [0xa7; 6];
+        let mut bufs = [IoSliceMut::new(&mut output)];
+        let mut meta = [RecvMeta::default()];
+        let count = poll_fn(|cx| socket.poll_recv(cx, &mut bufs, &mut meta))
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(&output[..plain.len()], plain);
+        assert!(output[plain.len()..].iter().all(|byte| *byte == 0xa7));
+        assert_eq!(meta[0].len, plain.len());
+        assert_eq!(meta[0].stride, 3);
+    }
 }
 
 #[tokio::test]
@@ -235,4 +246,114 @@ async fn udp_discards_invalid_wire_datagrams_before_returning_valid_data() {
     assert_eq!(count, 1);
     assert_eq!(&output, b"valid");
     assert_eq!(meta[0].len, 5);
+}
+
+#[tokio::test]
+async fn udp_reuses_buffers_without_relaxing_current_receive_bounds() {
+    let key = MorphKeys::derive(b"shared").udp_key();
+    let raw = Arc::new(FakeUdpSocket::default());
+    let socket = MorphUdpSocket {
+        inner: raw.clone(),
+        key,
+        buffers: Mutex::new(UdpBuffers::from_seed([5; 32])),
+    };
+    let destination = "127.0.0.1:2".parse().unwrap();
+    let packet_meta = |len| RecvMeta {
+        addr: destination,
+        len,
+        stride: len,
+        ecn: None,
+        dst_ip: None,
+    };
+
+    socket
+        .try_send(&Transmit {
+            destination,
+            ecn: None,
+            contents: &[0x5a; 32],
+            segment_size: None,
+            src_ip: None,
+        })
+        .unwrap();
+    let (large_wire, _) = raw.sent.lock().unwrap().pop().unwrap();
+    let large_wire_len = large_wire.len();
+    raw.receive
+        .lock()
+        .unwrap()
+        .push_back((large_wire, packet_meta(large_wire_len)));
+    let mut large_output = [0; 32];
+    let mut large_bufs = [IoSliceMut::new(&mut large_output)];
+    let mut large_meta = [RecvMeta::default()];
+    poll_fn(|cx| socket.poll_recv(cx, &mut large_bufs, &mut large_meta))
+        .await
+        .unwrap();
+    assert_eq!(large_output, [0x5a; 32]);
+
+    socket
+        .try_send(&Transmit {
+            destination,
+            ecn: None,
+            contents: b"x",
+            segment_size: None,
+            src_ip: None,
+        })
+        .unwrap();
+    let (small_wire, _) = raw.sent.lock().unwrap().pop().unwrap();
+    assert_eq!(small_wire.len(), NONCE_LEN + 1);
+    // Three one-byte GRO payloads would fit the decoded target, but the
+    // claimed wire length exceeds this call's receive slice (4 + 2 * 12).
+    raw.receive.lock().unwrap().push_back((
+        vec![0; NONCE_LEN],
+        RecvMeta {
+            len: 3 * (NONCE_LEN + 1),
+            stride: NONCE_LEN + 1,
+            ..packet_meta(0)
+        },
+    ));
+    let small_wire_len = small_wire.len();
+    raw.receive
+        .lock()
+        .unwrap()
+        .push_back((small_wire, packet_meta(small_wire_len)));
+    let mut small_output = [0xa7; 4];
+    let mut small_bufs = [IoSliceMut::new(&mut small_output)];
+    let mut small_meta = [RecvMeta::default()];
+    poll_fn(|cx| socket.poll_recv(cx, &mut small_bufs, &mut small_meta))
+        .await
+        .unwrap();
+    assert_eq!(small_meta[0].len, 1);
+    assert_eq!(small_output, [b'x', 0xa7, 0xa7, 0xa7]);
+
+    socket
+        .try_send(&Transmit {
+            destination,
+            ecn: None,
+            contents: &[0xa5; 48],
+            segment_size: None,
+            src_ip: None,
+        })
+        .unwrap();
+    let (larger_wire, _) = raw.sent.lock().unwrap().pop().unwrap();
+    assert_eq!(larger_wire.len(), NONCE_LEN + 48);
+    let larger_wire_len = larger_wire.len();
+    raw.receive
+        .lock()
+        .unwrap()
+        .push_back((larger_wire, packet_meta(larger_wire_len)));
+    let mut larger_output = [0; 48];
+    let mut larger_bufs = [IoSliceMut::new(&mut larger_output)];
+    let mut larger_meta = [RecvMeta::default()];
+    poll_fn(|cx| socket.poll_recv(cx, &mut larger_bufs, &mut larger_meta))
+        .await
+        .unwrap();
+    assert_eq!(larger_output, [0xa5; 48]);
+    assert_eq!(
+        *raw.receive_lengths.lock().unwrap(),
+        [
+            32 + 2 * NONCE_LEN,
+            4 + 2 * NONCE_LEN,
+            4 + 2 * NONCE_LEN,
+            48 + 2 * NONCE_LEN
+        ]
+    );
 }

@@ -142,31 +142,48 @@ impl AsyncUdpSocket for MorphUdpSocket {
             ));
         }
         let segments = transmit.contents.len().div_ceil(plain_stride);
+        let wire_len = transmit
+            .contents
+            .len()
+            .checked_add(
+                segments
+                    .checked_mul(NONCE_LEN)
+                    .ok_or_else(|| io::Error::other("Morph UDP datagram length overflow"))?,
+            )
+            .ok_or_else(|| io::Error::other("Morph UDP datagram length overflow"))?;
         let mut buffers = self.buffers.lock().unwrap_or_else(|lock| lock.into_inner());
         let UdpBuffers {
             send,
             nonce_generator,
             ..
         } = &mut *buffers;
-        send.clear();
-        send.reserve(transmit.contents.len() + segments * NONCE_LEN);
+        if send.len() < wire_len {
+            send.resize(wire_len, 0);
+        }
+        let mut wire_offset = 0;
         for plain in transmit.contents.chunks(plain_stride) {
-            let start = send.len();
-            send.resize(start + NONCE_LEN + plain.len(), 0);
-            let (nonce, payload) = send[start..].split_at_mut(NONCE_LEN);
+            let wire_end = wire_offset + NONCE_LEN + plain.len();
+            let (nonce, payload) = send[wire_offset..wire_end].split_at_mut(NONCE_LEN);
             let nonce: &mut [u8; NONCE_LEN] = nonce.try_into().expect("fixed nonce prefix");
             nonce_generator.generate(nonce)?;
-            payload.copy_from_slice(plain);
             let mut cipher = ChaCha20::new((&self.key).into(), (&*nonce).into());
             cipher
-                .try_apply_keystream(payload)
+                .try_apply_keystream_b2b(plain, payload)
                 .map_err(|_| exhausted())?;
+            wire_offset = wire_end;
         }
-        let wire_stride = transmit.segment_size.map(|size| size + NONCE_LEN);
+        debug_assert_eq!(wire_offset, wire_len);
+        let wire_stride = transmit
+            .segment_size
+            .map(|size| {
+                size.checked_add(NONCE_LEN)
+                    .ok_or_else(|| io::Error::other("Morph UDP segment length overflow"))
+            })
+            .transpose()?;
         let wire = Transmit {
             destination: transmit.destination,
             ecn: transmit.ecn,
-            contents: send,
+            contents: &send[..wire_len],
             segment_size: wire_stride,
             src_ip: transmit.src_ip,
         };
@@ -185,17 +202,31 @@ impl AsyncUdpSocket for MorphUdpSocket {
         }
         let max_segments = self.inner.max_receive_segments().max(1);
         let mut buffers = self.buffers.lock().unwrap_or_else(|lock| lock.into_inner());
-        for (storage, target) in buffers
-            .receive
-            .iter_mut()
-            .zip(bufs.iter())
-            .take(receive_count)
-        {
-            storage.resize(target.len() + NONCE_LEN * max_segments, 0);
+        let Some(nonce_overhead) = NONCE_LEN.checked_mul(max_segments) else {
+            return Poll::Ready(Err(io::Error::other(
+                "Morph UDP receive buffer length overflow",
+            )));
+        };
+        let mut wire_lengths = [0; quinn::udp::BATCH_SIZE];
+        for index in 0..receive_count {
+            let Some(wire_len) = bufs[index].len().checked_add(nonce_overhead) else {
+                return Poll::Ready(Err(io::Error::other(
+                    "Morph UDP receive buffer length overflow",
+                )));
+            };
+            wire_lengths[index] = wire_len;
+            if buffers.receive[index].len() < wire_len {
+                buffers.receive[index].resize(wire_len, 0);
+            }
         }
         for _ in 0..MAX_INVALID_RECEIVE_BATCHES {
             let receive = buffers.receive.each_mut();
-            let mut wire_bufs = receive.map(|value| IoSliceMut::new(value));
+            let mut index = 0;
+            let mut wire_bufs = receive.map(|value| {
+                let wire_len = wire_lengths[index];
+                index += 1;
+                IoSliceMut::new(&mut value[..wire_len])
+            });
             let received = match self.inner.poll_recv(
                 cx,
                 &mut wire_bufs[..receive_count],
@@ -209,9 +240,9 @@ impl AsyncUdpSocket for MorphUdpSocket {
             for index in 0..received {
                 let wire_meta = meta[index];
                 let wire_stride = wire_meta.stride;
-                let storage = &mut buffers.receive[index];
+                let storage = &buffers.receive[index];
                 if wire_meta.len == 0
-                    || wire_meta.len > storage.len()
+                    || wire_meta.len > wire_lengths[index]
                     || wire_stride <= NONCE_LEN
                     || wire_stride > wire_meta.len
                 {
@@ -234,15 +265,14 @@ impl AsyncUdpSocket for MorphUdpSocket {
                 let target = &mut bufs[output];
                 let decoded_stride = wire_stride - NONCE_LEN;
                 let mut decoded_len = 0;
-                for wire in storage[..wire_meta.len].chunks_mut(wire_stride) {
-                    let (nonce, encrypted) = wire.split_at_mut(NONCE_LEN);
-                    let nonce: &[u8; NONCE_LEN] = (&*nonce).try_into().expect("fixed nonce prefix");
+                for wire in storage[..wire_meta.len].chunks(wire_stride) {
+                    let (nonce, encrypted) = wire.split_at(NONCE_LEN);
+                    let nonce: &[u8; NONCE_LEN] = nonce.try_into().expect("fixed nonce prefix");
                     let mut cipher = ChaCha20::new((&self.key).into(), nonce.into());
-                    cipher
-                        .try_apply_keystream(encrypted)
-                        .map_err(|_| exhausted())?;
                     let end = decoded_len + encrypted.len();
-                    target[decoded_len..end].copy_from_slice(encrypted);
+                    cipher
+                        .try_apply_keystream_b2b(encrypted, &mut target[decoded_len..end])
+                        .map_err(|_| exhausted())?;
                     decoded_len = end;
                 }
                 debug_assert_eq!(decoded_len, expected_len);
