@@ -31,7 +31,7 @@ pub(super) struct TcpMorph {
     read_prefix_pos: usize,
     write_prefix_pos: usize,
     write_waiter: Option<Waker>,
-    write_buffer: Vec<u8>,
+    pub(super) write_buffer: Vec<u8>,
 }
 
 pub(crate) struct MorphTcpStream<S> {
@@ -136,6 +136,9 @@ impl<S: AsyncRead + Unpin> AsyncRead for MorphTcpStream<S> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        if buf.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
         if self.keys.is_none() {
             return Pin::new(&mut self.inner).poll_read(cx, buf);
         }
@@ -202,12 +205,32 @@ impl<S: AsyncRead + Unpin> AsyncRead for MorphTcpStream<S> {
     }
 }
 
-impl<S: AsyncWrite + Unpin> AsyncWrite for MorphTcpStream<S> {
+pub(crate) trait MorphWriteReady {
+    fn poll_morph_write_ready(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>>;
+}
+
+impl MorphWriteReady for tokio::net::TcpStream {
+    fn poll_morph_write_ready(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.poll_write_ready(cx)
+    }
+}
+
+#[cfg(test)]
+impl MorphWriteReady for tokio::io::DuplexStream {
+    fn poll_morph_write_ready(&self, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         input: &[u8],
     ) -> Poll<io::Result<usize>> {
+        if input.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
         if self.keys.is_none() {
             return Pin::new(&mut self.inner).poll_write(cx, input);
         }
@@ -240,16 +263,18 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for MorphTcpStream<S> {
                 return Poll::Pending;
             }
         }
-        if input.is_empty() {
-            return Poll::Ready(Ok(0));
-        }
-        let state = this.morph.as_mut().unwrap();
-        let remaining = TCP_STREAM_LIMIT.saturating_sub(state.write_offset);
+        let remaining = TCP_STREAM_LIMIT.saturating_sub(this.morph.as_ref().unwrap().write_offset);
         if remaining == 0 {
             return Poll::Ready(Err(exhausted()));
         }
         let count = usize::try_from(remaining.min(input.len() as u64))
             .expect("count is bounded by usize input length");
+        match this.inner.poll_morph_write_ready(cx) {
+            Poll::Ready(Ok(())) => {}
+            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+            Poll::Pending => return Poll::Pending,
+        }
+        let state = this.morph.as_mut().unwrap();
         state.write_buffer.clear();
         state.write_buffer.extend_from_slice(&input[..count]);
         state

@@ -1,9 +1,15 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+use std::io;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::{Context, Poll, Waker};
+
 use chacha20::ChaCha20;
 use chacha20::cipher::KeyIvInit;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 use super::super::*;
 
@@ -39,6 +45,87 @@ fn chacha20_starts_at_block_zero() {
             "76b8e0ada0f13d90405d6ae55386bd28bdd219b8a08ded1aa836efcc8b770dc7da41597c5157488d7724e03fb8d84a376a43b8f41518a11cc387b669b2ee6586"
         )
     );
+}
+
+#[test]
+fn tcp_empty_io_does_not_wait_for_the_nonce() {
+    let keys = MorphKeys::derive(b"shared");
+    let (_client_io, server_io) = tokio::io::duplex(64);
+    let mut server = MorphTcpStream::server(server_io, Some(keys));
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    let mut empty = [];
+    let mut read_buf = ReadBuf::new(&mut empty);
+
+    assert!(matches!(
+        Pin::new(&mut server).poll_read(&mut context, &mut read_buf),
+        Poll::Ready(Ok(()))
+    ));
+    assert!(matches!(
+        Pin::new(&mut server).poll_write(&mut context, &[]),
+        Poll::Ready(Ok(0))
+    ));
+}
+
+#[derive(Debug)]
+struct PendingWriteStream {
+    writes: Arc<AtomicUsize>,
+}
+
+impl AsyncRead for PendingWriteStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Poll::Pending
+    }
+}
+
+impl AsyncWrite for PendingWriteStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        input: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        self.writes.fetch_add(1, Ordering::Relaxed);
+        Poll::Ready(Ok(input.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl MorphWriteReady for PendingWriteStream {
+    fn poll_morph_write_ready(&self, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Pending
+    }
+}
+
+#[test]
+fn tcp_waits_for_write_readiness_before_copying_or_xoring() {
+    let writes = Arc::new(AtomicUsize::new(0));
+    let inner = PendingWriteStream {
+        writes: writes.clone(),
+    };
+    let keys = MorphKeys::derive(b"shared");
+    let mut client = MorphTcpStream::client(inner, Some(keys)).unwrap();
+    set_tcp_nonce(&mut client, [11; NONCE_LEN]);
+    client.morph.as_mut().unwrap().write_prefix_pos = NONCE_LEN;
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+
+    assert!(matches!(
+        Pin::new(&mut client).poll_write(&mut context, b"payload"),
+        Poll::Pending
+    ));
+    assert_eq!(writes.load(Ordering::Relaxed), 0);
+    assert!(client.morph.as_ref().unwrap().write_buffer.is_empty());
 }
 
 #[tokio::test]
