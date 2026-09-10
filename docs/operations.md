@@ -78,7 +78,7 @@ datagram. It preserves TCP payload length and keeps GSO/GRO batching when the
 platform provides it. UDP socket buffers reserve space for the outer nonce;
 Quinn measures decoded QUIC datagram sizes and performs path MTU discovery with
 12 bytes reserved for the outer nonce. UDP nonce batches come from a user-space
-CSPRNG seeded once per socket from the operating system.
+CSPRNG seeded from the operating system and reseeded before stream exhaustion.
 
 ### TLS Shard placement
 

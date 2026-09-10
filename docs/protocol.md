@@ -97,8 +97,8 @@ wire datagram = nonce[12] || ChaCha20-XOR(QUIC datagram, udp_key, nonce)
 ```
 
 TCP nonces come directly from the operating system CSPRNG. Each UDP socket
-seeds a user-space ChaCha20 CSPRNG from the operating system once and generates
-nonce batches from that stream. Receivers drop wire datagrams of 12 bytes or
+seeds a user-space ChaCha20 CSPRNG from the operating system and reseeds it
+before its stream is exhausted. Receivers drop wire datagrams of 12 bytes or
 fewer. Morph adds 12 bytes to every QUIC datagram, including Retry, stateless
 reset, handshake, application, and MTU-probe packets. QUIC's 1200-byte minimum
 therefore requires a path capable of carrying a 1212-byte UDP payload. With
