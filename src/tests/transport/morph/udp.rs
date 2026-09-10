@@ -164,7 +164,7 @@ async fn udp_preserves_gso_datagram_boundaries() {
 }
 
 #[tokio::test]
-async fn udp_discards_short_wire_datagrams_before_returning_valid_data() {
+async fn udp_discards_invalid_wire_datagrams_before_returning_valid_data() {
     let key = MorphKeys::derive(b"shared").udp_key();
     let raw = Arc::new(FakeUdpSocket::default());
     let socket = MorphUdpSocket {
@@ -183,6 +183,27 @@ async fn udp_discards_short_wire_datagrams_before_returning_valid_data() {
         .lock()
         .unwrap()
         .push_back((vec![0; NONCE_LEN], packet_meta(NONCE_LEN)));
+
+    socket
+        .try_send(&Transmit {
+            destination: "127.0.0.1:2".parse().unwrap(),
+            ecn: None,
+            contents: b"oversized",
+            segment_size: None,
+            src_ip: None,
+        })
+        .unwrap();
+    let (oversized, _) = raw.sent.lock().unwrap().pop().unwrap();
+    let oversized_len = oversized.len();
+    raw.receive
+        .lock()
+        .unwrap()
+        .push_back((oversized, packet_meta(oversized_len)));
+
+    raw.receive
+        .lock()
+        .unwrap()
+        .push_back((vec![0; NONCE_LEN], packet_meta(5 + NONCE_LEN * 2 + 1)));
 
     socket
         .try_send(&Transmit {

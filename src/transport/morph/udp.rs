@@ -179,31 +179,62 @@ impl AsyncUdpSocket for MorphUdpSocket {
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
+        let receive_count = bufs.len().min(meta.len()).min(quinn::udp::BATCH_SIZE);
+        if receive_count == 0 {
+            return Poll::Ready(Ok(0));
+        }
         let max_segments = self.inner.max_receive_segments().max(1);
         let mut buffers = self.buffers.lock().unwrap_or_else(|lock| lock.into_inner());
-        for (storage, target) in buffers.receive.iter_mut().zip(bufs.iter()) {
+        for (storage, target) in buffers
+            .receive
+            .iter_mut()
+            .zip(bufs.iter())
+            .take(receive_count)
+        {
             storage.resize(target.len() + NONCE_LEN * max_segments, 0);
         }
         for _ in 0..MAX_INVALID_RECEIVE_BATCHES {
             let receive = buffers.receive.each_mut();
             let mut wire_bufs = receive.map(|value| IoSliceMut::new(value));
-            let received = match self.inner.poll_recv(cx, &mut wire_bufs[..bufs.len()], meta) {
-                Poll::Ready(Ok(received)) => received,
+            let received = match self.inner.poll_recv(
+                cx,
+                &mut wire_bufs[..receive_count],
+                &mut meta[..receive_count],
+            ) {
+                Poll::Ready(Ok(received)) => received.min(receive_count),
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Pending => return Poll::Pending,
             };
             let mut output = 0;
             for index in 0..received {
                 let wire_meta = meta[index];
-                let wire_stride = wire_meta.stride.max(1);
+                let wire_stride = wire_meta.stride;
                 let storage = &mut buffers.receive[index];
+                if wire_meta.len == 0
+                    || wire_meta.len > storage.len()
+                    || wire_stride <= NONCE_LEN
+                    || wire_stride > wire_meta.len
+                {
+                    continue;
+                }
+                let segment_count = wire_meta.len.div_ceil(wire_stride);
+                let Some(nonce_bytes) = segment_count.checked_mul(NONCE_LEN) else {
+                    continue;
+                };
+                let Some(expected_len) = wire_meta.len.checked_sub(nonce_bytes) else {
+                    continue;
+                };
+                let final_wire_len = wire_meta.len % wire_stride;
+                if expected_len == 0
+                    || expected_len > bufs[output].len()
+                    || (final_wire_len != 0 && final_wire_len <= NONCE_LEN)
+                {
+                    continue;
+                }
                 let target = &mut bufs[output];
-                let decoded_stride = wire_stride.saturating_sub(NONCE_LEN);
+                let decoded_stride = wire_stride - NONCE_LEN;
                 let mut decoded_len = 0;
                 for wire in storage[..wire_meta.len].chunks_mut(wire_stride) {
-                    if wire.len() <= NONCE_LEN {
-                        continue;
-                    }
                     let (nonce, encrypted) = wire.split_at_mut(NONCE_LEN);
                     let nonce: &[u8; NONCE_LEN] = (&*nonce).try_into().expect("fixed nonce prefix");
                     let mut cipher = ChaCha20::new((&self.key).into(), nonce.into());
@@ -211,18 +242,10 @@ impl AsyncUdpSocket for MorphUdpSocket {
                         .try_apply_keystream(encrypted)
                         .map_err(|_| exhausted())?;
                     let end = decoded_len + encrypted.len();
-                    if end > target.len() {
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "Morph UDP receive buffer overflow",
-                        )));
-                    }
                     target[decoded_len..end].copy_from_slice(encrypted);
                     decoded_len = end;
                 }
-                if decoded_len == 0 {
-                    continue;
-                }
+                debug_assert_eq!(decoded_len, expected_len);
                 meta[output] = RecvMeta {
                     len: decoded_len,
                     stride: decoded_stride,
