@@ -1,10 +1,11 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+use std::collections::VecDeque;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
 use chacha20::ChaCha20;
@@ -75,7 +76,17 @@ fn tcp_empty_io_does_not_wait_for_the_nonce() {
 
 #[derive(Debug)]
 struct PendingWriteStream {
+    ready: Arc<AtomicBool>,
     writes: Arc<AtomicUsize>,
+    written: Arc<std::sync::Mutex<Vec<u8>>>,
+    outcomes: std::sync::Mutex<VecDeque<WriteOutcome>>,
+}
+
+#[derive(Debug)]
+enum WriteOutcome {
+    Accept(usize),
+    Pending,
+    Error(io::ErrorKind),
 }
 
 impl AsyncRead for PendingWriteStream {
@@ -91,11 +102,26 @@ impl AsyncRead for PendingWriteStream {
 impl AsyncWrite for PendingWriteStream {
     fn poll_write(
         self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
         input: &[u8],
     ) -> Poll<io::Result<usize>> {
         self.writes.fetch_add(1, Ordering::Relaxed);
-        Poll::Ready(Ok(input.len()))
+        let outcome = self.outcomes.lock().unwrap().pop_front();
+        match outcome.unwrap_or(WriteOutcome::Accept(input.len())) {
+            WriteOutcome::Accept(limit) => {
+                let count = input.len().min(limit);
+                self.written
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&input[..count]);
+                Poll::Ready(Ok(count))
+            }
+            WriteOutcome::Pending => {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            WriteOutcome::Error(kind) => Poll::Ready(Err(kind.into())),
+        }
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -109,15 +135,24 @@ impl AsyncWrite for PendingWriteStream {
 
 impl super::super::tcp::MorphWriteReady for PendingWriteStream {
     fn poll_morph_write_ready(&self, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Pending
+        if self.ready.load(Ordering::Relaxed) {
+            Poll::Ready(Ok(()))
+        } else {
+            Poll::Pending
+        }
     }
 }
 
 #[test]
 fn tcp_waits_for_write_readiness_before_copying_or_xoring() {
+    let ready = Arc::new(AtomicBool::new(false));
     let writes = Arc::new(AtomicUsize::new(0));
+    let written = Arc::new(std::sync::Mutex::new(Vec::new()));
     let inner = PendingWriteStream {
+        ready: ready.clone(),
         writes: writes.clone(),
+        written: written.clone(),
+        outcomes: Default::default(),
     };
     let keys = MorphKeys::derive(b"shared");
     let mut client = MorphTcpStream::client(inner, Some(keys)).unwrap();
@@ -126,7 +161,7 @@ fn tcp_waits_for_write_readiness_before_copying_or_xoring() {
     let mut context = Context::from_waker(waker);
 
     assert!(matches!(
-        Pin::new(&mut client).poll_write(&mut context, b"payload"),
+        Pin::new(&mut client).poll_write(&mut context, b"initial"),
         Poll::Pending
     ));
     // Only the nonce prefix reaches the underlying stream.
@@ -137,6 +172,70 @@ fn tcp_waits_for_write_readiness_before_copying_or_xoring() {
     ));
     assert_eq!(writes.load(Ordering::Relaxed), 1);
     assert!(client.morph.as_ref().unwrap().write_buffer.is_empty());
+
+    ready.store(true, Ordering::Relaxed);
+    assert!(matches!(
+        Pin::new(&mut client).poll_write(&mut context, b"changed"),
+        Poll::Ready(Ok(7))
+    ));
+    assert_eq!(writes.load(Ordering::Relaxed), 2);
+    let mut payload = written.lock().unwrap()[NONCE_LEN..].to_vec();
+    apply_at(
+        &client.morph.as_ref().unwrap().write_key,
+        &[11; NONCE_LEN],
+        0,
+        &mut payload,
+    )
+    .unwrap();
+    assert_eq!(&payload, b"changed");
+}
+
+#[test]
+fn tcp_retries_changed_input_after_short_write_pending_and_error() {
+    let written = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let inner = PendingWriteStream {
+        ready: Arc::new(AtomicBool::new(true)),
+        writes: Arc::new(AtomicUsize::new(0)),
+        written: written.clone(),
+        outcomes: std::sync::Mutex::new(VecDeque::from([
+            WriteOutcome::Accept(NONCE_LEN),
+            WriteOutcome::Accept(3),
+            WriteOutcome::Pending,
+            WriteOutcome::Error(io::ErrorKind::Interrupted),
+            WriteOutcome::Accept(usize::MAX),
+        ])),
+    };
+    let mut client = MorphTcpStream::client(inner, Some(MorphKeys::derive(b"shared"))).unwrap();
+    set_tcp_nonce(&mut client, [12; NONCE_LEN]);
+    let mut context = Context::from_waker(Waker::noop());
+
+    assert!(matches!(
+        Pin::new(&mut client).poll_write(&mut context, b"abc-unaccepted"),
+        Poll::Ready(Ok(3))
+    ));
+    assert!(matches!(
+        Pin::new(&mut client).poll_write(&mut context, b"pending input"),
+        Poll::Pending
+    ));
+    assert!(matches!(
+        Pin::new(&mut client).poll_write(&mut context, b"error input"),
+        Poll::Ready(Err(error)) if error.kind() == io::ErrorKind::Interrupted
+    ));
+    assert!(matches!(
+        Pin::new(&mut client).poll_write(&mut context, b"z"),
+        Poll::Ready(Ok(1))
+    ));
+    let wire = written.lock().unwrap();
+    assert_eq!(&wire[..NONCE_LEN], &[12; NONCE_LEN]);
+    let mut payload = wire[NONCE_LEN..].to_vec();
+    apply_at(
+        &client.morph.as_ref().unwrap().write_key,
+        &[12; NONCE_LEN],
+        0,
+        &mut payload,
+    )
+    .unwrap();
+    assert_eq!(&payload, b"abcz");
 }
 
 #[tokio::test]
@@ -208,4 +307,10 @@ async fn tcp_write_processes_the_full_available_buffer() {
     let payload = vec![0x5a; 128 * 1024];
 
     assert_eq!(client.write(&payload).await.unwrap(), payload.len());
+    let buffer_len = client.morph.as_ref().unwrap().write_buffer.len();
+    assert_eq!(client.write(b"x").await.unwrap(), 1);
+    assert_eq!(
+        client.morph.as_ref().unwrap().write_buffer.len(),
+        buffer_len
+    );
 }

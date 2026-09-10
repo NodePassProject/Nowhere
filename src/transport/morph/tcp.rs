@@ -268,15 +268,16 @@ impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
             Poll::Pending => return Poll::Pending,
         }
         let state = this.morph.as_mut().unwrap();
-        state.write_buffer.clear();
-        state.write_buffer.extend_from_slice(&input[..count]);
+        if state.write_buffer.len() < count {
+            state.write_buffer.resize(count, 0);
+        }
         state
             .write_cipher
             .as_mut()
             .expect("Morph write cipher initialized")
-            .try_apply_keystream(&mut state.write_buffer)
+            .try_apply_keystream_b2b(&input[..count], &mut state.write_buffer[..count])
             .map_err(|_| exhausted())?;
-        match Pin::new(&mut this.inner).poll_write(cx, &state.write_buffer) {
+        match Pin::new(&mut this.inner).poll_write(cx, &state.write_buffer[..count]) {
             Poll::Ready(Ok(0)) => {
                 state
                     .write_cipher
