@@ -77,8 +77,10 @@ Morph adds 12 bytes once per TCP connection and 12 bytes to every UDP
 datagram. It preserves TCP payload length and keeps GSO/GRO batching when the
 platform provides it. UDP socket buffers reserve space for the outer nonce;
 Quinn measures decoded QUIC datagram sizes and performs path MTU discovery with
-12 bytes reserved for the outer nonce. UDP nonce batches come from a user-space
-CSPRNG seeded from the operating system and reseeded before stream exhaustion.
+12 bytes reserved for the outer nonce. Morph reuses initialized transport
+buffers and applies ChaCha20 while copying between caller and wire buffers. UDP
+nonce batches come from a user-space CSPRNG seeded from the operating system and
+reseeded before stream exhaustion.
 
 ### TLS Shard placement
 
