@@ -16,6 +16,7 @@ async fn carrier(pressured: bool) -> (MuxHandle, MuxHandle, crate::mux::Incoming
         stream_window_bytes: 4 << 20,
         connection_window_bytes: 8 << 20,
         outbound_frames: 512,
+        ..MuxConfig::default()
     };
     let (handle, _) = MuxHandle::start(left, config).unwrap();
     let (peer, mut incoming) = MuxHandle::start(right, config).unwrap();

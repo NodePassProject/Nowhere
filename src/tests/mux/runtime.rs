@@ -31,6 +31,35 @@ async fn more_than_256_live_streams_transfer_and_half_close() {
 }
 
 #[tokio::test]
+async fn remote_open_admission_closes_carrier_at_the_metadata_limit() {
+    let config = MuxConfig {
+        active_stream_limit: 2,
+        ..MuxConfig::default()
+    };
+    let (mut peer, carrier) = tokio::io::duplex(4096);
+    let (server, mut incoming) = MuxHandle::start(carrier, config).unwrap();
+    let mut streams = Vec::new();
+
+    for flow_id in 1..=2 {
+        peer.write_all(&encode_header(FrameHeader::open(flow_id, 0).unwrap()).unwrap())
+            .await
+            .unwrap();
+        let stream = incoming.accept().await.unwrap().unwrap();
+        assert_eq!(stream.flow_id(), flow_id);
+        streams.push(stream);
+    }
+    assert_eq!(server.active_streams(), 2);
+
+    peer.write_all(&encode_header(FrameHeader::open(3, 0).unwrap()).unwrap())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), server.closed())
+        .await
+        .expect("OPEN beyond the metadata budget must close the carrier");
+    assert_eq!(server.active_streams(), 0);
+}
+
+#[tokio::test]
 async fn slow_small_packet_reader_does_not_block_other_flows() {
     tokio::time::timeout(Duration::from_secs(5), async {
         let (left, right) = tokio::io::duplex(1 << 20);
@@ -517,4 +546,12 @@ fn profiles_outside_wire_window_limits_are_rejected() {
             .is_err()
         );
     }
+    assert!(
+        MuxConfig {
+            active_stream_limit: 0,
+            ..MuxConfig::default()
+        }
+        .validate()
+        .is_err()
+    );
 }

@@ -28,12 +28,14 @@ const MAX_STREAM_WINDOW_BYTES: usize = 16 * MIB;
 const MAX_CONNECTION_WINDOW_BYTES: usize = 32 * MIB;
 const CREDIT_UNIT_BYTES: usize = 1024;
 const WINDOW_UPDATE_DIVISOR: usize = 8;
+const ACTIVE_STREAM_RESOURCE_LIMIT: usize = 4096;
 pub(crate) const MUX_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MuxConfig {
     pub stream_window_bytes: usize,
     pub connection_window_bytes: usize,
+    pub active_stream_limit: usize,
     pub outbound_frames: usize,
 }
 
@@ -54,6 +56,7 @@ impl MuxConfig {
         Self {
             stream_window_bytes: profile.stream_receive_window as usize,
             connection_window_bytes: profile.connection_receive_window as usize,
+            active_stream_limit: ACTIVE_STREAM_RESOURCE_LIMIT,
             outbound_frames: 512,
         }
     }
@@ -67,6 +70,7 @@ impl MuxConfig {
                 .connection_window_bytes
                 .is_multiple_of(CREDIT_UNIT_BYTES)
             || self.connection_window_bytes < self.stream_window_bytes
+            || self.active_stream_limit == 0
             || self.outbound_frames == 0
             || self.connection_window_bytes > Semaphore::MAX_PERMITS
         {
@@ -224,8 +228,8 @@ impl Shared {
         if self.closed.load(Ordering::Acquire) {
             return Err(closed());
         }
-        // Every DATA frame consumes at least one KiB of connection credit,
-        // bounding both payload and queue nodes without blocking the reader.
+        // DATA is bounded separately by byte credit. OPEN must have its own
+        // admission ceiling because it allocates flow metadata without DATA.
         let (sender, receiver) = mpsc::unbounded_channel();
         let mut flows = self.flows.lock().expect("mux flow lock");
         if self.closed.load(Ordering::Acquire) {
@@ -235,6 +239,12 @@ impl Shared {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "mux flow already exists",
+            ));
+        }
+        if flows.len() >= self.config.active_stream_limit {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "mux active-stream resource limit reached",
             ));
         }
         let send_credit = Arc::new(Semaphore::new(credit_units(BASE_STREAM_WINDOW_BYTES)));
