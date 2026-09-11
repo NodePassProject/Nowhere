@@ -21,9 +21,95 @@ otherwise.
 
 ## 1. Carrier model
 
-TLS/TCP and QUIC negotiate one exact ALPN. The default is `now/1`; a configured
-ALPN is 1–255 bytes and has no version or Mux semantics. Both transports use
-TLS 1.3.
+TLS/TCP and QUIC use TLS 1.3 with the sole ALPN `nw2`. A client offers `nw2`,
+and the server requires the handshake to select exactly `nw2` before Nowhere
+authentication.
+
+### Command endpoint mapping
+
+The command URL chooses the socket for each physical carrier before this wire
+protocol begins. Its endpoint forms map as follows:
+
+| Command endpoint entry | Physical carrier | Wire transport byte |
+|---|---|---:|
+| compact `HOST:PORT` TCP side | TLS 1.3 over TCP on `PORT` | `0x01` |
+| compact `HOST:PORT` UDP side | QUIC over UDP on `PORT` | `0x02` |
+| `HOST/tcp:PORT`, `HOST/tcp4:PORT`, or `HOST/tcp6:PORT` | TLS 1.3 over TCP on its own port/family | `0x01` |
+| `HOST/udp:PORT`, `HOST/udp4:PORT`, or `HOST/udp6:PORT` | QUIC over UDP on its own port/family | `0x02` |
+
+TCP and UDP may use different ports and address families while sharing one
+command endpoint host. Port numbers, hostnames, wildcard selection, and
+address-family suffixes are not serialized in AuthFrame or FlowHeader. They
+only select the local listener or remote socket on which a carrier is
+established.
+
+Disabling a carrier by omitting it from an explicit endpoint does not create a
+new wire mode. It prevents the local process from listening or dialing that
+physical transport. Client `up`, `down`, and `mix` policy must select from the
+declared carriers before a FlowHeader is encoded.
+
+Separate TCP and UDP socket addresses do not separate sessions. The same
+authenticated `session_id` joins all physical carriers created by one client,
+so split OPEN and ATTACH lanes can pair across carrier ports and IP families.
+Address family is never negotiated on the wire; reachability and family
+filtering complete before TLS or QUIC authentication.
+
+### Morph socket layer
+
+When the command endpoint has `morph=1`, a keyed transform sits below TLS/TCP
+or QUIC/UDP. It changes the socket wire image and is removed before bytes reach
+rustls or Quinn. There is no magic, version, negotiation, fallback, padding,
+framing protocol, TLS parser, or QUIC parser.
+
+The decoded shared-key bytes are the HKDF input:
+
+```text
+morph_root = HKDF-Extract-SHA256(
+    salt = ASCII("nowhere/morph"),
+    IKM  = shared_key
+)
+
+tcp_c2s_key = HKDF-Expand-SHA256(morph_root, ASCII("tcp c2s"), 32)
+tcp_s2c_key = HKDF-Expand-SHA256(morph_root, ASCII("tcp s2c"), 32)
+udp_key     = HKDF-Expand-SHA256(morph_root, ASCII("udp"), 32)
+```
+
+Labels contain exactly the shown ASCII bytes and no trailing NUL. The cipher
+is IETF ChaCha20 with a 256-bit key, 96-bit nonce, and internal block counter
+starting at zero.
+
+For TCP, the active connector generates one nonce and sends it before TLS:
+
+```text
+client -> server: nonce[12] || ChaCha20-XOR(TLS bytes, tcp_c2s_key, nonce)
+server -> client:              ChaCha20-XOR(TLS bytes, tcp_s2c_key, nonce)
+```
+
+The server sends no Morph prefix. Each direction has an independent stream
+offset. TLS bytes retain their length and the connection adds exactly 12 bytes.
+A direction stops before counter exhaustion, after at most `2^38 - 64`
+transformed bytes, and never wraps or rekeys.
+
+For UDP, every socket datagram is independent in either direction:
+
+```text
+wire datagram = nonce[12] || ChaCha20-XOR(QUIC datagram, udp_key, nonce)
+```
+
+TCP nonces come directly from the operating system CSPRNG. Each UDP socket
+seeds a user-space ChaCha20 CSPRNG from the operating system and reseeds it
+before its stream is exhausted. Receivers drop wire datagrams of 12 bytes or
+fewer. Morph adds 12 bytes to every QUIC datagram, including Retry, stateless
+reset, handshake, application, and MTU-probe packets. QUIC's 1200-byte minimum
+therefore requires a path capable of carrying a 1212-byte UDP payload. With
+Morph enabled, Quinn's default 1452-byte path-MTU discovery upper bound is
+reduced to 1440 bytes, keeping the transformed UDP payload at 1452 bytes.
+
+The command URL controls Morph for every carrier declared by that endpoint.
+For Portal chaining, the outer `morph` value controls both adjacent hops while
+each hop derives keys from its own shared key. Morph adds no authentication,
+integrity, replay defense, traffic-analysis resistance, or session security;
+the TLS/QUIC and AuthFrame layers retain those responsibilities.
 
 One client session has one random 16-byte `session_id`. Every physical carrier
 is authenticated with that ID, so Portal can pair logical lanes belonging to
@@ -75,7 +161,7 @@ Client -> Portal
 
 +------------+------------+-------------+-------------+-----+
 | AuthFrame  | Mux marker | MuxFrame    | MuxFrame    | ... |
-| 32 bytes   | 0xff       | 8 + N bytes | 8 + N bytes |     |
+| 32 bytes   | 0xff       | 7 + N bytes | 7 + N bytes |     |
 +------------+------------+-------------+-------------+-----+
 
 Reconstructed logical stream
@@ -142,7 +228,7 @@ The shared key is 1–255 decoded bytes and is never transmitted. Authentication
 uses these fixed derivations:
 
 ```text
-salt      = SHA256("nowhere/now/1/auth-root")
+salt      = SHA256("nowhere/nw2/auth-root")
 auth_root = HMAC-SHA256(salt, shared_key)
 auth_key  = HMAC-SHA256(auth_root, "authentication" || 0x01)
 
@@ -154,8 +240,7 @@ tag       = first 16 bytes of
                         transport || exporter[32] || session_id[16])
 ```
 
-The 32-byte exporter uses label `EXPORTER-Nowhere-Auth` and empty context. The
-fixed derivation labels do not change when a custom ALPN is configured.
+The 32-byte exporter uses label `EXPORTER-Nowhere-Auth` and empty context.
 Authentication is bound to the current TLS connection; replaying a captured
 AuthFrame on another connection fails.
 
@@ -182,57 +267,54 @@ Mux frame.
 
 ### MuxHeader
 
-Every Mux frame starts with an 8-byte header. STREAM and DATAGRAM frames carry
-exactly `value` payload bytes; WINDOW carries no payload.
+Every Mux frame starts with a 7-byte header. A DATA frame carries
+exactly `value` payload bytes; control frames carry no payload.
 
 ```text
-MuxHeader - 8 bytes
+MuxHeader - 7 bytes
 
- offset  0        1        2               4                       8
-         +--------+--------+---------------+-----------------------+
-         | kind   | flags  | value         | flow_id               |
-         | u8     | u8     | u16           | u32                   |
-         +--------+--------+---------------+-----------------------+
+ offset  0        1               3                       7
+         +--------+---------------+-----------------------+
+         | kind   | value         | flow_id               |
+         | u8     | u16           | u32                   |
+         +--------+---------------+-----------------------+
 ```
 
 | `kind` | Name | `value` | `flow_id` |
 |---:|---|---|---|
-| `0x01` | STREAM | payload length | nonzero |
-| `0x02` | WINDOW | returned byte credit | `0` for connection, nonzero for stream |
-| `0x03` | DATAGRAM | payload length | nonzero |
+| `0x01` | OPEN | opener receive-window extension in 1 KiB units | nonzero |
+| `0x02` | DATA | payload length, 1..65535 | nonzero |
+| `0x03` | WINDOW | returned credit in 1 KiB units | `0` for connection, nonzero for stream |
+| `0x04` | FIN | always `0` | nonzero |
+| `0x05` | RESET | always `0` | nonzero |
 
-The runtime implements STREAM and WINDOW. DATAGRAM headers are recognized by
-the codec but are not registered as a runtime plane; receiving one closes the
-Mux carrier as unsupported.
+OPEN carries no payload and extends
+the opener's 4 MiB initial stream receive window. The runtime emits DATA
+payloads of at most 32 KiB.
 
-For STREAM, the low three flag bits are:
+FIN and RESET carry no payload. FIN half-closes a logical stream; RESET
+immediately removes it. Other frame kinds are invalid. Every nonzero `flow_id`
+must be at most `0x3fffffff`; the upper two bits of its u32 field must be zero.
 
-```text
-flags byte
-
- bit     7                   3   2     1     0
-         +---------------------+-----+-----+-----+
-         | reserved            | RST | FIN | SYN |
-         +---------------------+-----+-----+-----+
-```
-
-- `SYN=0x01` creates the logical stream before optional payload is delivered.
-- `FIN=0x02` half-closes the sender after optional payload is delivered.
-- `RST=0x04` resets the stream. It MUST be the only flag and `value` MUST be 0.
-- All other flag bits MUST be zero.
-
-WINDOW uses `flags=0`, carries no payload, and requires nonzero credit. A
+WINDOW carries no payload and requires nonzero credit in 1 KiB
+units. A
 WINDOW with `flow_id=0` replenishes connection credit; a nonzero ID replenishes
 that logical stream. Credit that would exceed the configured window closes the
 carrier. A late stream-local WINDOW for an already closed stream is ignored.
 
-STREAM data for an unknown flow is a carrier error. Late FIN or RST processing
+DATA for an unknown flow is a carrier error. Late or duplicate FIN/RESET processing
 is idempotent. Closing the physical Mux carrier fails every logical stream on
 that carrier.
 
-The runtime emits at most 32 KiB of data per STREAM frame. Default Mux bounds
-are 512 KiB per-stream receive credit, 512 KiB connection-wide receive credit,
-256 active streams, and 512 queued outbound frame slots. Payload must obtain
+Mux uses an initial 4 MiB stream window and 8 MiB connection window. Each side
+sends one WINDOW to extend its connection window. OPEN advertises the opener's
+stream extension; the receiver returns its stream extension with WINDOW.
+The selected transport profile sets final windows to 4/8, 8/16, or 16/32 MiB.
+Each carrier admits at most 4,096 active streams as an implementation resource
+ceiling, independent of application flow policy. Each carrier has 512 queued
+outbound frame slots and 4,096 queued terminal-delivery slots; each stream may
+have one DATA frame queued or being written.
+Payload must obtain
 both stream and connection credit before it enters the outbound queue.
 
 ```text
@@ -250,10 +332,28 @@ application write
 Both credit checks precede queue admission. A stream therefore cannot reserve
 payload beyond either advertised receive window.
 
-Client-side Shards open lazily in separate uplink and downlink sets. A new flow
-uses the least-loaded live Shard for its TLS direction; a new Shard opens when
-all live Shards in that set have 4 active flows. A symmetric `tcp/tcp` flow
-uses one duplex stream from the uplink set. A fully idle Shard closes after 30
+Client-side TLS Mux carriers share one session pool, with at most eight established
+or connecting carriers combined. Each TLS carrier is full duplex. New flows
+reuse idle carriers first. If all are busy and capacity remains, the new flow
+establishes another carrier; independent establishments run concurrently. At
+capacity, new flows use the carrier with the lowest maximum occupancy of send
+credit, receive credit, and outbound frame slots; stream count plus pending
+reservations breaks ties. Connecting slots also accept reservations, so a cold
+burst does not pile onto the first completed handshake. Each slot shares one
+initializer; cancellation allows a waiter to retry it. Failed expansion can
+fall back to an established carrier. There is no stream-density target, latency
+threshold, background polling, or migration
+of established streams. This favors parallel throughput over minimizing the
+number of carriers for many idle logical streams.
+
+Receive queues use byte-credit admission rather than blocking the carrier reader
+on a per-flow frame count. Every DATA frame consumes at least one KiB of credit,
+bounding queued payload and DATA metadata across the carrier. Separate OPEN
+admission caps active streams, pending incoming deliveries, and pending terminal
+deliveries separately at 4,096 per carrier. A full incoming or terminal queue
+closes the carrier immediately without blocking its reader; OPEN/RESET churn
+cannot bypass these queue limits. Authentication remains
+separate from Mux placement. A fully idle carrier closes after 30
 seconds. Portal applies the same timeout to an authenticated Mux carrier with
 no active streams. Sharding is runtime placement and does not add wire fields.
 
@@ -289,8 +389,9 @@ Field values:
 | `down` | 4 | `0=TLS/TCP`, `1=QUIC` |
 | `hops` | 7..5 | remaining Portal forwarding budget, `0..7` |
 
-`flow_id` is nonzero and is scoped to `session_id`. The same logical flow uses
-the same ID on OPEN and ATTACH, in MuxHeader, and in QUIC UDP DATAGRAM frames.
+`flow_id` is in `1..=0x3fffffff` and is scoped to `session_id`. Its u32 field's
+upper two bits must be zero. The same logical flow uses the same ID on OPEN
+and ATTACH, in MuxHeader, and in QUIC UDP DATAGRAM frames.
 
 Role semantics:
 
@@ -390,7 +491,7 @@ SetupResult - 1 byte
 | `0x01` | INVALID_REQUEST | malformed or carrier-inconsistent setup |
 | `0x02` | METADATA_CONFLICT | OPEN and ATTACH metadata conflict |
 | `0x03` | PAIR_TIMEOUT | the matching split lane did not arrive |
-| `0x04` | FLOW_LIMIT | admission, session flow, or forwarding limit reached |
+| `0x04` | FLOW_LIMIT | admission or forwarding limit reached |
 | `0x05` | DIAL_FAILED | target or upstream connection failed |
 | `0x06` | SESSION_REPLACED | a newer authenticated carrier replaced this session state |
 | `0x07` | INTERNAL_ERROR | local processing failure |
@@ -434,34 +535,28 @@ Every DATAGRAM contains exactly one DATA, FRAGMENT, or CLOSE frame.
 ### Common DATA/CLOSE header
 
 ```text
-QUIC UDP DATA or CLOSE - 5 + N bytes
+QUIC UDP DATA or CLOSE - 4 + N bytes
 
- offset  0                        1                       5
-         +------------------------+-----------------------+
-         | flags                  | flow_id               |
-         | u8                     | u32                   |
-         +------------------------+-----------------------+
+ offset  0                                               4
+         +------------------------------------------------+
+         | type:2 | flow_id:30                             |
+         | u32, network byte order                        |
+         +------------------------------------------------+
          | payload ...                                    |  DATA only
          +------------------------------------------------+
-
-flags byte
-
- bit     7                           2   1       0
-         +-----------------------------+-----------+
-         | reserved, MUST be zero      | type      |
-         | 6 bits                      | 2 bits    |
-         +-----------------------------+-----------+
 ```
 
 | `type` | Name | Payload |
 |---:|---|---|
 | `0b00` | DATA | remaining DATAGRAM bytes; zero length is valid |
-| `0b01` | FRAGMENT | uses the 13-byte header below |
-| `0b10` | CLOSE | none; total DATAGRAM length MUST be 5 |
+| `0b01` | FRAGMENT | uses the 12-byte header below |
+| `0b10` | CLOSE | none; total DATAGRAM length MUST be 4 |
 | `0b11` | invalid | — |
 
-`flow_id` is nonzero. DATA has no payload-length field because the QUIC
-DATAGRAM boundary supplies the length. CLOSE immediately removes the UDP route.
+The common word is `(type << 30) | flow_id`, with type in bits 31..30 and
+`flow_id` in bits 29..0. `flow_id` is in `1..=0x3fffffff`. DATA has no
+payload-length field because the QUIC DATAGRAM boundary supplies the length.
+CLOSE immediately removes the UDP route.
 
 ### Fragment header
 
@@ -469,13 +564,13 @@ Packets that exceed the current QUIC maximum DATAGRAM size are divided into
 2–255 fragments.
 
 ```text
-QUIC UDP FRAGMENT - 13 + N bytes
+QUIC UDP FRAGMENT - 12 + N bytes
 
- offset  0      1            5            9          10        11           13
-         +------+------------+------------+----------+---------+------------+
-         | 0x01 | flow_id    | packet_id  | frag_ix  | count   | total_len  |
-         | u8   | u32        | u32        | u8       | u8      | u16        |
-         +------+------------+------------+----------+---------+------------+
+ offset  0                    4            8          9         10           12
+         +--------------------+------------+----------+---------+------------+
+         | type:2|flow_id:30   | packet_id  | frag_ix  | count   | total_len  |
+         | u32                | u32        | u8       | u8      | u16        |
+         +--------------------+------------+----------+---------+------------+
          | fragment payload, N > 0                                          |
          +------------------------------------------------------------------+
 ```
@@ -506,14 +601,21 @@ ATTACH.
 
 ## 11. Runtime limits and failure scope
 
-One authenticated client session admits 1,024 concurrent logical TCP flows and
-256 concurrent logical UDP flows by default. Pending flows count toward the
-same limits. A full-duplex flow counts once regardless of its carrier
-combination. Admission at the limit returns FLOW_LIMIT without waiting.
+The former application-level TCP, UDP, and pending-pair quotas are absent.
+Independent implementation safeguards admit at most 4,096 active streams per
+Mux carrier, 1,024 accepted SOCKS clients per Vector, and 1,024 active SOCKS UDP
+targets per Vector. Portal admits at most 4,096 active or pending claims per
+authenticated session and 65,536 claims across its pairing registry.
+Active flow IDs are unique within `1..=0x3fffffff`. Allocation wraps to 1,
+skips IDs held by live leases, and fails when the space is exhausted. Released
+IDs may be reused; this does not provide generation isolation for delayed
+messages. Byte flow control, queue budgets, and pairing/setup timeouts apply.
 
-The QUIC bidirectional-stream ceiling is derived from both flow limits: 1,280
-by default. A QUIC TCP flow owns one reliable stream. A QUIC UDP flow owns one
-reliable control stream plus its DATAGRAM route.
+QUIC bidirectional-stream credit grows with live and pending QUIC flows, with
+setup headroom of max(64, live / 4), and is clamped to the 4,096-claim session
+budget. A QUIC TCP flow owns one reliable stream;
+a QUIC UDP flow owns one reliable control stream plus its DATAGRAM route.
+This is sliding transport credit, not a fixed application concurrency ceiling.
 
 Failure scope follows the physical carrier:
 

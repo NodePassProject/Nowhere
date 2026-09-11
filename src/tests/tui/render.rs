@@ -22,10 +22,10 @@ fn app_with_instance() -> App {
             pid: 42,
             uid: 0,
             version: "test".to_owned(),
-            endpoint: "0.0.0.0:2077".to_owned(),
+            endpoint: "0.0.0.0:2000".to_owned(),
             config_summary: "net=mix tls=1".to_owned(),
             telemetry_interval_ms: 1_000,
-            telemetry_protocol_version: 2,
+            telemetry_version: 2,
         },
         lifecycle: Lifecycle::Ready,
         snapshot: Some(TelemetrySnapshot {
@@ -108,7 +108,7 @@ fn renders_full_dashboard() {
     assert!(!output.contains("ACTIVE"));
     assert!(output.contains("CPU"));
     assert!(output.contains("RSS"));
-    assert!(output.contains("LST 0.0.0.0:2077"));
+    assert!(output.contains("LST 0.0.0.0:2000"));
     assert!(output.contains("? help"));
     assert!(!output.contains("telemetry 1000ms"));
 }
@@ -210,7 +210,7 @@ fn renders_narrow_two_page_dashboard() {
     let output = rendered(72, 20, &app_with_instance());
     assert!(output.contains("Overview"));
     assert!(output.contains("SELECTED"));
-    assert!(output.contains("0.0.0.0:2077"));
+    assert!(output.contains("0.0.0.0:2000"));
     assert!(output.contains("1000ms"));
     assert!(output.contains("? help"));
     assert!(!output.contains("telemetry 1000ms"));
@@ -277,9 +277,9 @@ fn full_sidebar_keeps_long_lifecycle_labels_visible() {
             uid: 502,
             version: "test".to_owned(),
             endpoint: "[::1]:1082".to_owned(),
-            config_summary: "portal=relay.example:2077".to_owned(),
+            config_summary: "portal=relay.example:2000".to_owned(),
             telemetry_interval_ms: 1_000,
-            telemetry_protocol_version: 2,
+            telemetry_version: 2,
         },
         lifecycle: Lifecycle::Starting,
         snapshot: None,
@@ -294,7 +294,7 @@ fn full_sidebar_keeps_long_lifecycle_labels_visible() {
 fn selected_uses_available_height_for_complete_config() {
     let mut app = app_with_instance();
     app.instances[0].meta.config_summary =
-        "net=mix tls=1 alpn=now/1 rate=0 etar=0 dial=auto socks=none next=origin.example:3077 up=udp down=tcp mux=0 sni=origin.example pin=present"
+        "net=mix tls=1 rate=0 etar=0 dial=auto socks=none next=origin.example:3077 up=udp down=tcp mux=0 sni=origin.example pin=present"
             .to_owned();
 
     let output = rendered(160, 40, &app);

@@ -6,13 +6,17 @@ use std::io::IoSlice;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use super::wire::FLAG_FIN;
+use super::wire::CLOSE_FIN;
 use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::oneshot;
 
-use super::driver::{closed, frame_stream, send_data};
-use super::{FRAME_BYTES, FlowReader, FlowWriter, Inbound, MuxStream, Outbound};
+use super::driver::{closed, frame_close, send_data};
+use super::{FRAME_BYTES, FlowReader, FlowWriter, Inbound, MuxChunk, MuxStream, Outbound};
+
+fn copy_payload(payload: &[u8]) -> Bytes {
+    Bytes::copy_from_slice(payload)
+}
 
 impl MuxStream {
     pub fn into_split(self) -> (FlowReader, FlowWriter) {
@@ -106,8 +110,44 @@ impl AsyncRead for FlowReader {
     }
 }
 
+impl FlowReader {
+    pub(crate) async fn recv_chunk(&mut self) -> io::Result<Option<MuxChunk>> {
+        if let Some((payload, offset, charge)) = self.current.take() {
+            return Ok(Some(MuxChunk::received(
+                payload.slice(offset..),
+                self.shared.clone(),
+                self.flow_id,
+                charge,
+            )));
+        }
+        if self.eof {
+            return Ok(None);
+        }
+        match self.receiver.recv().await {
+            Some(Inbound::Data { payload, charge }) => Ok(Some(MuxChunk::received(
+                payload,
+                self.shared.clone(),
+                self.flow_id,
+                charge,
+            ))),
+            Some(Inbound::Fin) | None => {
+                self.eof = true;
+                Ok(None)
+            }
+            Some(Inbound::Reset) => {
+                self.eof = true;
+                Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "mux flow reset",
+                ))
+            }
+        }
+    }
+}
+
 impl Drop for FlowReader {
     fn drop(&mut self) {
+        self.receiver.close();
         if let Some((_, _, charge)) = self.current.take() {
             self.shared.release_receive(self.flow_id, charge);
         }
@@ -136,7 +176,11 @@ impl AsyncWrite for FlowWriter {
             return Poll::Ready(Ok(0));
         }
         let length = buf.len().min(FRAME_BYTES);
-        let payload = Bytes::copy_from_slice(&buf[..length]);
+        #[cfg(test)]
+        self.shared
+            .borrowed_write_copies
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let payload = MuxChunk::from_bytes(copy_payload(&buf[..length]));
         self.start_write(cx, payload, length)
     }
 
@@ -151,23 +195,18 @@ impl AsyncWrite for FlowWriter {
         if let Some(result) = self.poll_pending(cx) {
             return result;
         }
-        let length = bufs
-            .iter()
-            .map(|buffer| buffer.len())
-            .sum::<usize>()
-            .min(FRAME_BYTES);
-        if length == 0 {
-            return Poll::Ready(Ok(0));
-        }
-        let mut payload = Vec::with_capacity(length);
         for buffer in bufs {
-            let remaining = length - payload.len();
-            if remaining == 0 {
-                break;
+            if !buffer.is_empty() {
+                let length = buffer.len().min(FRAME_BYTES);
+                #[cfg(test)]
+                self.shared
+                    .borrowed_write_copies
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let payload = MuxChunk::from_bytes(copy_payload(&buffer[..length]));
+                return self.start_write(cx, payload, length);
             }
-            payload.extend_from_slice(&buffer[..buffer.len().min(remaining)]);
         }
-        self.start_write(cx, Bytes::from(payload), length)
+        Poll::Ready(Ok(0))
     }
 
     fn is_write_vectored(&self) -> bool {
@@ -182,16 +221,11 @@ impl AsyncWrite for FlowWriter {
         }
         if self.pending_action.is_none() {
             let shared = self.shared.clone();
-            let flow_id = self.flow_id;
             self.pending_action = Some(Box::pin(async move {
                 let (tx, rx) = oneshot::channel();
                 shared
                     .data_tx
-                    .send(Outbound {
-                        header: frame_stream(flow_id, 0, 0)?,
-                        payload: Bytes::new(),
-                        flushed: Some(tx),
-                    })
+                    .send(Outbound::Flush(tx))
                     .await
                     .map_err(|_| closed())?;
                 rx.await.map_err(|_| closed())?
@@ -215,11 +249,7 @@ impl AsyncWrite for FlowWriter {
             self.pending_action = Some(Box::pin(async move {
                 shared
                     .data_tx
-                    .send(Outbound {
-                        header: frame_stream(flow_id, FLAG_FIN, 0)?,
-                        payload: Bytes::new(),
-                        flushed: None,
-                    })
+                    .send(Outbound::Control(frame_close(flow_id, CLOSE_FIN)?))
                     .await
                     .map_err(|_| closed())
             }));
@@ -227,7 +257,6 @@ impl AsyncWrite for FlowWriter {
         match self.poll_action(cx) {
             Poll::Ready(Ok(())) => {
                 self.closed = true;
-                self.terminal_permit = None;
                 Poll::Ready(Ok(()))
             }
             other => other,
@@ -239,7 +268,7 @@ impl FlowWriter {
     fn start_write(
         &mut self,
         cx: &mut Context<'_>,
-        payload: Bytes,
+        payload: MuxChunk,
         length: usize,
     ) -> Poll<io::Result<usize>> {
         let shared = self.shared.clone();
@@ -272,15 +301,41 @@ impl FlowWriter {
     }
 }
 
+impl FlowWriter {
+    pub(crate) async fn send_chunk(&mut self, chunk: MuxChunk) -> io::Result<()> {
+        if self.closed
+            || self
+                .shared
+                .closed
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(closed());
+        }
+        if chunk.is_empty() {
+            return Ok(());
+        }
+        if chunk.len() > FRAME_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "mux chunk exceeds frame size",
+            ));
+        }
+        super::driver::send_data(self.shared.clone(), self.flow_id, chunk).await
+    }
+}
+
 impl Drop for FlowWriter {
     fn drop(&mut self) {
         if !self.closed {
-            // One bounded dispatcher per carrier preserves ordering behind
+            // One dispatcher per carrier preserves ordering behind
             // already queued DATA without spawning a task for every dropped
             // stream. Dropping a writer is a half-close: split-direction users
             // intentionally discard the unused half while retaining the other.
-            if let Some(permit) = self.terminal_permit.take() {
-                permit.send(self.flow_id);
+            if self.shared.terminal_tx.try_send(self.flow_id).is_err() {
+                // Drop cannot wait for terminal delivery. A full queue means
+                // the peer is not draining control traffic, so fail the
+                // carrier before terminal metadata can grow without bound.
+                self.shared.close();
             }
         }
         self.shared.release_part(self.flow_id);

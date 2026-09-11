@@ -9,7 +9,40 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use tokio::net::{TcpSocket, TcpStream, UdpSocket, lookup_host};
 
-use super::DEFAULT_DIALER_IP;
+use super::{AddressFamily, CarrierEndpoint, DEFAULT_DIALER_IP};
+
+/// Resolves every matching listen address for one carrier and removes duplicates.
+pub(crate) fn resolve_bind_addrs(host: &str, endpoint: CarrierEndpoint) -> Result<Vec<SocketAddr>> {
+    let mut addrs = if host == "*" || host.is_empty() {
+        match endpoint.family {
+            AddressFamily::Any => vec![
+                SocketAddr::from(([0, 0, 0, 0], endpoint.port)),
+                SocketAddr::from(([0u16; 8], endpoint.port)),
+            ],
+            AddressFamily::V4 => vec![SocketAddr::from(([0, 0, 0, 0], endpoint.port))],
+            AddressFamily::V6 => vec![SocketAddr::from(([0u16; 8], endpoint.port))],
+        }
+    } else if let Ok(ip) = host.parse::<IpAddr>() {
+        if endpoint.family.accepts(ip) {
+            vec![SocketAddr::new(ip, endpoint.port)]
+        } else {
+            Vec::new()
+        }
+    } else {
+        let joined = format!("{host}:{}", endpoint.port);
+        joined
+            .to_socket_addrs()
+            .with_context(|| format!("failed to resolve listen address: {joined}"))?
+            .filter(|addr| endpoint.family.accepts(addr.ip()))
+            .collect()
+    };
+    addrs.sort_unstable();
+    addrs.dedup();
+    if addrs.is_empty() {
+        return Err(anyhow!("no matching listen address resolved for {host}"));
+    }
+    Ok(addrs)
+}
 
 /// Resolves the UDP listen addresses for a host/port pair.
 ///
@@ -43,6 +76,15 @@ pub async fn dial_tcp_from_local_ip(
     target: &str,
     timeout: Duration,
 ) -> Result<TcpStream> {
+    dial_tcp_from_local_ip_family(dialer_ip, target, timeout, AddressFamily::Any).await
+}
+
+pub(crate) async fn dial_tcp_from_local_ip_family(
+    dialer_ip: &str,
+    target: &str,
+    timeout: Duration,
+    family: AddressFamily,
+) -> Result<TcpStream> {
     let connect = async {
         let local_ip = parse_local_ip(dialer_ip);
         let mut last_err = None;
@@ -50,15 +92,16 @@ pub async fn dial_tcp_from_local_ip(
             format!("common::util::dial_tcp_from_local_ip: failed to resolve target: {target}")
         })?;
 
-        for addr in filter_addrs(addrs, local_ip) {
+        for addr in filter_addrs_for_family(addrs, local_ip, family) {
             match connect_tcp_addr(local_ip, addr).await {
                 Ok(stream) => return Ok(stream),
                 Err(err) => last_err = Some(err),
             }
         }
 
-        Err(last_err
-            .unwrap_or_else(|| anyhow!("common::util::dial_tcp_from_local_ip: no target address")))
+        Err(last_err.unwrap_or_else(|| {
+            anyhow!("common::util::dial_tcp_from_local_ip: no target address matches configured address family")
+        }))
     };
 
     tokio::time::timeout(timeout, connect)
@@ -114,6 +157,17 @@ pub(crate) fn filter_addrs(
             Some(ip) => ip.is_ipv4() == addr.is_ipv4(),
             None => true,
         })
+        .collect()
+}
+
+pub(crate) fn filter_addrs_for_family(
+    addrs: impl Iterator<Item = SocketAddr>,
+    local_ip: Option<IpAddr>,
+    family: AddressFamily,
+) -> Vec<SocketAddr> {
+    filter_addrs(addrs, local_ip)
+        .into_iter()
+        .filter(|addr| family.accepts(addr.ip()))
         .collect()
 }
 

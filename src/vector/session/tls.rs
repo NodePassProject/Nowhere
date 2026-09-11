@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use super::*;
+use std::sync::atomic::AtomicUsize;
+use tokio::sync::OnceCell;
 
 pub(in crate::vector) struct TlsManager {
-    endpoint: String,
+    endpoint: Option<(String, crate::common::AddressFamily)>,
     dialer_ip: String,
     tls: ClientTls,
     auth_key: AuthKey,
@@ -12,22 +14,27 @@ pub(in crate::vector) struct TlsManager {
     stats: Arc<Stats>,
     telemetry: Arc<TelemetryHub>,
     latency: Arc<LatencyTracker>,
-    up_mux: Mutex<Vec<MuxHandle>>,
-    down_mux: Mutex<Vec<MuxHandle>>,
-    up_mux_connect: Mutex<()>,
-    down_mux_connect: Mutex<()>,
+    mux: Mutex<Vec<Arc<TlsMux>>>,
     mux_enabled: bool,
-}
-
-#[derive(Clone, Copy)]
-pub(in crate::vector) enum MuxDirection {
-    Up,
-    Down,
 }
 
 pub(in crate::vector) enum OpenedTls {
     Dedicated(Box<TlsLane>),
     Mux(MuxStream),
+}
+
+#[derive(Default)]
+struct TlsMux {
+    handle: OnceCell<MuxHandle>,
+    pending: AtomicUsize,
+}
+
+struct PendingMux(Arc<TlsMux>);
+
+impl Drop for PendingMux {
+    fn drop(&mut self) {
+        self.0.pending.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl TlsManager {
@@ -39,7 +46,9 @@ impl TlsManager {
         signals: ClientSignals,
     ) -> Arc<Self> {
         Arc::new(Self {
-            endpoint: config.endpoint(),
+            endpoint: config
+                .tcp_endpoint()
+                .map(|endpoint| (config.remote.carrier_addr(endpoint), endpoint.family)),
             dialer_ip: config.dialer_ip.clone(),
             tls,
             auth_key: credentials.auth_key,
@@ -47,19 +56,12 @@ impl TlsManager {
             stats: signals.stats,
             telemetry: signals.telemetry,
             latency: signals.latency,
-            up_mux: Mutex::new(Vec::new()),
-            down_mux: Mutex::new(Vec::new()),
-            up_mux_connect: Mutex::new(()),
-            down_mux_connect: Mutex::new(()),
+            mux: Mutex::new(Vec::new()),
             mux_enabled: config.mux.enabled(),
         })
     }
 
-    pub(in crate::vector) async fn open(
-        self: &Arc<Self>,
-        flow_id: u32,
-        direction: MuxDirection,
-    ) -> Result<OpenedTls> {
+    pub(in crate::vector) async fn open(self: &Arc<Self>, flow_id: u32) -> Result<OpenedTls> {
         if !self.mux_enabled {
             return self
                 .connect_lane()
@@ -67,24 +69,57 @@ impl TlsManager {
                 .map(Box::new)
                 .map(OpenedTls::Dedicated);
         }
-        // Serializing stream admission per direction makes the C1 decision
-        // exact: the selected shard records its new stream before the next
-        // opener observes load.
-        let _opening = self.mux_connect(direction).lock().await;
-        if let Some(handle) = self.available_mux(direction).await {
-            return handle
-                .open_stream(flow_id)
-                .await
-                .map(OpenedTls::Mux)
-                .map_err(Into::into);
-        }
-        let lane = self.connect_lane().await?;
+        let pending = reserve_mux(&mut *self.mux.lock().await);
+        // Reservations include connecting slots, avoiding a cold-start stampede
+        // onto the first handshake to finish. OnceCell shares one initializer;
+        // cancellation lets another waiter retry without leaking a pool slot.
+        let handle = pending
+            .0
+            .handle
+            .get_or_try_init(|| self.connect_mux(pending.0.clone()))
+            .await;
+        let handle = match handle {
+            Ok(handle) => handle.clone(),
+            Err(error) => {
+                let pool = self.mux.lock().await;
+                let Some(handle) = pool
+                    .iter()
+                    .filter_map(|carrier| carrier.handle.get())
+                    .filter(|handle| !handle.is_closed())
+                    .min_by_key(|handle| (handle.pressure(), handle.active_streams()))
+                    .cloned()
+                else {
+                    return Err(error);
+                };
+                let stream = handle.prepare_stream(flow_id)?;
+                drop(pending);
+                drop(pool);
+                return handle
+                    .open_prepared(stream)
+                    .await
+                    .map(OpenedTls::Mux)
+                    .map_err(Into::into);
+            }
+        };
+        // Registration and reservation release exclude idle retirement.
+        let pool = self.mux.lock().await;
+        let stream = handle.prepare_stream(flow_id)?;
+        drop(pending);
+        drop(pool);
+        handle
+            .open_prepared(stream)
+            .await
+            .map(OpenedTls::Mux)
+            .map_err(Into::into)
+    }
+
+    async fn connect_mux(self: &Arc<Self>, slot: Arc<TlsMux>) -> Result<MuxHandle> {
         let TlsLane {
             mut stream,
             pending_auth,
             _link,
             latency,
-        } = lane;
+        } = self.connect_lane().await?;
         stream
             .write_all(&pending_auth.expect("new TLS carrier has pending auth"))
             .await
@@ -96,83 +131,52 @@ impl TlsManager {
         stream.flush().await?;
         let (handle, incoming) = MuxHandle::start(stream, MuxConfig::default())?;
         drop(incoming);
-        self.mux(direction).lock().await.push(handle.clone());
+        // No await after start until ownership is handed to the lifetime task.
         let manager = self.clone();
         let lifetime = handle.clone();
         tokio::spawn(async move {
-            manager
-                .monitor_mux(direction, lifetime, _link, latency)
-                .await;
+            manager.monitor_mux(slot, lifetime, _link, latency).await;
         });
-        handle
-            .open_stream(flow_id)
-            .await
-            .map(OpenedTls::Mux)
-            .map_err(Into::into)
-    }
-
-    fn mux(&self, direction: MuxDirection) -> &Mutex<Vec<MuxHandle>> {
-        match direction {
-            MuxDirection::Up => &self.up_mux,
-            MuxDirection::Down => &self.down_mux,
-        }
-    }
-
-    fn mux_connect(&self, direction: MuxDirection) -> &Mutex<()> {
-        match direction {
-            MuxDirection::Up => &self.up_mux_connect,
-            MuxDirection::Down => &self.down_mux_connect,
-        }
-    }
-
-    async fn available_mux(&self, direction: MuxDirection) -> Option<MuxHandle> {
-        let mut muxes = self.mux(direction).lock().await;
-        muxes.retain(|handle| !handle.is_closed());
-        select_available_mux(&muxes)
+        Ok(handle)
     }
 
     async fn monitor_mux(
         self: Arc<Self>,
-        direction: MuxDirection,
-        handle: MuxHandle,
+        slot: Arc<TlsMux>,
+        carrier: MuxHandle,
         _link: LinkGuard,
         _latency: LatencyGuard,
     ) {
         loop {
             tokio::select! {
-                _ = handle.closed() => break,
-                idle = handle.idle_for(MUX_IDLE_TIMEOUT) => {
-                    if !idle {
-                        break;
-                    }
-                }
+                _ = carrier.closed() => break,
+                idle = carrier.idle_for(MUX_IDLE_TIMEOUT) => { if !idle { break; } }
             }
-            let _opening = self.mux_connect(direction).lock().await;
-            if handle.active_streams() != 0 {
+            let mut pool = self.mux.lock().await;
+            if carrier.active_streams() != 0 || slot.pending.load(Ordering::Relaxed) != 0 {
                 continue;
             }
-            self.remove_mux(direction, &handle).await;
-            handle.close();
+            pool.retain(|candidate| !Arc::ptr_eq(candidate, &slot));
+            carrier.close();
             return;
         }
-        let _opening = self.mux_connect(direction).lock().await;
-        self.remove_mux(direction, &handle).await;
-    }
-
-    async fn remove_mux(&self, direction: MuxDirection, handle: &MuxHandle) {
-        self.mux(direction)
+        self.mux
             .lock()
             .await
-            .retain(|candidate| !candidate.same_carrier(handle));
+            .retain(|candidate| !Arc::ptr_eq(candidate, &slot));
     }
 
     async fn connect_lane(&self) -> Result<TlsLane> {
+        let (endpoint, family) = self
+            .endpoint
+            .as_ref()
+            .ok_or_else(|| anyhow!("vector::session::TlsManager: TCP carrier is not configured"))?;
         let (stream, exporter) = self
             .tls
-            .connect_tcp(&self.endpoint, &self.dialer_ip)
+            .connect_tcp(endpoint, &self.dialer_ip, *family)
             .await?;
         let latency = self.latency.register();
-        latency.update_tcp(stream.get_ref().0);
+        latency.update_tcp(stream.get_ref().0.get_ref());
         let auth = encode_auth_frame(
             self.auth_key,
             AuthTransport::TlsTcp,
@@ -188,13 +192,30 @@ impl TlsManager {
     }
 }
 
-fn select_available_mux(muxes: &[MuxHandle]) -> Option<MuxHandle> {
-    muxes
+fn reserve_mux(pool: &mut Vec<Arc<TlsMux>>) -> PendingMux {
+    pool.retain(|carrier| !carrier.handle.get().is_some_and(MuxHandle::is_closed));
+    let selected = pool
         .iter()
-        .filter(|handle| !handle.is_closed())
-        .min_by_key(|handle| handle.active_streams())
-        .filter(|handle| handle.active_streams() < TLS_MUX_FLOWS_PER_SHARD)
-        .cloned()
+        .map(|carrier| {
+            let handle = carrier.handle.get();
+            let active = carrier.pending.load(Ordering::Relaxed)
+                + handle.map_or(0, MuxHandle::active_streams);
+            let pressure = handle.map_or(0, MuxHandle::pressure);
+            (carrier, active, pressure)
+        })
+        .min_by_key(|(_, active, pressure)| (*active != 0, *pressure, *active));
+    let carrier = match selected {
+        Some((carrier, active, _)) if active == 0 || pool.len() >= TLS_MUX_MAX_CARRIERS => {
+            carrier.clone()
+        }
+        _ => {
+            let carrier = Arc::new(TlsMux::default());
+            pool.push(carrier.clone());
+            carrier
+        }
+    };
+    carrier.pending.fetch_add(1, Ordering::Relaxed);
+    PendingMux(carrier)
 }
 
 #[cfg(test)]

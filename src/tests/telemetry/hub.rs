@@ -3,24 +3,33 @@ use std::sync::atomic::Ordering;
 use crate::protocol::Carrier;
 use crate::telemetry::wire::InstanceDescriptor;
 use crate::telemetry::{
-    AccessOutcome, AccessStart, InstanceRole, PROTOCOL_VERSION, ServerMessage, TelemetryHub,
+    AccessOutcome, AccessStart, InstanceRole, ServerMessage, TELEMETRY_VERSION, TelemetryHub,
     TrafficProtocol,
 };
 use crate::transport::Stats;
 
 fn descriptor() -> InstanceDescriptor {
     InstanceDescriptor {
-        protocol_version: PROTOCOL_VERSION,
+        telemetry_version: TELEMETRY_VERSION,
         id: "1:2:3".to_owned(),
         role: InstanceRole::Portal,
         pid: 2,
         uid: 1,
         incarnation: 3,
         version: "test".to_owned(),
-        endpoint: ":2077".to_owned(),
+        endpoint: ":2000".to_owned(),
         config_summary: "portal net=mix".to_owned(),
         telemetry_interval_ms: 1_000,
     }
+}
+
+#[test]
+fn listener_summary_uses_bound_addresses_without_inventing_a_second_family() {
+    let hub = TelemetryHub::new(descriptor());
+    hub.set_listening_addresses("0.0.0.0:2000", "none");
+    let summary = &hub.descriptor().config_summary;
+    assert!(summary.ends_with("tcp=0.0.0.0:2000 udp=none"));
+    assert!(!summary.contains("[::]"));
 }
 
 #[test]
@@ -31,7 +40,6 @@ fn access_span_finishes_only_once() {
         id: 0,
         timestamp_ms: 1,
         protocol: TrafficProtocol::Tcp,
-        alpn: "now/1".to_owned(),
         flow_id: Some(7),
         session_tag: Some("abc123".to_owned()),
         client: Some("127.0.0.1:1".to_owned()),

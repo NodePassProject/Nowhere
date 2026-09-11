@@ -7,7 +7,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
-use quinn::crypto::rustls::QuicClientConfig;
+use quinn::Connection;
+use quinn::crypto::rustls::{HandshakeData, QuicClientConfig};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{
     WebPkiSupportedAlgorithms, ring, verify_tls12_signature, verify_tls13_signature,
@@ -18,8 +19,11 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
-use crate::common::{certificate_sha256, dial_tcp_from_local_ip, handshake_timeout};
-use crate::protocol::{TLS_EXPORTER_LEN, TlsExporter};
+use crate::common::{
+    AddressFamily, certificate_sha256, dial_tcp_from_local_ip_family, handshake_timeout,
+};
+use crate::protocol::{ALPN, TLS_EXPORTER_LEN, TlsExporter};
+use crate::transport::{MorphKeys, MorphTcpStream};
 
 use super::config::PortalClientConfig;
 
@@ -30,7 +34,7 @@ pub(super) const EXPORTER_LABEL: &[u8] = b"EXPORTER-Nowhere-Auth";
 pub(super) struct ClientTls {
     rustls: Arc<rustls::ClientConfig>,
     server_name: ServerName<'static>,
-    alpn: Vec<u8>,
+    morph_keys: Option<MorphKeys>,
 }
 
 impl ClientTls {
@@ -75,22 +79,16 @@ impl ClientTls {
                 }))
                 .with_no_client_auth()
         };
-        let alpn = config.alpn.as_bytes().to_vec();
-        client.alpn_protocols = vec![alpn.clone()];
+        client.alpn_protocols = vec![ALPN.to_vec()];
         client.enable_early_data = false;
 
-        let server_name = ServerName::try_from(
-            config
-                .sni
-                .as_deref()
-                .unwrap_or(config.remote_host.as_str())
-                .to_owned(),
-        )
-        .map_err(|_| anyhow!("vector::tls::ClientTls::new: invalid TLS server name"))?;
+        let server_name =
+            ServerName::try_from(config.sni.as_deref().unwrap_or(config.host()).to_owned())
+                .map_err(|_| anyhow!("vector::tls::ClientTls::new: invalid TLS server name"))?;
         Ok(Self {
             rustls: Arc::new(client),
             server_name,
-            alpn,
+            morph_keys: config.morph_keys.clone(),
         })
     }
 
@@ -112,13 +110,16 @@ impl ClientTls {
         &self,
         endpoint: &str,
         dialer_ip: &str,
-    ) -> Result<(TlsStream<TcpStream>, TlsExporter)> {
-        let stream = dial_tcp_from_local_ip(dialer_ip, endpoint, handshake_timeout())
-            .await
-            .with_context(|| format!("vector::tls::connect_tcp: failed to dial {endpoint}"))?;
+        family: AddressFamily,
+    ) -> Result<(TlsStream<MorphTcpStream<TcpStream>>, TlsExporter)> {
+        let stream =
+            dial_tcp_from_local_ip_family(dialer_ip, endpoint, handshake_timeout(), family)
+                .await
+                .with_context(|| format!("vector::tls::connect_tcp: failed to dial {endpoint}"))?;
         stream
             .set_nodelay(true)
             .context("vector::tls::connect_tcp: failed to set TCP_NODELAY")?;
+        let stream = MorphTcpStream::client(stream, self.morph_keys.clone())?;
         let connector = TlsConnector::from(self.rustls.clone());
         let tls = timeout(
             handshake_timeout(),
@@ -127,15 +128,32 @@ impl ClientTls {
         .await
         .map_err(|_| anyhow!("vector::tls::connect_tcp: TLS handshake timeout"))?
         .context("vector::tls::connect_tcp: TLS handshake failed")?;
+        require_nw2(tls.get_ref().1.alpn_protocol())
+            .context("vector::tls::connect_tcp: invalid negotiated protocol")?;
         let mut exporter = [0u8; TLS_EXPORTER_LEN];
         tls.get_ref()
             .1
             .export_keying_material(&mut exporter, EXPORTER_LABEL, Some(&[]))
             .context("vector::tls::connect_tcp: TLS exporter failed")?;
-        if tls.get_ref().1.alpn_protocol() != Some(self.alpn.as_slice()) {
-            bail!("vector::tls::connect_tcp: Portal did not negotiate the configured ALPN");
-        }
         Ok((tls, exporter))
+    }
+}
+
+pub(super) fn require_quic_nw2(connection: &Connection) -> Result<()> {
+    let handshake = connection
+        .handshake_data()
+        .ok_or_else(|| anyhow!("vector::tls: QUIC handshake data unavailable"))?
+        .downcast::<HandshakeData>()
+        .map_err(|_| anyhow!("vector::tls: unexpected QUIC handshake data"))?;
+    require_nw2(handshake.protocol.as_deref())
+        .context("vector::tls: invalid QUIC negotiated protocol")
+}
+
+fn require_nw2(alpn: Option<&[u8]>) -> Result<()> {
+    match alpn {
+        Some(ALPN) => Ok(()),
+        Some(_) => bail!("unsupported negotiated ALPN"),
+        None => bail!("peer did not negotiate ALPN"),
     }
 }
 

@@ -6,6 +6,7 @@
 mod alpn;
 mod config;
 mod datagram;
+mod endpoint;
 mod latency;
 mod lifecycle;
 mod logger;
@@ -13,24 +14,28 @@ mod network;
 pub(crate) mod socks;
 mod tls;
 
-pub(crate) use alpn::{MUX_MARKER, parse_alpn};
+pub(crate) use alpn::MUX_MARKER;
 pub(crate) use config::first_raw_query_value;
 pub use config::{
-    DEFAULT_DIALER_IP, DEFAULT_MAX_TCP_FLOWS, DEFAULT_MAX_UDP_FLOWS, DEFAULT_RATE_LIMIT,
-    DEFAULT_TELEMETRY_INTERVAL, MAX_TELEMETRY_INTERVAL, MIN_TELEMETRY_INTERVAL, env_duration,
-    env_int, flow_setup_timeout, handshake_timeout, init_dialer_ip, max_tcp_flows, max_udp_flows,
-    mix_fallback_timeout, query_first, rate_limit_bytes_per_second, reload_interval,
-    report_interval, service_cooldown, shutdown_timeout, tcp_data_buf_size, tcp_dial_timeout,
-    tcp_read_timeout, telemetry_interval, udp_data_buf_size, udp_dial_timeout, udp_idle_timeout,
+    DEFAULT_DIALER_IP, DEFAULT_RATE_LIMIT, DEFAULT_TELEMETRY_INTERVAL, MAX_TELEMETRY_INTERVAL,
+    MIN_TELEMETRY_INTERVAL, env_duration, env_int, flow_setup_timeout, handshake_timeout,
+    init_dialer_ip, mix_fallback_timeout, query_first, rate_limit_bytes_per_second,
+    reload_interval, report_interval, service_cooldown, shutdown_timeout, tcp_data_buf_size,
+    tcp_dial_timeout, tcp_read_timeout, telemetry_interval, udp_data_buf_size, udp_dial_timeout,
+    udp_idle_timeout,
 };
 pub(crate) use datagram::{
     BudgetedDatagram, UdpDatagramSend, reserve_udp_budget, send_quic_udp_packet,
 };
+pub use endpoint::validate_endpoint_url_input;
+pub(crate) use endpoint::{AddressFamily, CarrierEndpoint, ServiceEndpoint};
 pub(crate) use latency::{LatencyGuard, LatencyTracker};
 pub(crate) use lifecycle::{LifeMode, LifeReason, LifeState, Lifecycle, ShutdownSignals};
 pub use logger::{LogLevel, Logger};
 pub use network::{bind_udp_addrs, dial_tcp_from_local_ip, dial_udp_from_local_ip};
-pub(crate) use network::{filter_addrs, parse_local_ip};
+pub(crate) use network::{
+    dial_tcp_from_local_ip_family, filter_addrs_for_family, parse_local_ip, resolve_bind_addrs,
+};
 pub(crate) use socks::{OutboundDialer, OutboundTcpStream, OutboundUdpSocket, SocksConfig};
 pub(crate) use tls::certificate_sha256;
 pub(crate) use tls::new_server_configs_with_reload_interval;

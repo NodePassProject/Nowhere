@@ -22,6 +22,56 @@ TLS is version 1.3. Deployments may use a certificate pin, normal system-root
 verification with SNI, or the explicitly configured unverified certificate
 mode used by generated local certificates.
 
+## Morph boundary
+
+With `morph=1`, HKDF-SHA256 derives separate TCP client-to-server,
+TCP server-to-client, and UDP keys from the endpoint shared key. ChaCha20 XOR
+then masks the TLS stream or each QUIC datagram below the secure transport.
+The nonce is public: TCP carries one 12-byte client nonce per connection and
+UDP carries one 12-byte nonce per datagram.
+
+An observer without the shared key cannot directly recover the bare TLS/QUIC
+wire image or feed captured bytes directly to a generic TLS/QUIC parser. Morph
+does not authenticate bytes, detect modification, reject replay, hide lengths
+or timing, imitate HTTPS, or provide session security. TLS/QUIC and AuthFrame
+remain mandatory. Random nonces can collide, UDP maintains no replay state,
+and TCP does not remember previously used client nonces. Shared keys therefore
+need adequate entropy; HKDF does not make a guessable key expensive to search.
+
+Morph has no negotiation or downgrade path. A missing setting or wrong key
+appears as a TLS/QUIC handshake failure or timeout rather than a distinct
+authenticated Morph error.
+
+## Endpoint exposure
+
+The service endpoint is also the network exposure policy. A compact Portal
+endpoint exposes TLS/TCP and QUIC/UDP on the same port. An explicit path exposes
+only its declared carriers, ports, and address families:
+
+```text
+portal://key@*/tcp4:2006
+portal://key@192.0.2.10/tcp:2006/udp:2017
+portal://key@[2001:db8::10]/udp6:2017
+```
+
+`*` and the compact empty host bind wildcard interfaces. Use a concrete local
+address when the service should be limited to one interface, and enforce the
+same transport, port, and family policy in host and perimeter firewalls. Every
+IPv6 listener is `V6ONLY`, so IPv4 exposure is always represented by a separate
+socket and firewall decision.
+
+A hostname listener binds all matching addresses resolved at startup. The
+result is not refreshed dynamically, which prevents a later DNS answer from
+silently expanding a running process, but operators must review the complete
+startup address list after each restart. Vector and native `next` honor
+explicit family suffixes and never retry through the other family.
+
+Effective URLs, startup summaries, TUI descriptors, and configuration errors
+omit the shared key. The original command URL still contains the credential;
+protect shell history, process arguments, service-manager configuration, and
+deployment logs accordingly. Reserved key bytes must be percent-encoded, and
+nested `next` credentials are decoded exactly once.
+
 ## Admission
 
 Portal bounds pre-authentication work and applies per-source admission before
@@ -36,46 +86,37 @@ A receiver charges both windows before delivery and returns credit only after
 application consumption. Closing the carrier releases queued payload.
 
 The fixed maximum frame payload is 65,535 bytes and the runtime emits at most
-32 KiB per STREAM frame. Malformed kinds, flags, IDs, lengths, window overflow,
+32 KiB per DATA frame. Malformed kinds, codes, IDs, lengths, window overflow,
 and DATA for unknown streams close the carrier. Late terminal and credit frames
 for a terminal stream are idempotent.
 
-Default limits are 512 KiB per stream and per Mux connection and 256 active
-streams per Mux. With client `mux=1`, Vector or Portal `next` places at most 4
-active flows on a shard before opening another, distributes new flows to the
-least-loaded shard, and closes a fully idle shard after 30 seconds. One
+The transport memory profile bounds Mux stream/connection windows at 4/8,
+8/16, or 16/32 MiB. Each Mux carrier admits at most 4,096 active streams. With client `mux=1`,
+Vector or Portal `next` shares at most eight TLS carriers across both directions,
+reuses idle carriers before creating more, distributes flows by occupancy at capacity,
+and closes a fully idle carrier after 30 seconds. Stream and pending lifecycle
+metadata remain proportional to admitted streams. Active streams, pending
+incoming deliveries, and terminal deliveries each have a separate 4,096-entry
+ceiling, so OPEN/RESET churn cannot grow either delivery queue without bound.
+Queue overflow closes the carrier without blocking its reader. One
 authenticated inbound Mux carrier is subject to the same fully idle timeout.
-One authenticated client session admits at most 1,024 concurrent logical TCP
-flows and 256 logical UDP flows across all of its carriers. UoT and QUIC
-DATAGRAM flows share the UDP limit.
-Local fair credit prevents one stream from monopolizing a shared window. The
-finite frame queue has 512 slots, but payload admission is capped by the
-512 KiB byte window; empty SYN/FIN/WINDOW frames cannot turn those slots into
+The former authenticated-session logical-flow quotas are absent. Independent
+resource admission caps Mux streams, accepted SOCKS clients, active SOCKS UDP
+targets, and Portal flow claims. Each authenticated Portal session admits 4,096
+active or pending claims, with 65,536 across the pairing registry; byte windows
+do not bound those resources.
+Per-stream and connection credit plus OPEN admission limit how much
+one stream can occupy. The finite frame queue has 512 slots, but
+payload admission is capped by the selected connection window; empty
+OPEN/FIN/RESET/WINDOW frames cannot turn those slots into
 retained application payload. These are credit ceilings rather than eagerly
 allocated payload buffers.
 
-```text
-authenticated client session
-    |
-    +-- TCP budget: 1,024 active flows
-    |     |
-    |     +-- dedicated TLS lane
-    |     +-- Mux stream --> TLS Shard, target density 4
-    |     +-- QUIC reliable stream
-    |
-    +-- UDP budget: 256 active flows
-          |
-          +-- UoT stream --> dedicated TLS lane or Mux Shard
-          +-- QUIC control stream + DATAGRAM route
-```
-
-The TCP and UDP budgets are per authenticated session rather than process-wide.
-Multiple sessions using the same shared key receive independent flow budgets.
-All Shards from one session share its TCP or UDP admission budget. The shared
-key is a credential, not a stable user identity, so Portal does not aggregate
-these limits across every client that knows the same key. Operators control
-aggregate exposure through key distribution, host resource limits, and
-network-level admission policy.
+TCP, UoT, and QUIC flows all follow the same policy: byte budgets, lifecycle
+timeouts, and resource admission apply without restoring legacy application quotas. QUIC expands
+stream credit with actual demand and clamps it to the session claim budget.
+Operators control aggregate exposure through key distribution, host resource
+limits, and network-level admission policy.
 
 Relay scratch buffers use bounded reuse caches: each process retains at most 64
 TCP buffers and 32 UDP buffers. A short-lived concurrency spike therefore

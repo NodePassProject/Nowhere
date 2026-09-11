@@ -9,15 +9,13 @@ use crate::protocol::{
     read_flow_result,
 };
 use crate::transport::Stats;
-use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 
 impl PairingRegistry {
     fn is_accepting(&self) -> bool {
@@ -25,21 +23,8 @@ impl PairingRegistry {
     }
 }
 
-fn registry(max_udp_flows: usize, timeout: Duration) -> Arc<PairingRegistry> {
-    Arc::new(PairingRegistry {
-        tcp: Mutex::new(HashMap::new()),
-        udp: Mutex::new(HashMap::new()),
-        links: StdMutex::new(HashMap::new()),
-        claims: StdMutex::new(HashMap::new()),
-        rejections: StdMutex::new(HashMap::new()),
-        accepting: AtomicBool::new(true),
-        next_quic_generation: AtomicU64::new(1),
-        next_epoch: AtomicU64::new(1),
-        max_pending: 16,
-        timeout,
-        max_tcp_flows: 16,
-        max_udp_flows,
-    })
+fn registry(timeout: Duration) -> Arc<PairingRegistry> {
+    Arc::new(PairingRegistry::new(timeout))
 }
 
 fn header(
@@ -66,7 +51,7 @@ fn target(value: &str) -> Target {
 fn path(label: &str) -> LinkPath {
     LinkPath {
         peer: format!("{label}.client:1234"),
-        local: "portal.test:2077".into(),
+        local: "portal.test:2000".into(),
     }
 }
 
@@ -76,17 +61,6 @@ fn tcp_half(label: &str) -> LinkHalf {
 
 fn quic_half(label: &str, generation: u64) -> LinkHalf {
     LinkHalf::quic(path(label), generation)
-}
-
-fn available_udp_permits(registry: &PairingRegistry, session_id: SessionId) -> usize {
-    registry
-        .links
-        .lock()
-        .expect("link registry poisoned")
-        .get(&session_id)
-        .expect("registered session")
-        .udp_flow_budget
-        .available_permits()
 }
 
 struct PendingWriter;

@@ -10,7 +10,7 @@ use bytes::Bytes;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
-use crate::portal::{Portal, UdpFlowLimits};
+use crate::portal::Portal;
 use crate::protocol::{
     Carrier, FlowErrorCode, FlowHeader, FlowKind, FlowResult, FlowRole, UdpFrame, decode_udp_frame,
     encode_udp_close, encode_udp_data_fragments, read_flow_result, write_flow_header,
@@ -18,8 +18,7 @@ use crate::protocol::{
 };
 
 use super::support::{
-    connect_test_quic, connect_test_quic_to, connect_test_quic_with_url_and_limits,
-    quic_auth_frame, stop_test_quic, test_target,
+    connect_test_quic, connect_test_quic_to, quic_auth_frame, stop_test_quic, test_target,
 };
 
 async fn authenticate_test_connection(portal: &Portal, connection: &quinn::Connection) {
@@ -43,14 +42,17 @@ async fn setup_quic_udp(
     target: &str,
 ) -> (FlowResult, quinn::RecvStream) {
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    send.write_all(&write_flow_header(FlowHeader {
-        role: FlowRole::Duplex,
-        flow_id,
-        kind: FlowKind::Udp,
-        uplink: Carrier::Quic,
-        downlink: Carrier::Quic,
-        hops: 0,
-    }))
+    send.write_all(
+        &write_flow_header(FlowHeader {
+            role: FlowRole::Duplex,
+            flow_id,
+            kind: FlowKind::Udp,
+            uplink: Carrier::Quic,
+            downlink: Carrier::Quic,
+            hops: 0,
+        })
+        .unwrap(),
+    )
     .await
     .unwrap();
     send.write_all(&write_request_frame(&test_target(target)).unwrap())
@@ -142,14 +144,17 @@ async fn quic_carrier_mismatch_returns_invalid_request() {
     authenticate_test_connection(&portal, &connection).await;
 
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    send.write_all(&write_flow_header(FlowHeader {
-        role: FlowRole::Duplex,
-        flow_id: 76,
-        kind: FlowKind::Tcp,
-        uplink: Carrier::TlsTcp,
-        downlink: Carrier::TlsTcp,
-        hops: 0,
-    }))
+    send.write_all(
+        &write_flow_header(FlowHeader {
+            role: FlowRole::Duplex,
+            flow_id: 76,
+            kind: FlowKind::Tcp,
+            uplink: Carrier::TlsTcp,
+            downlink: Carrier::TlsTcp,
+            hops: 0,
+        })
+        .unwrap(),
+    )
     .await
     .unwrap();
     send.finish().unwrap();
@@ -182,14 +187,17 @@ async fn first_stream_carries_auth_and_flow_while_pre_auth_datagrams_are_dropped
     send.write_all(&quic_auth_frame(&portal, &connection, [78; 16]))
         .await
         .unwrap();
-    send.write_all(&write_flow_header(FlowHeader {
-        role: FlowRole::Duplex,
-        flow_id: 78,
-        kind: FlowKind::Udp,
-        uplink: Carrier::Quic,
-        downlink: Carrier::Quic,
-        hops: 0,
-    }))
+    send.write_all(
+        &write_flow_header(FlowHeader {
+            role: FlowRole::Duplex,
+            flow_id: 78,
+            kind: FlowKind::Udp,
+            uplink: Carrier::Quic,
+            downlink: Carrier::Quic,
+            hops: 0,
+        })
+        .unwrap(),
+    )
     .await
     .unwrap();
     send.write_all(&write_request_frame(&test_target(&target_addr)).unwrap())
@@ -322,59 +330,30 @@ async fn zero_length_udp_packet_round_trips_as_data() {
 }
 
 #[tokio::test]
-async fn udp_close_releases_the_session_global_flow_permit() {
-    let limits = UdpFlowLimits {
-        max_flows: 1,
-        queue_bytes: 64 * 1024,
-    };
+async fn quic_udp_grows_past_former_session_and_stream_limits() {
     let (portal, server_endpoint, client_endpoint, connection, shutdown, server_task) =
-        connect_test_quic_with_url_and_limits(
-            "portal://secret@127.0.0.1:0?log=none&net=udp",
-            Some(limits),
-        )
-        .await;
+        connect_test_quic().await;
     authenticate_test_connection(&portal, &connection).await;
-    let first_target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let second_target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-
-    assert_eq!(
-        setup_quic_udp(
-            &portal,
-            &connection,
-            90,
-            &first_target.local_addr().unwrap().to_string(),
-        )
-        .await
-        .0,
-        FlowResult::Ready
-    );
-    let (result, mut rejected) = setup_quic_udp(
-        &portal,
-        &connection,
-        91,
-        &second_target.local_addr().unwrap().to_string(),
-    )
-    .await;
-    assert_eq!(result, FlowResult::Reject(FlowErrorCode::FlowLimit));
-    let mut eof = [0u8; 1];
-    assert_eq!(rejected.read(&mut eof).await.unwrap(), None);
-
+    let target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let address = target.local_addr().unwrap().to_string();
+    let mut streams = Vec::new();
+    timeout(Duration::from_secs(20), async {
+        for id in 1..=1400 {
+            let (result, stream) = setup_quic_udp(&portal, &connection, id, &address).await;
+            assert_eq!(result, FlowResult::Ready, "flow {id}");
+            streams.push(stream);
+        }
+    })
+    .await
+    .expect("MAX_STREAMS must grow without a fixed active-flow cap");
+    wait_for_udp_active(&portal, 1400).await;
     connection
-        .send_datagram(Bytes::copy_from_slice(&encode_udp_close(90).unwrap()))
+        .send_datagram(Bytes::copy_from_slice(&encode_udp_close(1).unwrap()))
         .unwrap();
-    wait_for_udp_active(&portal, 0).await;
-    assert_eq!(
-        setup_quic_udp(
-            &portal,
-            &connection,
-            91,
-            &second_target.local_addr().unwrap().to_string(),
-        )
-        .await
-        .0,
-        FlowResult::Ready
-    );
-
+    wait_for_udp_active(&portal, 1399).await;
+    let (result, stream) = setup_quic_udp(&portal, &connection, 1401, &address).await;
+    assert_eq!(result, FlowResult::Ready);
+    streams.push(stream);
     connection.close(quinn::VarInt::from_u32(0), b"");
     stop_test_quic(server_endpoint, client_endpoint, shutdown, server_task).await;
 }

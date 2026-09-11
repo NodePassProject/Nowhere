@@ -13,6 +13,7 @@ pub(in crate::portal) use self::session::QueuedDatagram;
 
 use std::sync::Arc;
 
+use quinn::crypto::rustls::HandshakeData;
 use quinn::{Connection, Incoming, VarInt};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
@@ -25,6 +26,7 @@ pub(super) use self::tcp::handle_tcp_incoming;
 use super::PortalInner;
 use super::admission::UnauthenticatedGuard;
 use crate::common::rate_limit_bytes_per_second;
+use crate::protocol::ALPN;
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel};
 
 pub(super) async fn handle_incoming(
@@ -55,6 +57,17 @@ pub(super) async fn handle_incoming(
         // Keep them silent to avoid log amplification.
         Err(_) => return,
     };
+    let valid_alpn = conn
+        .handshake_data()
+        .and_then(|data| data.downcast::<HandshakeData>().ok())
+        .is_some_and(|data| data.protocol.as_deref() == Some(ALPN));
+    if !valid_alpn {
+        conn.close(VarInt::from_u32(1), b"unsupported protocol");
+        portal.logger.debug(format_args!(
+            "portal::conn::handle_incoming: invalid negotiated QUIC protocol"
+        ));
+        return;
+    }
     handle_connection(portal, conn, admission, shutdown).await;
 }
 
@@ -96,7 +109,7 @@ async fn handle_connection(
     }
     // Once auth succeeds, expand the conservative pre-auth limits to the normal
     // data-plane limits and release the admission slot.
-    let flow_control = match crate::transport::quic_flow_control() {
+    let flow_control = match crate::transport::transport_flow_control() {
         Ok(value) => value,
         Err(err) => {
             portal.logger.error(format_args!(
@@ -108,16 +121,18 @@ async fn handle_connection(
         }
     };
     conn.set_receive_window(VarInt::from_u32(flow_control.connection_receive_window));
-    conn.set_max_concurrent_bi_streams(VarInt::from_u32(
-        portal.runtime.quic_bidi_stream_capacity(),
-    ));
+    conn.set_max_concurrent_bi_streams(
+        portal
+            .pairing
+            .quic_stream_credit(authenticated.session.session_key),
+    );
     drop(admission);
     let session = authenticated.session;
     let link_replaced = CancellationToken::new();
     let link_guard = portal
         .pairing
         .register_quic_link(
-            session.session_id,
+            session.session_key,
             portal.stats.clone(),
             link_replaced.clone(),
         )

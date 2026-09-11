@@ -9,7 +9,6 @@ use std::sync::atomic::Ordering;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
@@ -34,7 +33,6 @@ pub(crate) struct UdpTunnel {
     _lanes: Vec<PhysicalLane>,
     _lease: Option<FlowLease>,
     _session: Option<SessionGuard>,
-    _flow_permit: Option<OwnedSemaphorePermit>,
 }
 
 impl UdpTunnel {
@@ -186,11 +184,6 @@ pub(crate) async fn open_udp(
     target: &Target,
     hops: u8,
 ) -> std::result::Result<UdpTunnel, OpenFlowError> {
-    let flow_permit = client
-        .udp_flow_permits
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| OpenFlowError::Setup(crate::protocol::SetupResult::FlowLimit))?;
     let lease = client
         .flow_ids
         .allocate()
@@ -216,7 +209,6 @@ pub(crate) async fn open_udp(
         quic,
         mut down_datagrams,
     } = prepared;
-
     if let Err(error) = setup_udp_lanes(&mut lanes, flow_id, route, target, hops).await {
         if let Some(quic) = &quic {
             quic.remove_udp(flow_id);
@@ -272,7 +264,6 @@ pub(crate) async fn open_udp(
         _session: client
             .account_stats
             .then(|| SessionGuard::new(client.stats.clone(), true)),
-        _flow_permit: Some(flow_permit),
         _lanes: lanes,
         _lease: Some(lease),
     })

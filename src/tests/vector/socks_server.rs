@@ -38,6 +38,41 @@ fn source_endpoint_locks_first_port() {
     ));
 }
 
+#[test]
+fn socks_client_resource_admission_is_process_wide_and_reusable() {
+    let vector = Vector::new(
+        Url::parse("vector://secret@127.0.0.1:2000?socks=127.0.0.1:1080").unwrap(),
+        Logger::new(LogLevel::None, false),
+    )
+    .unwrap();
+    let limit = vector.inner.socks_client_admission.available_permits();
+    let mut held = (0..limit)
+        .map(|_| try_admit_client(&vector.inner).unwrap())
+        .collect::<Vec<_>>();
+    assert!(try_admit_client(&vector.inner).is_none());
+
+    held.pop();
+    assert!(try_admit_client(&vector.inner).is_some());
+}
+
+#[test]
+fn udp_target_resource_admission_is_held_for_the_target_lifetime() {
+    let vector = Vector::new(
+        Url::parse("vector://secret@127.0.0.1:2000?socks=127.0.0.1:1080").unwrap(),
+        Logger::new(LogLevel::None, false),
+    )
+    .unwrap();
+    let admission = &vector.inner.socks_udp_target_admission;
+    let limit = admission.available_permits();
+    let mut held = (0..limit)
+        .map(|_| try_admit_udp_target(admission).unwrap())
+        .collect::<Vec<_>>();
+    assert!(try_admit_udp_target(admission).is_none());
+
+    held.pop();
+    assert!(try_admit_udp_target(admission).is_some());
+}
+
 #[tokio::test]
 async fn pending_target_setup_does_not_block_control_shutdown() {
     let portal = TcpListener::bind("127.0.0.1:0").await.unwrap();

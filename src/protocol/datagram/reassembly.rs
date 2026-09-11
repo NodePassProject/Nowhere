@@ -162,6 +162,7 @@ impl<R> DatagramReassembler<R> {
         F: FnOnce(u16) -> Option<R>,
     {
         if flow_id == 0
+            || flow_id > crate::protocol::MAX_FLOW_ID
             || fragment.packet_id == 0
             || validate_fragment_metadata(
                 fragment.fragment_index,
@@ -235,26 +236,34 @@ impl<R> DatagramReassembler<R> {
         if self.config.max_slots == 0 || fragment.total_len as usize > self.config.max_bytes {
             return ReassemblyOutcome::Dropped(ReassemblyDropReason::ByteLimit);
         }
-        if self.slots.len() >= self.config.max_slots
-            && let Some(oldest) = self
-                .slots
+        let oldest = if self.slots.len() >= self.config.max_slots {
+            self.slots
                 .iter()
                 .min_by_key(|(_, slot)| slot.created_at)
                 .map(|(key, _)| *key)
-        {
-            self.remove_slot(&oldest);
-            evicted_partial = true;
-        }
+        } else {
+            None
+        };
+        let replaced_bytes = oldest
+            .and_then(|key| self.slots.get(&key))
+            .map_or(0, |slot| slot.total_len as usize);
         if self
             .reserved_bytes
+            .saturating_sub(replaced_bytes)
             .saturating_add(fragment.total_len as usize)
             > self.config.max_bytes
         {
             return ReassemblyOutcome::Dropped(ReassemblyDropReason::ByteLimit);
         }
+        // External admission is fallible. Reserve before evicting so a failed
+        // replacement cannot discard an otherwise valid partial packet.
         let Some(reservation) = reserve(fragment.total_len) else {
             return ReassemblyOutcome::Dropped(ReassemblyDropReason::ByteLimit);
         };
+        if let Some(oldest) = oldest {
+            self.remove_slot(&oldest);
+            evicted_partial = true;
+        }
         self.reserved_bytes += fragment.total_len as usize;
         let expiry = now.checked_add(self.config.ttl).unwrap_or(now);
         self.next_expiry = Some(

@@ -54,10 +54,9 @@ pub(super) async fn run_udp_association(
     let client_endpoint = Arc::new(StdMutex::new(
         requested_port.map(|port| SocketAddr::new(control_peer.ip(), port)),
     ));
-    let max_flows = crate::common::max_udp_flows();
-    let mut flows: HashMap<SocksAddress, mpsc::Sender<QueuedLocalPacket>> =
-        HashMap::with_capacity(max_flows.min(64));
+    let mut flows: HashMap<SocksAddress, mpsc::Sender<QueuedLocalPacket>> = HashMap::new();
     let mut tasks = JoinSet::new();
+    let active_targets = vector.socks_udp_target_admission.clone();
     let mut packet = vec![0u8; SOCKS_UDP_PACKET_MAX];
     let mut control_byte = [0u8; 1];
 
@@ -106,9 +105,10 @@ pub(super) async fn run_udp_association(
                     }
                     flows.remove(&target);
                 }
-                if flows.len() >= max_flows {
+                flows.retain(|_, sender| !sender.is_closed());
+                let Some(target_admission) = try_admit_udp_target(&active_targets) else {
                     continue;
-                }
+                };
                 let (sender, receiver) = mpsc::channel(64);
                 if sender.try_send(payload).is_err() {
                     continue;
@@ -121,6 +121,7 @@ pub(super) async fn run_udp_association(
                     target,
                     receiver,
                     association_shutdown.clone(),
+                    target_admission,
                 ));
             }
             Some(_) = tasks.join_next(), if !tasks.is_empty() => {
@@ -141,6 +142,7 @@ async fn open_and_relay_udp_target(
     target: SocksAddress,
     outbound: mpsc::Receiver<QueuedLocalPacket>,
     shutdown: CancellationToken,
+    _target_admission: OwnedSemaphorePermit,
 ) {
     let source = client_endpoint
         .lock()
@@ -180,6 +182,12 @@ async fn open_and_relay_udp_target(
         access,
     )
     .await;
+}
+
+pub(super) fn try_admit_udp_target(
+    admission: &Arc<tokio::sync::Semaphore>,
+) -> Option<OwnedSemaphorePermit> {
+    admission.clone().try_acquire_owned().ok()
 }
 
 pub(super) fn validate_udp_source_request(
@@ -353,7 +361,6 @@ pub(super) fn start_access(
             id: 0,
             timestamp_ms: now_unix_ms(),
             protocol,
-            alpn: vector.config.alpn.clone(),
             flow_id: None,
             session_tag: None,
             client,

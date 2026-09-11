@@ -5,7 +5,7 @@ use super::*;
 
 #[tokio::test]
 async fn old_quic_guard_does_not_cancel_flow_on_replacement_generation() {
-    let registry = registry(8, Duration::from_secs(30));
+    let registry = registry(Duration::from_secs(30));
     let stats = Arc::new(Stats::default());
     let session_id = [1; SESSION_ID_LEN];
     let _tcp_guard = registry.register_tcp_link(session_id, stats.clone());
@@ -81,7 +81,7 @@ async fn old_quic_guard_does_not_cancel_flow_on_replacement_generation() {
 
 #[tokio::test]
 async fn quic_replacement_immediately_rejects_pending_split_flows() {
-    let registry = registry(8, Duration::from_secs(30));
+    let registry = registry(Duration::from_secs(30));
     let stats = Arc::new(Stats::default());
     let session_id = [0x33; SESSION_ID_LEN];
     let _tcp_guard = registry.register_tcp_link(session_id, stats.clone());
@@ -185,7 +185,7 @@ async fn quic_replacement_immediately_rejects_pending_split_flows() {
 
 #[tokio::test]
 async fn stale_open_after_map_lock_leaves_exact_rejection_for_tcp_attach() {
-    let registry = registry(8, Duration::from_secs(30));
+    let registry = registry(Duration::from_secs(30));
     let stats = Arc::new(Stats::default());
     let session_id = [2; SESSION_ID_LEN];
     let tcp_guard = registry.register_tcp_link(session_id, stats.clone());

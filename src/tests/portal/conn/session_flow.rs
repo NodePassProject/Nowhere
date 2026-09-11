@@ -120,6 +120,59 @@ fn packet_budget_rejects_new_slot_without_leaking_permits() {
 }
 
 #[test]
+fn failed_replacement_admission_preserves_the_existing_partial_packet() {
+    let budget = Arc::new(Semaphore::new(6));
+    let now = Instant::now();
+    let mut reassembler = DatagramReassembler::new(ReassemblyConfig {
+        max_slots: 1,
+        max_bytes: 12,
+        ..ReassemblyConfig::default()
+    });
+    assert!(matches!(
+        push(
+            &mut reassembler,
+            9,
+            fragment(3, 0, 2, 6, b"abc"),
+            now,
+            &budget,
+        ),
+        ReassemblyOutcome::Pending { .. }
+    ));
+    assert_eq!(budget.available_permits(), 0);
+
+    assert!(matches!(
+        push(
+            &mut reassembler,
+            10,
+            fragment(4, 0, 2, 6, b"xyz"),
+            now,
+            &budget,
+        ),
+        ReassemblyOutcome::Dropped(ReassemblyDropReason::ByteLimit)
+    ));
+    assert_eq!(reassembler.slot_count(), 1);
+    assert_eq!(reassembler.reserved_bytes(), 6);
+
+    let (payload, reservation) = match push(
+        &mut reassembler,
+        9,
+        fragment(3, 1, 2, 6, b"def"),
+        now,
+        &budget,
+    ) {
+        ReassemblyOutcome::Complete {
+            payload,
+            reservation,
+            ..
+        } => (payload, reservation),
+        _ => panic!("existing partial packet must survive failed replacement admission"),
+    };
+    assert_eq!(payload, b"abcdef"[..]);
+    drop(reservation);
+    assert_eq!(budget.available_permits(), 6);
+}
+
+#[test]
 fn remove_flow_releases_only_that_flows_partial_reservations() {
     let budget = Arc::new(Semaphore::new(20));
     let now = Instant::now();

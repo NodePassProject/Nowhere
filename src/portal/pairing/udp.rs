@@ -16,14 +16,17 @@ enum UdpInstallOutcome {
 }
 
 impl PairingRegistry {
-    pub(in crate::portal) async fn submit_udp(
+    pub(in crate::portal) async fn submit_udp<S: Into<SessionKey>>(
         self: &Arc<Self>,
-        session_id: SessionId,
+        session_id: S,
         header: FlowHeader,
         target: Option<Target>,
         link: LinkHalf,
         mut half: UdpHalf,
     ) -> Result<Option<PairedUdp>, PairingError> {
+        let session_id = session_id.into();
+        let quic_count = self.quic_flow_counter(session_id);
+        let session_admission = self.session_flow_admission(session_id);
         if let Err(err) =
             self.validate_header_and_link(session_id, header, FlowKind::Udp, target.as_ref(), &link)
         {
@@ -69,28 +72,14 @@ impl PairingRegistry {
             reject_udp_half(&mut half, code).await;
             return Err(err);
         }
-        let udp_permit = if matches!(header.role, FlowRole::Open | FlowRole::Duplex) {
-            match self.acquire_udp_permit(session_id) {
-                Ok(permit) => Some(permit),
-                Err(err) => {
-                    if header.role == FlowRole::Open {
-                        self.reject_flow_setup(session_id, header.flow_id, err.code())
-                            .await;
-                    }
-                    reject_udp_half(&mut half, err.code()).await;
-                    return Err(err);
-                }
-            }
-        } else {
-            None
-        };
-
         if header.role == FlowRole::Duplex {
             let (claim_epoch, created) = match self.reserve_claim(
                 key,
                 metadata.clone(),
                 target.clone(),
                 link.quic_generation,
+                quic_count.clone(),
+                session_admission.clone(),
             ) {
                 Ok(claim) => claim,
                 Err(err) => {
@@ -114,7 +103,7 @@ impl PairingRegistry {
                 unreachable!("duplex UDP shape validated")
             };
             let generations = link.quic_generation.into_iter().collect();
-            let lease = match self.activate_claim(key, claim_epoch, generations, udp_permit) {
+            let lease = match self.activate_claim(key, claim_epoch, generations) {
                 Ok(lease) => lease,
                 Err(err) => {
                     self.abandon_claim(key, claim_epoch);
@@ -137,7 +126,6 @@ impl PairingRegistry {
         }
 
         let mut half = Some(half);
-        let mut udp_permit = udp_permit;
         let outcome = 'install: {
             let mut guard = self.udp.lock().await;
             let links = self.links.lock().expect("link registry poisoned");
@@ -159,7 +147,6 @@ impl PairingRegistry {
                 {
                     pending.uplink = None;
                     pending.target = None;
-                    pending.flow_permit = None;
                     pending.uplink_path = None;
                     pending.uplink_generation = None;
                 }
@@ -210,6 +197,8 @@ impl PairingRegistry {
                 metadata.clone(),
                 target.clone(),
                 link.quic_generation,
+                quic_count.clone(),
+                session_admission.clone(),
             ) {
                 Ok(claim) => claim,
                 Err(error) => {
@@ -227,7 +216,6 @@ impl PairingRegistry {
                 target: target.clone(),
                 uplink: None,
                 downlink: None,
-                flow_permit: None,
                 uplink_path: None,
                 downlink_path: None,
                 uplink_generation: None,
@@ -259,7 +247,6 @@ impl PairingRegistry {
                         };
                     }
                     pending.uplink = Some(uplink);
-                    pending.flow_permit = udp_permit.take();
                     pending.uplink_path = Some(link.path);
                     pending.uplink_generation = link.quic_generation;
                 }
@@ -283,24 +270,13 @@ impl PairingRegistry {
             if pending.uplink.is_some() && pending.downlink.is_some() {
                 let mut complete = guard.remove(&key).expect("UDP pair exists");
                 let epoch = complete.epoch;
-                let Some(permit) = complete.flow_permit.take() else {
-                    self.abandon_claim(key, epoch);
-                    break 'install UdpInstallOutcome::Rejected {
-                        error: PairingError::new(
-                            FlowErrorCode::InternalError,
-                            "portal::pairing: missing UDP flow permit",
-                        ),
-                        downlink: complete.downlink.take(),
-                        abort_pending: false,
-                    };
-                };
                 let generations = [complete.uplink_generation, complete.downlink_generation]
                     .into_iter()
                     .flatten()
                     .collect();
                 drop(links);
                 drop(guard);
-                let lease = match self.activate_claim(key, epoch, generations, Some(permit)) {
+                let lease = match self.activate_claim(key, epoch, generations) {
                     Ok(lease) => lease,
                     Err(error) => {
                         self.abandon_claim(key, epoch);
@@ -394,7 +370,12 @@ impl PairingRegistry {
         });
     }
 
-    pub(in crate::portal) async fn cancel_udp(&self, session_id: SessionId, flow_id: u32) {
+    pub(in crate::portal) async fn cancel_udp<S: Into<SessionKey>>(
+        &self,
+        session_id: S,
+        flow_id: u32,
+    ) {
+        let session_id = session_id.into();
         let key = FlowKey {
             session_id,
             flow_id,

@@ -5,10 +5,7 @@
 
 use std::fmt;
 
-use anyhow::Result;
-use url::Url;
-
-/// Portal listener mode selected by the `net` URL query parameter.
+/// Portal listener mode derived from declared carrier endpoints.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NetworkMode {
     Mix,
@@ -17,19 +14,12 @@ pub(crate) enum NetworkMode {
 }
 
 impl NetworkMode {
-    /// Parses the URL `net` query parameter, defaulting to mixed service.
-    pub(super) fn from_url(parsed_url: &Url) -> Result<Self> {
-        match parsed_url
-            .query_pairs()
-            .find(|(key, _)| key == "net")
-            .map(|(_, value)| value)
-            .as_deref()
-        {
-            None | Some("") => Ok(Self::Mix),
-            Some("mix") => Ok(Self::Mix),
-            Some("tcp") => Ok(Self::Tcp),
-            Some("udp") => Ok(Self::Udp),
-            Some(_) => Err(anyhow::anyhow!("portal::NetworkMode: invalid net mode")),
+    pub(super) fn from_carriers(tcp: bool, udp: bool) -> Self {
+        match (tcp, udp) {
+            (true, true) => Self::Mix,
+            (true, false) => Self::Tcp,
+            (false, true) => Self::Udp,
+            (false, false) => unreachable!("endpoint parser requires at least one carrier"),
         }
     }
 

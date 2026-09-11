@@ -1,8 +1,8 @@
 [package]
 name = "nowhere"
-version = "1.8.3"
+version = "2.0.0-dev"
 edition = "2024"
-description = "One-port, two-transport encrypted relay with independently split directions"
+description = "Two-transport encrypted relay with independently split directions"
 license = "GPL-3.0-only"
 repository = "https://github.com/NodePassProject/Nowhere"
 readme = "README.md"
@@ -10,6 +10,7 @@ readme = "README.md"
 [dependencies]
 anyhow = "1.0.104"
 bytes = "1.12.1"
+chacha20 = "0.10.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 crossterm = "0.29.0"
 getrandom = "0.4.3"

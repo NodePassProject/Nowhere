@@ -12,52 +12,100 @@ Run `nowhere` without a URL and select:
 - `1` Overview;
 - `2` Logs.
 
+## Listener lifecycle
+
+Portal validates the complete URL, resolves every declared carrier, and opens
+its UDP and TCP listener sets before entering `READY`. Each successful bind is
+logged with its actual transport and socket address:
+
+```text
+listening on TLS/TCP 0.0.0.0:2006
+listening on TLS/TCP [::]:2006
+listening on QUIC/UDP 0.0.0.0:2017
+listening on QUIC/UDP [::]:2017
+```
+
+The effective configuration keeps the normalized logical endpoint, such as
+`*/tcp:2006/udp:2017`. TUI instance summaries show the actual TCP and UDP
+address lists after binding. Disabled carriers appear as `none`; shared keys
+are absent from both views.
+
+One hostname may resolve to several addresses. Portal deduplicates the startup
+result and binds every address that matches the carrier family. These sockets
+form one logical carrier listener set. DNS is not refreshed while the process
+runs, and an unexpected exit from any active listener set stops the service.
+
+Startup is all-or-nothing for declared carriers. A carrier must bind at least
+one address. A port conflict, permission error, unavailable concrete address,
+or explicit family failure stops startup and releases sockets already opened.
+The only partial-family case is `*` with unrestricted `tcp` or `udp`: an
+operating system without one address family logs a warning and continues with
+the other family.
+
+| Symptom | Check |
+|---|---|
+| TCP works but QUIC does not | UDP port publication, firewall, and the endpoint's UDP entry |
+| QUIC works but TCP does not | TCP port publication, firewall, and the endpoint's TCP entry |
+| IPv4 works but IPv6 does not | Carrier suffix, IPv6 route, and the separate `[::]` bind log |
+| Startup reports no matching address | DNS results and the carrier's `4` or `6` suffix |
+| Startup reports address in use | Each transport/port pair and any duplicate service instance |
+| Vector rejects `up`, `down`, or `mix` | The remote endpoint must declare every selected carrier |
+| Morph peers cannot handshake | Both ends need the same `morph` value and shared key |
+| QUIC fails only with Morph | The UDP path must carry at least 1212-byte payloads and allow MTU probes |
+
 ## Capacity
 
-The important memory bounds are the 1,024 concurrent TCP flows and 256 UDP flows
-per authenticated client session, the 512 KiB per-stream and per-Mux receive
-windows, 256 streams per Mux, bounded reusable relay-buffer caches, and QUIC UDP
-queue/reassembly limits. UoT and QUIC DATAGRAM share the UDP flow limit. TLS
-shards originated with `mux=1` by Vector or a Portal `next` client target 4
-active flows, use least-loaded placement, and close after 30 seconds fully
-idle. Frame queue slots do not bypass byte credit. Windows are granted as
+Payload memory is controlled by the selected 4/8, 8/16, or 16/32 MiB
+per-stream/per-Mux receive windows, bounded reusable relay-buffer caches, and
+QUIC UDP queue/reassembly limits. The former logical TCP, UDP, SOCKS, and
+pending-pair application quotas are absent. Implementation safeguards admit at
+most 4,096 active streams per Mux carrier, 1,024 accepted SOCKS clients per
+Vector, and 1,024 active SOCKS UDP targets per Vector. Portal pairing admits at
+most 4,096 active or pending claims per authenticated session and 65,536 total.
+TLS
+shards originated with `mux=1` by Vector or a Portal `next` client adapt their
+pool to concurrent flow demand, stop at eight carriers per session
+across both directions, use lowest-occupancy placement, and
+close after 30 seconds fully idle. Frame queue slots do not bypass byte credit. Windows are granted as
 permits and payload is admitted incrementally.
 
-At a session flow limit, TCP setup returns a failure immediately. A SOCKS5 UDP
-packet whose logical route cannot be admitted receives no UDP response; the
-association remains available for existing routes.
+QUIC stream credit grows with live and pending QUIC flows plus setup headroom,
+then stops at the 4,096-claim session budget. Pairing and setup deadlines reclaim
+incomplete requests.
 
 QUIC uses the shared `throughput` memory profile by default. Select `balanced`
 or `memory` when connection density matters more than a single flow's
 bandwidth-delay product.
 
+Morph adds 12 bytes once per TCP connection and 12 bytes to every UDP
+datagram. It preserves TCP payload length and keeps GSO/GRO batching when the
+platform provides it. UDP socket buffers reserve space for the outer nonce;
+Quinn measures decoded QUIC datagram sizes and performs path MTU discovery with
+12 bytes reserved for the outer nonce. Morph reuses initialized transport
+buffers and applies ChaCha20 while copying between caller and wire buffers. UDP
+nonce batches come from a user-space CSPRNG seeded from the operating system and
+reseeded before stream exhaustion.
+
 ### TLS Shard placement
 
-An originating client keeps separate uplink and downlink Shard sets. Only a
-direction that selects TLS/TCP uses a set; a symmetric `tcp/tcp` flow uses one
-duplex stream from the uplink set.
+An originating client shares one full-duplex TLS carrier pool across directions.
+There is no legacy logical-flow quota; each Mux carrier has an independent
+4,096-stream resource ceiling.
 
 ```text
-                         +-------------------------+
-new TLS-carried Flow --->| live Shard below 4?     |
-                         +------------+------------+
-                                      |
-                        +-------------+---------------+
-                        | yes                         | no
-                        v                             v
-              +------------------+          +------------------+
-              | choose the       |          | open one TLS     |
-              | least-loaded one |          | Mux Shard        |
-              +---------+--------+          +---------+--------+
-                        |                             |
-                        +--------------+--------------+
-                                       |
-                                       v
-                              open logical stream
+new flow --> idle carrier? --> reuse
+                 |
+                 +--> free slot? --> establish TLS (up to eight in parallel)
+                          |
+                          +--> lowest credit/queue occupancy --> multiplex
+                               (connecting slots accept reservations too)
 ```
 
-While load grows from zero, a direction uses `ceil(active flows / 4)` Shards.
-After load falls, an empty Shard remains available during its idle period:
+Connections are created on demand. At most eight pool slots cover establishment
+and carrier lifetime. Each slot shares one initializer and counts pending flows
+alongside live streams. A cancelled initializer can be retried in the same slot.
+No polling task or setup-latency threshold is used.
+After load falls, an empty carrier remains available during its idle period:
 
 ```text
 +--------+  last stream closes  +------+  30s with no stream  +--------+
@@ -110,14 +158,20 @@ configured shutdown deadline.
 
 Functional validation belongs on every deployment platform:
 
-- Portal reaches `READY` on every configured listener;
+- Portal reports every expected TCP and UDP address before reaching `READY`;
+- compact endpoints accept both carriers on one port, while explicit endpoints
+  expose only their declared carrier/port/family combinations;
+- wildcard IPv6 listeners are `V6ONLY` and coexist with IPv4 listeners on the
+  same numeric port;
+- hostname listeners bind every deduplicated startup address, and a failed
+  startup releases listeners opened earlier;
 - Vector accepts SOCKS5 CONNECT and UDP ASSOCIATE;
 - every configured uplink/downlink carrier combination reaches a target;
 - every Mix policy resolves only to its documented concrete pairs and cleans
   up a failed pre-commit attempt;
-- custom ALPN, credentials, certificate verification, and native chains match
-  at both ends;
-- flow limits fail promptly instead of waiting for capacity;
+- negotiated protocol version, credentials, certificate verification, and
+  native chains match at both ends;
+- resource admission fails promptly instead of waiting for capacity;
 - idle Mux Shards and UDP flows retire at their documented deadlines;
 - graceful shutdown reaches `STOPPED` within the configured deadline;
 - the local TUI discovers the process without exposing credentials or payload.

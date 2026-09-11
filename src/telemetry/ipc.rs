@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::process::{process_is_alive, process_uid, read_process_incarnation};
 use super::{
-    ClientMessage, Hello, MAX_FRAME_SIZE, PROTOCOL_VERSION, ServerMessage, Subscription,
+    ClientMessage, Hello, MAX_FRAME_SIZE, ServerMessage, Subscription, TELEMETRY_VERSION,
     TelemetryHub,
 };
 
@@ -291,7 +291,7 @@ impl Drop for TelemetryServer {
 
 fn registry_directory() -> PathBuf {
     std::env::temp_dir().join(format!(
-        "nowhere-telemetry-v{PROTOCOL_VERSION}-{}",
+        "nowhere-{TELEMETRY_VERSION}-telemetry-{}",
         process_uid()
     ))
 }
@@ -302,7 +302,7 @@ fn registry_path(registry_name: &str) -> PathBuf {
 
 fn validate_hello(hello: &Hello, discovered: &DiscoveredInstance) -> Result<()> {
     let instance = &hello.instance;
-    if instance.protocol_version != PROTOCOL_VERSION
+    if instance.telemetry_version != TELEMETRY_VERSION
         || instance.uid != discovered.uid
         || instance.pid != discovered.pid
         || instance.incarnation != discovered.incarnation

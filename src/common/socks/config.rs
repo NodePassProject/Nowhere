@@ -90,13 +90,13 @@ pub(crate) fn parse_socks_value(raw_value: &str) -> Result<(String, Option<Socks
         return Ok((decode_component(raw_value, "socks endpoint")?, None));
     };
     if raw_endpoint.contains('@') {
-        bail!("common::socks::SocksConfig::from_url: invalid socks credentials");
+        bail!("invalid socks credentials: expected USERNAME:PASSWORD@HOST:PORT");
     }
     let (raw_username, raw_password) = raw_credentials.split_once(':').ok_or_else(|| {
-        anyhow!("common::socks::SocksConfig::from_url: invalid socks credentials")
+        anyhow!("invalid socks credentials: expected USERNAME:PASSWORD@HOST:PORT")
     })?;
     if raw_password.contains(':') {
-        bail!("common::socks::SocksConfig::from_url: reserved credentials must be percent-encoded");
+        bail!("reserved characters in socks credentials must be percent-encoded");
     }
     validate_raw_credential(raw_username)?;
     validate_raw_credential(raw_password)?;
@@ -116,34 +116,34 @@ pub(crate) fn parse_host_port(
     allow_empty_host: bool,
 ) -> Result<(String, u16)> {
     let (host, raw_port) = if let Some(rest) = value.strip_prefix('[') {
-        let end = rest.find(']').ok_or_else(|| {
-            anyhow!("common::socks::parse_host_port: invalid {name}: missing ']'")
-        })?;
+        let end = rest
+            .find(']')
+            .ok_or_else(|| anyhow!("invalid {name}: missing closing ']'"))?;
         let host = &rest[..end];
-        let port = rest[end + 1..].strip_prefix(':').ok_or_else(|| {
-            anyhow!("common::socks::parse_host_port: invalid {name}: missing port")
-        })?;
+        let port = rest[end + 1..]
+            .strip_prefix(':')
+            .ok_or_else(|| anyhow!("invalid {name}: expected ':' followed by a port"))?;
         if host.parse::<std::net::Ipv6Addr>().is_err() {
-            bail!("common::socks::parse_host_port: invalid {name}: bracketed host must be IPv6");
+            bail!("invalid {name}: brackets may only contain an IPv6 address");
         }
         (host, port)
     } else {
-        let (host, port) = value.rsplit_once(':').ok_or_else(|| {
-            anyhow!("common::socks::parse_host_port: invalid {name}: missing port")
-        })?;
+        let (host, port) = value
+            .rsplit_once(':')
+            .ok_or_else(|| anyhow!("invalid {name}: expected HOST:PORT"))?;
         if host.contains(':') {
-            bail!("common::socks::parse_host_port: invalid {name}: IPv6 requires brackets");
+            bail!("invalid {name}: IPv6 addresses must be enclosed in brackets");
         }
         (host, port)
     };
     if host.is_empty() && !allow_empty_host {
-        bail!("common::socks::parse_host_port: invalid {name}: empty host");
+        bail!("invalid {name}: host must not be empty");
     }
     let port = raw_port
         .parse::<u16>()
         .ok()
         .filter(|port| *port != 0)
-        .ok_or_else(|| anyhow!("common::socks::parse_host_port: invalid {name}: invalid port"))?;
+        .ok_or_else(|| anyhow!("invalid {name}: port must be in 1..=65535"))?;
     Ok((host.to_string(), port))
 }
 
@@ -157,7 +157,7 @@ pub(crate) fn format_host_port(host: &str, port: u16) -> String {
 
 fn validate_credential(name: &str, value: &str) -> Result<()> {
     if !(1..=u8::MAX as usize).contains(&value.len()) {
-        bail!("common::socks::validate_credential: {name} length must be 1..255 bytes");
+        bail!("socks {name} length must be in 1..=255 bytes");
     }
     Ok(())
 }
@@ -167,9 +167,7 @@ fn validate_raw_credential(value: &str) -> Result<()> {
         .bytes()
         .any(|byte| b":/?#[]@!$&'()*+,;=".contains(&byte))
     {
-        bail!(
-            "common::socks::validate_raw_credential: reserved credentials must be percent-encoded"
-        );
+        bail!("reserved characters in socks credentials must be percent-encoded");
     }
     Ok(())
 }
@@ -178,7 +176,7 @@ fn decode_component(raw: &str, name: &str) -> Result<String> {
     validate_percent_encoding(raw, name)?;
     percent_decode_str(raw)
         .decode_utf8()
-        .with_context(|| format!("common::socks::decode_component: invalid UTF-8 in {name}"))
+        .with_context(|| format!("invalid UTF-8 in {name}"))
         .map(|value| value.into_owned())
 }
 
@@ -191,9 +189,7 @@ fn validate_percent_encoding(raw: &str, name: &str) -> Result<()> {
                 || !bytes[index + 1].is_ascii_hexdigit()
                 || !bytes[index + 2].is_ascii_hexdigit()
             {
-                bail!(
-                    "common::socks::validate_percent_encoding: invalid percent encoding in {name}"
-                );
+                bail!("invalid percent encoding in {name}");
             }
             index += 3;
         } else {

@@ -21,9 +21,8 @@ use tokio_rustls::client::TlsStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::common::{
-    BudgetedDatagram, LatencyGuard, LatencyTracker, UdpDatagramSend, filter_addrs,
-    handshake_timeout, parse_local_ip, reserve_udp_budget, send_quic_udp_packet, service_cooldown,
-    udp_idle_timeout,
+    BudgetedDatagram, LatencyGuard, LatencyTracker, UdpDatagramSend, handshake_timeout,
+    parse_local_ip, reserve_udp_budget, send_quic_udp_packet, service_cooldown, udp_idle_timeout,
 };
 use crate::mux::{MUX_IDLE_TIMEOUT, MuxConfig, MuxHandle, MuxStream};
 use crate::protocol::{
@@ -32,13 +31,14 @@ use crate::protocol::{
     encode_auth_frame, encode_udp_close,
 };
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel, TelemetryHub};
-use crate::transport::{Stats, quic_flow_control};
+use crate::transport::MorphTcpStream;
+use crate::transport::{Stats, transport_flow_control};
 
 use super::config::PortalClientConfig;
-use super::tls::{ClientTls, EXPORTER_LABEL};
+use super::tls::{ClientTls, EXPORTER_LABEL, require_quic_nw2};
 
 const QUIC_DATAGRAM_BUFFER_SIZE: usize = 4 * 1024 * 1024;
-const TLS_MUX_FLOWS_PER_SHARD: usize = 4;
+const TLS_MUX_MAX_CARRIERS: usize = 8;
 
 #[derive(Clone)]
 pub(super) struct ClientSignals {
@@ -62,15 +62,15 @@ impl ClientSignals {
 }
 
 pub(super) struct TlsLane {
-    pub(super) stream: TlsStream<tokio::net::TcpStream>,
+    pub(super) stream: TlsStream<MorphTcpStream<tokio::net::TcpStream>>,
     pending_auth: Option<AuthFrame>,
     _link: LinkGuard,
     latency: LatencyGuard,
 }
 
 pub(super) struct TlsLaneParts {
-    pub(super) reader: tokio::io::ReadHalf<TlsStream<tokio::net::TcpStream>>,
-    pub(super) writer: tokio::io::WriteHalf<TlsStream<tokio::net::TcpStream>>,
+    pub(super) reader: tokio::io::ReadHalf<TlsStream<MorphTcpStream<tokio::net::TcpStream>>>,
+    pub(super) writer: tokio::io::WriteHalf<TlsStream<MorphTcpStream<tokio::net::TcpStream>>>,
     pub(super) pending_auth: Option<AuthFrame>,
     pub(super) link: LinkGuard,
     pub(super) latency: LatencyGuard,
@@ -148,7 +148,7 @@ mod quic;
 mod tls;
 
 pub(super) use self::quic::{QueuedDatagram, QuicManager, QuicSession};
-pub(super) use self::tls::{MuxDirection, OpenedTls, TlsManager};
+pub(super) use self::tls::{OpenedTls, TlsManager};
 
 #[cfg(test)]
 #[path = "../tests/vector/session.rs"]

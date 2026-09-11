@@ -16,7 +16,7 @@ fn config(raw: &str) -> PortalClientConfig {
 }
 
 #[tokio::test]
-async fn client_negotiates_the_configured_alpn() {
+async fn client_prefers_fixed_v2_alpn() {
     let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
     let certificate: CertificateDer<'static> = generated.cert.into();
     let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
@@ -29,7 +29,7 @@ async fn client_negotiates_the_configured_alpn() {
             .with_no_client_auth()
             .with_single_cert(vec![certificate], key)
             .unwrap();
-    server.alpn_protocols = vec![b"private/2".to_vec()];
+    server.alpn_protocols = vec![b"nw2".to_vec()];
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = listener.local_addr().unwrap();
     let server_task = tokio::spawn(async move {
@@ -38,9 +38,13 @@ async fn client_negotiates_the_configured_alpn() {
     });
     let raw = format!("vector://secret@{endpoint}?alpn=private/2&socks=127.0.0.1:1080");
 
-    let (_, _) = ClientTls::new(&config(&raw))
+    let _ = ClientTls::new(&config(&raw))
         .unwrap()
-        .connect_tcp(&endpoint.to_string(), "auto")
+        .connect_tcp(
+            &endpoint.to_string(),
+            "auto",
+            crate::common::AddressFamily::Any,
+        )
         .await
         .unwrap();
     server_task.await.unwrap().unwrap();
@@ -49,11 +53,11 @@ async fn client_negotiates_the_configured_alpn() {
 #[test]
 fn missing_sni_uses_unverified_policy() {
     let tls = ClientTls::new(&config(
-        "vector://secret@127.0.0.1:2077?socks=127.0.0.1:1080",
+        "vector://secret@127.0.0.1:2000?socks=127.0.0.1:1080",
     ))
     .unwrap();
     assert_eq!(
-        vector_config("vector://secret@127.0.0.1:2077?socks=127.0.0.1:1080").sni,
+        vector_config("vector://secret@127.0.0.1:2000?socks=127.0.0.1:1080").sni,
         None
     );
     assert_eq!(tls.quic_server_name(), "127.0.0.1");
@@ -62,13 +66,13 @@ fn missing_sni_uses_unverified_policy() {
 
 #[test]
 fn ipv6_authority_builds_an_ip_server_name() {
-    let tls = ClientTls::new(&config("vector://secret@[::1]:2077?socks=127.0.0.1:1080")).unwrap();
+    let tls = ClientTls::new(&config("vector://secret@[::1]:2000?socks=127.0.0.1:1080")).unwrap();
     assert_eq!(tls.quic_server_name(), "::1");
 }
 
 #[test]
 fn explicit_sni_enables_system_verification() {
-    let config = config("vector://secret@127.0.0.1:2077?sni=example.com&socks=127.0.0.1:1080");
+    let config = config("vector://secret@127.0.0.1:2000?sni=example.com&socks=127.0.0.1:1080");
     let tls = ClientTls::new(&config).unwrap();
     assert_eq!(config.sni.as_deref(), Some("example.com"));
     assert_eq!(tls.quic_server_name(), "example.com");
@@ -97,7 +101,7 @@ async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<()> {
             .with_no_client_auth()
             .with_single_cert(vec![certificate], key)
             .unwrap();
-    server.alpn_protocols = vec![b"now/1".to_vec()];
+    server.alpn_protocols = vec![b"nw2".to_vec()];
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = listener.local_addr().unwrap();
     let server_task = tokio::spawn(async move {
@@ -122,11 +126,94 @@ async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<()> {
     raw.push_str("socks=127.0.0.1:1080");
 
     let result = ClientTls::new(&config(&raw))?
-        .connect_tcp(&endpoint.to_string(), "auto")
+        .connect_tcp(
+            &endpoint.to_string(),
+            "auto",
+            crate::common::AddressFamily::Any,
+        )
         .await
         .map(|_| ());
     let _ = tokio::time::timeout(Duration::from_secs(1), server_task).await;
     result
+}
+
+#[tokio::test]
+async fn tcp_server_without_nw2_is_rejected() {
+    let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
+    let certificate: CertificateDer<'static> = generated.cert.into();
+    let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
+        generated.signing_key.serialize_der(),
+    ));
+    let mut server =
+        rustls::ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate], key)
+            .unwrap();
+    server.alpn_protocols = vec![b"now/1".to_vec()];
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let _ = TlsAcceptor::from(Arc::new(server)).accept(stream).await;
+    });
+    let raw = format!("vector://secret@{endpoint}?socks=127.0.0.1:1080");
+    assert!(
+        ClientTls::new(&config(&raw))
+            .unwrap()
+            .connect_tcp(
+                &endpoint.to_string(),
+                "auto",
+                crate::common::AddressFamily::Any
+            )
+            .await
+            .is_err()
+    );
+}
+
+async fn negotiate_quic(server_alpns: Vec<Vec<u8>>) -> Result<()> {
+    let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
+    let certificate: CertificateDer<'static> = generated.cert.into();
+    let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
+        generated.signing_key.serialize_der(),
+    ));
+    let mut rustls_server =
+        rustls::ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate], key)
+            .unwrap();
+    rustls_server.alpn_protocols = server_alpns;
+    let quic_server = quinn::crypto::rustls::QuicServerConfig::try_from(rustls_server).unwrap();
+    let server = quinn::Endpoint::server(
+        quinn::ServerConfig::with_crypto(Arc::new(quic_server)),
+        "127.0.0.1:0".parse().unwrap(),
+    )
+    .unwrap();
+    let address = server.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let incoming = server.accept().await.unwrap();
+        incoming.await
+    });
+
+    let raw = format!("vector://secret@{address}?socks=127.0.0.1:1080");
+    let tls = ClientTls::new(&config(&raw))?;
+    let mut client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap())?;
+    client.set_default_client_config(tls.quic_client_config()?);
+    let connection = client.connect(address, &tls.quic_server_name())?.await?;
+    require_quic_nw2(&connection)?;
+    connection.close(quinn::VarInt::from_u32(0), b"");
+    let _ = server_task.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn quic_requires_nw2() {
+    negotiate_quic(vec![b"nw2".to_vec()]).await.unwrap();
+    assert!(negotiate_quic(vec![b"now/1".to_vec()]).await.is_err());
+    assert!(negotiate_quic(vec![b"private/2".to_vec()]).await.is_err());
 }
 
 #[tokio::test]

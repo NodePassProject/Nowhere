@@ -12,10 +12,10 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use crate::portal::PortalInner;
-use crate::portal::pairing::{BoxReader, BoxWriter, LinkGuard};
+use crate::portal::pairing::{BoxReader, BoxWriter, LinkGuard, SessionKey};
 use crate::protocol::{
-    Carrier, FlowErrorCode, FlowKind, FlowResult, FlowRole, SessionId, read_flow_header,
-    read_request, write_flow_result,
+    Carrier, FlowErrorCode, FlowKind, FlowResult, FlowRole, read_flow_header, read_request,
+    write_flow_result,
 };
 
 const FLOW_REJECT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -25,7 +25,7 @@ pub(super) async fn process_flow<R, W>(
     portal: Arc<PortalInner>,
     recv: R,
     mut send: W,
-    session_id: SessionId,
+    session_id: SessionKey,
     peer: SocketAddr,
     local: Option<SocketAddr>,
     shutdown: CancellationToken,
@@ -36,7 +36,9 @@ pub(super) async fn process_flow<R, W>(
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
 {
-    let mut recv = BufReader::new(recv);
+    // A one-byte staging buffer keeps exact handshake reads from prefetching
+    // application payload out of an owned Mux chunk.
+    let mut recv = BufReader::with_capacity(1, recv);
     let header = match tokio::select! {
         result = timeout(flow_timeout, read_flow_header(&mut recv)) => Some(result),
         _ = shutdown.cancelled() => None,
@@ -180,7 +182,7 @@ where
 
 async fn reject_invalid<W: AsyncWrite + Unpin>(
     portal: &Arc<PortalInner>,
-    session_id: SessionId,
+    session_id: SessionKey,
     role: FlowRole,
     flow_id: u32,
     writer: &mut W,

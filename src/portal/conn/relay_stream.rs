@@ -6,40 +6,38 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::time::timeout;
 
 use crate::portal::PortalInner;
 use crate::protocol::Carrier;
 use crate::telemetry::AccessSpan;
-use crate::transport::BufferLease;
+use crate::transport::{
+    AsyncReadAny, AsyncWriteAny, read_owned, read_owned_from, write_owned, write_owned_to,
+};
 
 /// Relays both directions until one side closes or either direction errors.
-pub(in crate::portal) async fn relay_stream<R, W, TR, TW>(
+pub(in crate::portal) async fn relay_stream<TR, TW>(
     portal: Arc<PortalInner>,
-    client_read: &mut R,
-    client_write: &mut W,
+    client_read: &mut std::pin::Pin<Box<dyn AsyncReadAny>>,
+    client_write: &mut std::pin::Pin<Box<dyn AsyncWriteAny>>,
     target: (TR, TW),
-    buffers: (BufferLease, BufferLease),
     carriers: Option<(Carrier, Carrier)>,
     access: &AccessSpan,
 ) -> anyhow::Result<()>
 where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
     TR: AsyncRead + Unpin,
     TW: AsyncWrite + Unpin,
 {
-    let (mut buffer1, mut buffer2) = buffers;
     let (mut target_read, mut target_write) = target;
 
     let client_to_target = async {
         loop {
-            let n = client_read.read(&mut buffer1).await?;
-            if n == 0 {
+            let Some(chunk) = read_owned(client_read, &portal.buffers).await? else {
                 target_write.shutdown().await?;
                 return Ok::<(), anyhow::Error>(());
-            }
+            };
+            let n = chunk.len();
             access.add_upload(n as u64);
             portal.stats.tcp_rx.fetch_add(n as u64, Ordering::Relaxed);
             if let Some((uplink, _)) = carriers {
@@ -52,21 +50,21 @@ where
             if let Some(limiter) = &portal.rate_limiter {
                 limiter.wait_read(n as i64).await;
             }
-            target_write.write_all(&buffer1[..n]).await?;
+            write_owned_to(&mut target_write, chunk).await?;
         }
     };
 
     let target_to_client = async {
         loop {
-            let n = target_read.read(&mut buffer2).await?;
-            if n == 0 {
+            let Some(chunk) = read_owned_from(&mut target_read, &portal.buffers).await? else {
                 client_write.shutdown().await?;
                 return Ok::<(), anyhow::Error>(());
-            }
+            };
+            let n = chunk.len();
             if let Some(limiter) = &portal.rate_limiter {
                 limiter.wait_write(n as i64).await;
             }
-            client_write.write_all(&buffer2[..n]).await?;
+            write_owned(client_write, chunk).await?;
             if carriers.is_some_and(|(uplink, downlink)| {
                 uplink == Carrier::TlsTcp && downlink == Carrier::Quic
             }) {

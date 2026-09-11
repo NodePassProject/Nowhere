@@ -4,92 +4,44 @@
 use super::*;
 
 #[tokio::test]
-async fn tcp_flow_limit_is_scoped_to_each_authenticated_session() {
-    let mut registry = registry(8, Duration::from_secs(30));
-    Arc::get_mut(&mut registry).unwrap().max_tcp_flows = 1;
-    let stats = Arc::new(Stats::default());
-    let first_session = [0x31; SESSION_ID_LEN];
-    let second_session = [0x32; SESSION_ID_LEN];
-    let _first_guard = registry.register_tcp_link(first_session, stats.clone());
-    let _second_guard = registry.register_tcp_link(second_session, stats);
-
-    let (first_io, _) = tokio::io::duplex(64);
-    let (first_down, _) = tokio::io::duplex(64);
-    let first = registry
-        .submit_tcp(
-            first_session,
-            header(
-                FlowRole::Duplex,
-                1,
-                FlowKind::Tcp,
-                Carrier::TlsTcp,
-                Carrier::TlsTcp,
-            ),
-            Some(target("target.test:443")),
-            tcp_half("first"),
-            Some(Box::pin(first_io)),
-            Some(Box::pin(first_down)),
-            None,
-        )
-        .await
-        .unwrap()
-        .unwrap();
-
-    let (excess_io, _) = tokio::io::duplex(64);
-    let (excess_down, mut excess_peer) = tokio::io::duplex(64);
-    let error = registry
-        .submit_tcp(
-            first_session,
-            header(
-                FlowRole::Duplex,
-                2,
-                FlowKind::Tcp,
-                Carrier::TlsTcp,
-                Carrier::TlsTcp,
-            ),
-            Some(target("target.test:443")),
-            tcp_half("excess"),
-            Some(Box::pin(excess_io)),
-            Some(Box::pin(excess_down)),
-            None,
-        )
-        .await
-        .unwrap_pairing_error();
-    assert_eq!(error.code(), FlowErrorCode::FlowLimit);
-    assert_eq!(
-        read_flow_result(&mut excess_peer).await.unwrap(),
-        FlowResult::Reject(FlowErrorCode::FlowLimit)
-    );
-
-    let (other_io, _) = tokio::io::duplex(64);
-    let (other_down, _) = tokio::io::duplex(64);
-    let other = registry
-        .submit_tcp(
-            second_session,
-            header(
-                FlowRole::Duplex,
-                1,
-                FlowKind::Tcp,
-                Carrier::TlsTcp,
-                Carrier::TlsTcp,
-            ),
-            Some(target("target.test:443")),
-            tcp_half("other"),
-            Some(Box::pin(other_io)),
-            Some(Box::pin(other_down)),
-            None,
-        )
-        .await
-        .unwrap();
-    assert!(other.is_some());
-
-    drop(first);
-    drop(other);
+async fn tcp_sessions_admit_more_than_the_former_flow_limit() {
+    let registry = registry(Duration::from_secs(30));
+    let session = [0x31; SESSION_ID_LEN];
+    let _guard = registry.register_tcp_link(session, Arc::new(Stats::default()));
+    let mut held = Vec::new();
+    for id in 1..=2048 {
+        let (up, _) = tokio::io::duplex(64);
+        let (down, _) = tokio::io::duplex(64);
+        held.push(
+            registry
+                .submit_tcp(
+                    session,
+                    header(
+                        FlowRole::Duplex,
+                        id,
+                        FlowKind::Tcp,
+                        Carrier::TlsTcp,
+                        Carrier::TlsTcp,
+                    ),
+                    Some(target("target.test:443")),
+                    tcp_half("live"),
+                    Some(Box::pin(up)),
+                    Some(Box::pin(down)),
+                    None,
+                )
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    assert_eq!(registry.claims.lock().unwrap().len(), 2048);
+    drop(held);
+    assert!(registry.claims.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn drain_rejects_pending_and_new_flows_but_preserves_active_claims() {
-    let registry = registry(8, Duration::from_secs(30));
+    let registry = registry(Duration::from_secs(30));
     let stats = Arc::new(Stats::default());
     let session_id = [0x5a; SESSION_ID_LEN];
     let _tcp_guard = registry.register_tcp_link(session_id, stats);
@@ -201,7 +153,7 @@ async fn drain_rejects_pending_and_new_flows_but_preserves_active_claims() {
 
 #[tokio::test]
 async fn cancel_all_cancels_active_flows_without_waiting_for_pending_writer() {
-    let registry = registry(8, Duration::from_secs(60));
+    let registry = registry(Duration::from_secs(60));
     let stats = Arc::new(Stats::default());
     let session_id = [5; SESSION_ID_LEN];
     let tcp_guard = registry.register_tcp_link(session_id, stats.clone());
@@ -284,4 +236,143 @@ async fn cancel_all_cancels_active_flows_without_waiting_for_pending_writer() {
 
     drop(quic_guard);
     drop(tcp_guard);
+}
+
+#[tokio::test]
+async fn pending_pairs_exceed_former_limit_and_release_quic_credit_on_drain() {
+    let registry = registry(Duration::from_secs(30));
+    let session = [0x32; SESSION_ID_LEN];
+    let _guard = registry.register_tcp_link(session, Arc::new(Stats::default()));
+    let mut peers = Vec::new();
+    for id in 1..=2048 {
+        let (up, peer) = tokio::io::duplex(64);
+        peers.push(peer);
+        assert!(
+            registry
+                .submit_tcp(
+                    session,
+                    header(
+                        FlowRole::Open,
+                        id,
+                        FlowKind::Tcp,
+                        Carrier::TlsTcp,
+                        Carrier::Quic
+                    ),
+                    Some(target("target.test:443")),
+                    tcp_half("pending"),
+                    Some(Box::pin(up)),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert_eq!(registry.claims.lock().unwrap().len(), 2048);
+    assert_eq!(registry.quic_stream_credit(session).into_inner(), 2560);
+    registry.begin_drain().await;
+    assert!(registry.claims.lock().unwrap().is_empty());
+    assert_eq!(registry.quic_stream_credit(session).into_inner(), 64);
+}
+
+#[tokio::test]
+async fn session_claim_admission_is_bounded_and_reusable() {
+    let registry = registry(Duration::from_secs(30));
+    let session = [0x33; SESSION_ID_LEN];
+    let _guard = registry.register_tcp_link(session, Arc::new(Stats::default()));
+    let admission = registry.session_flow_admission(session).unwrap();
+    let _held = admission
+        .clone()
+        .try_acquire_many_owned((SESSION_FLOW_RESOURCE_LIMIT - 1) as u32)
+        .unwrap();
+
+    let first = submit_resource_test_flow(&registry, session, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    let error = submit_resource_test_flow(&registry, session, 2)
+        .await
+        .unwrap_pairing_error();
+    assert_eq!(error.code(), FlowErrorCode::FlowLimit);
+
+    drop(first);
+    assert!(
+        submit_resource_test_flow(&registry, session, 3)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn portal_claim_admission_is_bounded_and_reusable() {
+    let registry = registry(Duration::from_secs(30));
+    let first_session = [0x34; SESSION_ID_LEN];
+    let second_session = [0x35; SESSION_ID_LEN];
+    let stats = Arc::new(Stats::default());
+    let _first_guard = registry.register_tcp_link(first_session, stats.clone());
+    let _second_guard = registry.register_tcp_link(second_session, stats);
+    let _held = registry
+        .claim_admission
+        .clone()
+        .try_acquire_many_owned((PORTAL_FLOW_RESOURCE_LIMIT - 1) as u32)
+        .unwrap();
+
+    let first = submit_resource_test_flow(&registry, first_session, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    let error = submit_resource_test_flow(&registry, second_session, 1)
+        .await
+        .unwrap_pairing_error();
+    assert_eq!(error.code(), FlowErrorCode::FlowLimit);
+
+    drop(first);
+    assert!(
+        submit_resource_test_flow(&registry, second_session, 2)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn quic_stream_credit_is_clamped_to_the_session_claim_budget() {
+    let registry = registry(Duration::from_secs(30));
+    let session = [0x36; SESSION_ID_LEN];
+    let _guard = registry.register_tcp_link(session, Arc::new(Stats::default()));
+    let counter = registry.quic_flow_counter(session).unwrap();
+    counter.store(SESSION_FLOW_RESOURCE_LIMIT * 2, Ordering::Relaxed);
+
+    assert_eq!(
+        registry.quic_stream_credit(session).into_inner(),
+        SESSION_FLOW_RESOURCE_LIMIT as u64
+    );
+}
+
+async fn submit_resource_test_flow(
+    registry: &Arc<PairingRegistry>,
+    session: [u8; SESSION_ID_LEN],
+    flow_id: u32,
+) -> Result<Option<PairedTcp>, PairingError> {
+    let (uplink, _uplink_peer) = tokio::io::duplex(64);
+    let (downlink, _downlink_peer) = tokio::io::duplex(64);
+    registry
+        .submit_tcp(
+            session,
+            header(
+                FlowRole::Duplex,
+                flow_id,
+                FlowKind::Tcp,
+                Carrier::TlsTcp,
+                Carrier::TlsTcp,
+            ),
+            Some(target("target.test:443")),
+            tcp_half("resource"),
+            Some(Box::pin(uplink)),
+            Some(Box::pin(downlink)),
+            None,
+        )
+        .await
 }

@@ -85,7 +85,7 @@ pub struct InstanceMeta {
     pub endpoint: String,
     pub config_summary: String,
     pub telemetry_interval_ms: u64,
-    pub telemetry_protocol_version: u16,
+    pub telemetry_version: u16,
 }
 
 /// Runtime event severity.
@@ -133,7 +133,6 @@ pub struct AccessRecord {
     pub event_id: u64,
     pub phase: AccessPhase,
     pub protocol: String,
-    pub alpn: String,
     pub session_tag: Option<String>,
     pub client: Option<String>,
     pub path_peers: Vec<String>,

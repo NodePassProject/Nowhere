@@ -5,7 +5,7 @@ use super::*;
 
 #[tokio::test]
 async fn initially_stale_udp_open_leaves_exact_rejection_for_uot_attach() {
-    let registry = registry(8, Duration::from_secs(30));
+    let registry = registry(Duration::from_secs(30));
     let stats = Arc::new(Stats::default());
     let session_id = [7; SESSION_ID_LEN];
     let tcp_guard = registry.register_tcp_link(session_id, stats.clone());
@@ -83,7 +83,7 @@ async fn initially_stale_udp_open_leaves_exact_rejection_for_uot_attach() {
 
 #[tokio::test]
 async fn late_attach_receives_original_open_pair_timeout() {
-    let registry = registry(8, Duration::from_millis(10));
+    let registry = registry(Duration::from_millis(10));
     let stats = Arc::new(Stats::default());
 
     let tcp_session = [8; SESSION_ID_LEN];
@@ -213,7 +213,7 @@ async fn late_attach_receives_original_open_pair_timeout() {
 
 #[tokio::test]
 async fn tombstones_deliver_exact_reject_on_selected_downlink() {
-    let registry = registry(8, Duration::from_secs(30));
+    let registry = registry(Duration::from_secs(30));
     let stats = Arc::new(Stats::default());
 
     let tcp_session = [3; SESSION_ID_LEN];

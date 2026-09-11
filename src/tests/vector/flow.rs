@@ -18,7 +18,7 @@ use crate::vector::config::VectorConfig;
 
 fn test_portal_client() -> Arc<PortalClient> {
     let url =
-        Url::parse("vector://secret@127.0.0.1:2077?up=mix&down=mix&socks=127.0.0.1:1080").unwrap();
+        Url::parse("vector://secret@127.0.0.1:2000?up=mix&down=mix&socks=127.0.0.1:1080").unwrap();
     let config = VectorConfig::from_url(&url).unwrap();
     let credentials = Credentials::new(&url).unwrap();
     PortalClient::with_session_id(
@@ -64,7 +64,7 @@ async fn cold_lane_coalesces_auth_flow_and_target() {
     assert_eq!(&wire[..AUTH_FRAME_LEN], &auth);
     assert_eq!(
         &wire[AUTH_FRAME_LEN..AUTH_FRAME_LEN + FLOW_HEADER_LEN],
-        &write_flow_header(header)
+        &write_flow_header(header).unwrap()
     );
     assert_eq!(&wire[AUTH_FRAME_LEN + FLOW_HEADER_LEN..], encoded_target);
 }
@@ -89,7 +89,7 @@ async fn cold_attach_lane_coalesces_auth_and_flow_header() {
     let mut wire = Vec::new();
     reader.read_to_end(&mut wire).await.unwrap();
     assert_eq!(&wire[..AUTH_FRAME_LEN], &auth);
-    assert_eq!(&wire[AUTH_FRAME_LEN..], &write_flow_header(header));
+    assert_eq!(&wire[AUTH_FRAME_LEN..], &write_flow_header(header).unwrap());
 }
 
 #[tokio::test]

@@ -1,18 +1,18 @@
 use super::*;
 use crate::telemetry::wire::{InstanceDescriptor, LifecycleSnapshot};
-use crate::telemetry::{AccessOutcome, InstanceRole as WireRole, PROTOCOL_VERSION};
+use crate::telemetry::{AccessOutcome, InstanceRole as WireRole, TELEMETRY_VERSION};
 
 fn hello() -> Hello {
     Hello {
         instance: InstanceDescriptor {
-            protocol_version: PROTOCOL_VERSION,
+            telemetry_version: TELEMETRY_VERSION,
             id: "0:42:7".to_owned(),
             role: WireRole::Portal,
             pid: 42,
             uid: 0,
             incarnation: 7,
             version: "test".to_owned(),
-            endpoint: ":2077".to_owned(),
+            endpoint: ":2000".to_owned(),
             config_summary: "net=mix".to_owned(),
             telemetry_interval_ms: 1_000,
         },
@@ -40,7 +40,6 @@ fn completion_inherits_access_path() {
         id: 9,
         timestamp_ms: 1,
         protocol: TrafficProtocol::Tcp,
-        alpn: "now/1".to_owned(),
         flow_id: None,
         session_tag: Some("abc123".to_owned()),
         client: Some("10.0.0.1:9".to_owned()),
@@ -56,7 +55,6 @@ fn completion_inherits_access_path() {
         timestamp_ms: 2,
         duration_ms: 1,
         protocol: TrafficProtocol::Tcp,
-        alpn: "now/1".to_owned(),
         flow_id: None,
         session_tag: Some("abc123".to_owned()),
         client: Some("10.0.0.1:9".to_owned()),

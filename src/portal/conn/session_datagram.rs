@@ -182,7 +182,7 @@ impl PortalSession {
         self.remove_udp_uplink(flow_id);
         self.portal
             .pairing
-            .cancel_udp(self.session_id, flow_id)
+            .cancel_udp(self.session_key, flow_id)
             .await;
     }
 

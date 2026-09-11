@@ -20,7 +20,7 @@ pub const AUTH_TAG_LEN: usize = 16;
 /// Length of the fixed authentication frame.
 pub const AUTH_FRAME_LEN: usize = SESSION_ID_LEN + AUTH_TAG_LEN;
 
-const AUTH_ROOT_SALT_LABEL: &[u8] = b"nowhere/now/1/auth-root";
+const AUTH_ROOT_SALT_LABEL: &[u8] = b"nowhere/nw2/auth-root";
 const AUTH_KEY_INFO: &[u8] = b"authentication";
 
 /// Authentication key derived once from the configured shared key.
@@ -51,19 +51,33 @@ impl Credentials {
     /// Parses the shared key from the URL username and derives its auth key.
     pub fn new(parsed_url: &Url) -> Result<Self> {
         if parsed_url.password().is_some() {
-            bail!("protocol::auth::Credentials::new: password credentials are not supported");
+            bail!("password credentials are not supported; put the shared key before '@'");
+        }
+        let shared_key = Self::decode_shared_key(parsed_url)?;
+        Self::from_shared_key(&shared_key)
+    }
+
+    pub(crate) fn decode_shared_key(parsed_url: &Url) -> Result<Vec<u8>> {
+        if parsed_url.password().is_some() {
+            bail!("password credentials are not supported; put the shared key before '@'");
         }
         let shared_key = decode_url_username(parsed_url)?;
-        Self::from_shared_key(&shared_key)
+        if shared_key.is_empty() {
+            bail!("missing shared key before '@'");
+        }
+        if shared_key.len() > u8::MAX as usize {
+            bail!("shared key exceeds the 255-byte limit");
+        }
+        Ok(shared_key)
     }
 
     /// Derives credentials directly from non-empty shared-key bytes.
     pub fn from_shared_key(shared_key: &[u8]) -> Result<Self> {
         if shared_key.is_empty() {
-            bail!("protocol::auth::Credentials::from_shared_key: missing shared key");
+            bail!("missing shared key before '@'");
         }
         if shared_key.len() > u8::MAX as usize {
-            bail!("protocol::auth::Credentials::from_shared_key: shared key exceeds 255 bytes");
+            bail!("shared key exceeds the 255-byte limit");
         }
         Ok(Self {
             auth_key: derive_auth_key(shared_key),

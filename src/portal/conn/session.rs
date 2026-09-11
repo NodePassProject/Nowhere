@@ -19,11 +19,12 @@ use tokio::time::timeout;
 
 use crate::protocol::{
     Carrier, DatagramReassembler, FlowErrorCode, FlowKind, FlowResult, FlowRole, ReassemblyConfig,
-    SessionId, read_flow_header, read_request, write_flow_result,
+    read_flow_header, read_request, write_flow_result,
 };
 
 pub(in crate::portal) use self::flow::QueuedDatagram;
 use crate::portal::PortalInner;
+use crate::portal::pairing::SessionKey;
 
 const FLOW_REJECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 const UDP_REASSEMBLY_SLOTS: usize = 64;
@@ -33,7 +34,7 @@ const UDP_REASSEMBLY_TTL: std::time::Duration = std::time::Duration::from_secs(1
 pub(super) struct PortalSession {
     portal: Arc<PortalInner>,
     conn: Connection,
-    pub(super) session_id: SessionId,
+    pub(super) session_key: SessionKey,
     quic_generation: AtomicU64,
     udp_flows: StdMutex<HashMap<u32, UdpState>>,
     udp_reassembler: StdMutex<DatagramReassembler<OwnedSemaphorePermit>>,
@@ -59,13 +60,18 @@ impl PortalSession {
             peer: self.conn.remote_address().to_string(),
             local: self.conn.local_ip().map_or_else(
                 || self.portal.endpoint_addr.clone(),
-                |ip| std::net::SocketAddr::new(ip, self.portal.listen_port).to_string(),
+                |ip| {
+                    self.portal.udp_listen_port.map_or_else(
+                        || self.portal.endpoint_addr.clone(),
+                        |port| std::net::SocketAddr::new(ip, port).to_string(),
+                    )
+                },
             ),
         }
     }
 
     /// Creates session state for one authenticated QUIC connection.
-    pub(super) fn new(portal: Arc<PortalInner>, conn: Connection, session_id: SessionId) -> Self {
+    pub(super) fn new(portal: Arc<PortalInner>, conn: Connection, session_key: SessionKey) -> Self {
         let (udp_ready_tx, udp_ready_rx) = mpsc::channel(64);
         let udp_reassembly_config = ReassemblyConfig {
             max_slots: UDP_REASSEMBLY_SLOTS,
@@ -76,7 +82,7 @@ impl PortalSession {
             udp_queue_budget: Arc::new(Semaphore::new(portal.udp_flow_limits.queue_bytes)),
             portal,
             conn,
-            session_id,
+            session_key,
             quic_generation: AtomicU64::new(0),
             udp_flows: StdMutex::new(HashMap::new()),
             udp_reassembler: StdMutex::new(DatagramReassembler::new(udp_reassembly_config)),
@@ -155,7 +161,7 @@ impl PortalSession {
                 self.portal
                     .pairing
                     .reject_flow_setup(
-                        self.session_id,
+                        self.session_key,
                         header.flow_id,
                         FlowErrorCode::InvalidRequest,
                     )
@@ -176,7 +182,7 @@ impl PortalSession {
                         self.portal
                             .pairing
                             .reject_flow_setup(
-                                self.session_id,
+                                self.session_key,
                                 header.flow_id,
                                 FlowErrorCode::FlowLimit,
                             )
@@ -193,7 +199,7 @@ impl PortalSession {
                         self.portal
                             .pairing
                             .reject_flow_setup(
-                                self.session_id,
+                                self.session_key,
                                 header.flow_id,
                                 FlowErrorCode::InvalidRequest,
                             )
@@ -216,12 +222,15 @@ impl PortalSession {
                     FlowRole::Attach => (None, Some(Box::pin(send) as _)),
                     FlowRole::Duplex => (Some(Box::pin(recv) as _), Some(Box::pin(send) as _)),
                 };
-                match self
+                let paired = self
                     .portal
                     .pairing
-                    .submit_tcp(self.session_id, header, target, link, reader, writer, None)
-                    .await
-                {
+                    .submit_tcp(self.session_key, header, target, link, reader, writer, None)
+                    .await;
+                self.conn.set_max_concurrent_bi_streams(
+                    self.portal.pairing.quic_stream_credit(self.session_key),
+                );
+                match paired {
                     Ok(Some(paired)) => {
                         let relay = super::relay::relay_paired_tcp(self.portal.clone(), paired);
                         if let Some(relay) = self.portal.relay_tasks.spawn_or_return(relay) {
@@ -241,7 +250,7 @@ impl PortalSession {
                             self.portal
                                 .pairing
                                 .reject_flow_setup(
-                                    self.session_id,
+                                    self.session_key,
                                     header.flow_id,
                                     FlowErrorCode::MetadataConflict,
                                 )
@@ -272,12 +281,15 @@ impl PortalSession {
                         }
                     }
                 };
-                match self
+                let paired = self
                     .portal
                     .pairing
-                    .submit_udp(self.session_id, header, target, link, half)
-                    .await
-                {
+                    .submit_udp(self.session_key, header, target, link, half)
+                    .await;
+                self.conn.set_max_concurrent_bi_streams(
+                    self.portal.pairing.quic_stream_credit(self.session_key),
+                );
+                match paired {
                     Ok(Some(paired)) => {
                         let relay = super::relay::relay_paired_udp(self.portal.clone(), paired);
                         if let Some(relay) = self.portal.relay_tasks.spawn_or_return(relay) {

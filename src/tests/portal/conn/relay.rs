@@ -23,11 +23,11 @@ fn symmetric_exchange_path(
 fn paired_path_contains_both_carriers_and_both_client_links() {
     let uplink = LinkPath {
         peer: "198.51.100.1:1000".into(),
-        local: "192.0.2.1:2077".into(),
+        local: "192.0.2.1:2000".into(),
     };
     let downlink = LinkPath {
         peer: "[2001:db8::2]:2000".into(),
-        local: "[2001:db8::1]:2077".into(),
+        local: "[2001:db8::1]:2000".into(),
     };
     assert_eq!(
         paired_exchange_path(
@@ -38,7 +38,7 @@ fn paired_path_contains_both_carriers_and_both_client_links() {
             Carrier::Quic,
             &downlink,
         ),
-        "UP[TCP] 198.51.100.1:1000 -> 192.0.2.1:2077 -> 192.0.2.1:3000 -> target.test:443 | DOWN[UDP] target.test:443 -> 192.0.2.1:3000 -> [2001:db8::1]:2077 -> [2001:db8::2]:2000"
+        "UP[TCP] 198.51.100.1:1000 -> 192.0.2.1:2000 -> 192.0.2.1:3000 -> target.test:443 | DOWN[UDP] target.test:443 -> 192.0.2.1:3000 -> [2001:db8::1]:2000 -> [2001:db8::2]:2000"
     );
 }
 
@@ -48,11 +48,11 @@ fn symmetric_path_uses_the_same_carrier_prefix() {
         symmetric_exchange_path(
             Carrier::Quic,
             "198.51.100.1:1000",
-            "192.0.2.1:2077",
+            "192.0.2.1:2000",
             "192.0.2.1:3000",
             "target.test:443",
         ),
-        "UP[UDP] 198.51.100.1:1000 -> 192.0.2.1:2077 -> 192.0.2.1:3000 -> target.test:443 | DOWN[UDP] target.test:443 -> 192.0.2.1:3000 -> 192.0.2.1:2077 -> 198.51.100.1:1000"
+        "UP[UDP] 198.51.100.1:1000 -> 192.0.2.1:2000 -> 192.0.2.1:3000 -> target.test:443 | DOWN[UDP] target.test:443 -> 192.0.2.1:3000 -> 192.0.2.1:2000 -> 198.51.100.1:1000"
     );
 }
 

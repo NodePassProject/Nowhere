@@ -16,15 +16,17 @@ use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::task::JoinSet;
 use tokio::time::{timeout, timeout_at};
-use tokio_rustls::TlsAcceptor;
+use tokio_rustls::LazyConfigAcceptor;
 use tokio_util::sync::CancellationToken;
 
 use crate::common::MUX_MARKER;
 use crate::mux::{MUX_IDLE_TIMEOUT, MuxConfig, MuxHandle};
 use crate::portal::PortalInner;
 use crate::portal::admission::UnauthenticatedGuard;
-use crate::protocol::{AuthTransport, SessionId, read_auth_frame};
+use crate::portal::pairing::SessionKey;
+use crate::protocol::{ALPN, AuthTransport, read_auth_frame};
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel};
+use crate::transport::MorphTcpStream;
 
 use self::flow::process_flow;
 use super::auth::{authentication_deadline, wait_for_auth_deadline};
@@ -89,12 +91,27 @@ pub(super) async fn handle_tcp_incoming_with_timeouts(
             .debug(format_args!("portal::conn::tcp: TCP_NODELAY failed: {err}"));
     }
     let local = stream.local_addr().ok();
-    let acceptor = TlsAcceptor::from(portal.tls_server_config.clone());
+    let server_config = portal.tls_server_config.clone();
+    let morph_keys = portal.morph_keys.clone();
     let tls_stream = match tokio::select! {
         biased;
         _ = shutdown.cancelled() => return,
         _ = portal.drain.cancelled() => return,
-        result = timeout(portal.runtime.handshake_timeout, acceptor.accept(stream)) => result,
+        result = timeout(portal.runtime.handshake_timeout, async move {
+            let stream = MorphTcpStream::server(stream, morph_keys);
+            let start = LazyConfigAcceptor::new(rustls::server::Acceptor::default(), stream).await?;
+            let offers_nw2 = start
+                .client_hello()
+                .alpn()
+                .is_some_and(|mut protocols| protocols.any(|protocol| protocol == ALPN));
+            if !offers_nw2 {
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidData,
+                    "client did not offer nw2 ALPN",
+                ));
+            }
+            start.into_stream(server_config).await
+        }) => result,
     } {
         Ok(Ok(stream)) => stream,
         Ok(Err(err)) => {
@@ -113,14 +130,8 @@ pub(super) async fn handle_tcp_incoming_with_timeouts(
         }
         Err(_) => return,
     };
-    let auth_deadline = authentication_deadline(portal.runtime.handshake_timeout);
     let mut tls_stream = tls_stream;
-    if tls_stream.get_ref().1.alpn_protocol() != Some(portal.alpn.as_bytes()) {
-        portal.logger.debug(format_args!(
-            "portal::conn::tcp: peer did not negotiate the configured ALPN"
-        ));
-        return;
-    }
+    let auth_deadline = authentication_deadline(portal.runtime.handshake_timeout);
     let mut exporter = [0u8; 32];
     if let Err(err) = tls_stream.get_ref().1.export_keying_material(
         &mut exporter,
@@ -165,7 +176,8 @@ pub(super) async fn handle_tcp_incoming_with_timeouts(
         }
         Err(_) => return,
     };
-    if let Err(err) = SockRef::from(tls_stream.get_ref().0).set_keepalive(true) {
+    let session_key = session_id;
+    if let Err(err) = SockRef::from(tls_stream.get_ref().0.get_ref()).set_keepalive(true) {
         portal.logger.debug(format_args!(
             "portal::conn::tcp: TCP keepalive failed: {err}"
         ));
@@ -185,7 +197,7 @@ pub(super) async fn handle_tcp_incoming_with_timeouts(
         handle_mux(
             portal,
             tls_stream,
-            session_id,
+            session_key,
             peer,
             local,
             shutdown,
@@ -197,13 +209,13 @@ pub(super) async fn handle_tcp_incoming_with_timeouts(
 
     let link_guard = portal
         .pairing
-        .register_tcp_link(session_id, portal.stats.clone());
+        .register_tcp_link(session_key, portal.stats.clone());
     let (recv, send) = tokio::io::split(tls_stream);
     process_flow(
         portal,
         Cursor::new([first]).chain(recv),
         send,
-        session_id,
+        session_key,
         peer,
         local,
         shutdown,
@@ -216,8 +228,8 @@ pub(super) async fn handle_tcp_incoming_with_timeouts(
 
 async fn handle_mux(
     portal: Arc<PortalInner>,
-    tls_stream: tokio_rustls::server::TlsStream<TcpStream>,
-    session_id: SessionId,
+    tls_stream: tokio_rustls::server::TlsStream<MorphTcpStream<TcpStream>>,
+    session_key: SessionKey,
     peer: SocketAddr,
     local: Option<SocketAddr>,
     shutdown: CancellationToken,
@@ -235,7 +247,7 @@ async fn handle_mux(
     };
     let _link_guard = portal
         .pairing
-        .register_tcp_link(session_id, portal.stats.clone());
+        .register_tcp_link(session_key, portal.stats.clone());
     portal.telemetry.emit_runtime(
         RuntimeEvent::new(
             RuntimeLevel::Info,
@@ -268,7 +280,7 @@ async fn handle_mux(
                 portal,
                 recv,
                 send,
-                session_id,
+                session_key,
                 peer,
                 local,
                 shutdown,

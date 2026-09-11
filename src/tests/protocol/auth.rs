@@ -17,7 +17,7 @@ fn hkdf_and_auth_frames_match_fixed_vectors() {
     let key = derive_auth_key(b"secret");
     assert_eq!(
         hex(&key),
-        "1076221669fa28bcf70aa8545bddd6f760dcefbe279c3f38a5ff5d925708f867"
+        "8de7e08dd22134ac5acc57902658a36b7f6f9d219987ed49b934a7529a4d24c5"
     );
     assert_eq!(
         hex(&encode_auth_frame(
@@ -26,7 +26,7 @@ fn hkdf_and_auth_frames_match_fixed_vectors() {
             &EXPORTER,
             SESSION
         )),
-        "000102030405060708090a0b0c0d0e0f24a4c0d5f8946b65bcf270ed6e1c3dec"
+        "000102030405060708090a0b0c0d0e0f91f3033378b001f0de171717c027be00"
     );
     assert_eq!(
         hex(&encode_auth_frame(
@@ -35,7 +35,7 @@ fn hkdf_and_auth_frames_match_fixed_vectors() {
             &EXPORTER,
             SESSION
         )),
-        "000102030405060708090a0b0c0d0e0f8176b984db64a1e2c811e751d955b635"
+        "000102030405060708090a0b0c0d0e0f97d0be56bda8a0ee7596775b35efbf68"
     );
 }
 

@@ -25,8 +25,8 @@ use crate::protocol::{
 
 use super::super::*;
 use super::support::{
-    TestSocksAuth, connect_test_tls, spawn_test_socks5_tcp, spawn_test_socks5_udp, test_target,
-    tls_auth_frame,
+    TestSocksAuth, connect_test_tls, connect_test_tls_with_alpns, spawn_test_socks5_tcp,
+    spawn_test_socks5_udp, test_target, tls_auth_frame,
 };
 
 fn duplex_setup(flow_id: u32, kind: FlowKind, target: &str) -> Vec<u8> {
@@ -38,9 +38,51 @@ fn duplex_setup(flow_id: u32, kind: FlowKind, target: &str) -> Vec<u8> {
         downlink: Carrier::TlsTcp,
         hops: 0,
     })
+    .unwrap()
     .to_vec();
     setup.extend_from_slice(&write_request_frame(&test_target(target)).unwrap());
     setup
+}
+
+#[tokio::test]
+async fn portal_rejects_client_hello_without_nw2() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listen_addr = listener.local_addr().unwrap();
+    let portal = Portal::new(
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
+        Logger::new(LogLevel::None, false),
+    )
+    .unwrap();
+    let portal_inner = portal.inner.clone();
+    let shutdown = CancellationToken::new();
+    let child_shutdown = shutdown.clone();
+    let server_task = tokio::spawn(async move {
+        for _ in 0..3 {
+            let (stream, peer) = listener.accept().await.unwrap();
+            let admission = portal_inner
+                .unauthenticated_admission
+                .try_acquire(peer.ip())
+                .unwrap();
+            handle_tcp_incoming(
+                portal_inner.clone(),
+                stream,
+                peer,
+                admission,
+                child_shutdown.clone(),
+            )
+            .await;
+        }
+    });
+
+    for alpns in [vec![b"now/1".to_vec()], vec![b"private/2".to_vec()], vec![]] {
+        assert!(
+            connect_test_tls_with_alpns(listen_addr, alpns)
+                .await
+                .is_err()
+        );
+    }
+    shutdown.cancel();
+    server_task.await.unwrap();
 }
 
 #[tokio::test]
@@ -58,7 +100,7 @@ async fn portal_accepts_delayed_dedicated_flow_header() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -111,7 +153,7 @@ async fn tls_tcp_relays_through_socks5_connect() {
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
         Url::parse(&format!(
-            "portal://secret@127.0.0.1:2077?log=none&net=tcp&socks={socks_addr}"
+            "portal://secret@127.0.0.1:2000?log=none&net=tcp&socks={socks_addr}"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -164,7 +206,7 @@ async fn tls_tcp_uot_relays_udp_and_counts_logical_udp() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -220,7 +262,7 @@ async fn tls_tcp_uot_relays_through_authenticated_socks5_udp() {
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
         Url::parse(&format!(
-            "portal://secret@127.0.0.1:2077?log=none&net=tcp&socks=user:pass@{socks_addr}"
+            "portal://secret@127.0.0.1:2000?log=none&net=tcp&socks=user:pass@{socks_addr}"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -265,7 +307,7 @@ async fn tls_tcp_auth_failure_waits_for_deadline_without_application_response() 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -305,7 +347,7 @@ async fn tls_tcp_flow_header_timeout_closes_unused_connection() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -346,7 +388,7 @@ async fn tls_mux_carrier_closes_after_becoming_fully_idle() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -381,6 +423,10 @@ async fn tls_mux_carrier_closes_after_becoming_fully_idle() {
         .await
         .unwrap()
         .unwrap();
+    let mut window = [0_u8; 7];
+    tls.read_exact(&mut window).await.unwrap();
+    assert_eq!(window[0], 0x03);
+    assert_eq!(&window[3..], &[0, 0, 0, 0]);
     let mut byte = [0_u8; 1];
     let read = tls.read(&mut byte).await;
     assert!(
@@ -406,7 +452,7 @@ async fn tls_tcp_coalesced_auth_and_flow_bootstrap_relays() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -446,7 +492,7 @@ async fn tls_tcp_carrier_mismatch_returns_invalid_request() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -464,14 +510,17 @@ async fn tls_tcp_carrier_mismatch_returns_invalid_request() {
 
     let mut tls = connect_test_tls(listen_addr).await;
     let mut bootstrap = tls_auth_frame(&portal, &tls, [11; 16]).to_vec();
-    bootstrap.extend_from_slice(&write_flow_header(FlowHeader {
-        role: FlowRole::Duplex,
-        flow_id: 11,
-        kind: FlowKind::Tcp,
-        uplink: Carrier::Quic,
-        downlink: Carrier::Quic,
-        hops: 0,
-    }));
+    bootstrap.extend_from_slice(
+        &write_flow_header(FlowHeader {
+            role: FlowRole::Duplex,
+            flow_id: 11,
+            kind: FlowKind::Tcp,
+            uplink: Carrier::Quic,
+            downlink: Carrier::Quic,
+            hops: 0,
+        })
+        .unwrap(),
+    );
     tls.write_all(&bootstrap).await.unwrap();
 
     assert_eq!(
@@ -488,7 +537,7 @@ async fn mismatched_open_leaves_invalid_request_for_later_attach() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
@@ -524,7 +573,7 @@ async fn mismatched_open_leaves_invalid_request_for_later_attach() {
     };
     let mut first = connect_test_tls(listen_addr).await;
     let mut bootstrap = tls_auth_frame(&portal, &first, session_id).to_vec();
-    bootstrap.extend_from_slice(&write_flow_header(open));
+    bootstrap.extend_from_slice(&write_flow_header(open).unwrap());
     first.write_all(&bootstrap).await.unwrap();
     let mut eof = [0u8; 1];
     match first.read(&mut eof).await {
@@ -535,10 +584,13 @@ async fn mismatched_open_leaves_invalid_request_for_later_attach() {
 
     let mut second = connect_test_tls(listen_addr).await;
     let mut attach = tls_auth_frame(&portal, &second, session_id).to_vec();
-    attach.extend_from_slice(&write_flow_header(FlowHeader {
-        role: FlowRole::Attach,
-        ..open
-    }));
+    attach.extend_from_slice(
+        &write_flow_header(FlowHeader {
+            role: FlowRole::Attach,
+            ..open
+        })
+        .unwrap(),
+    );
     second.write_all(&attach).await.unwrap();
     assert_eq!(
         read_flow_result(&mut second).await.unwrap(),

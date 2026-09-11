@@ -8,21 +8,21 @@ use bytes::Bytes;
 
 use super::FlowId;
 
-/// Unfragmented DATA frame type in bits 0..1.
+/// Unfragmented DATA frame type in the high two bits.
 pub const UDP_FRAME_DATA: u8 = 0;
-/// Fragmented DATA frame type in bits 0..1.
+/// Fragmented DATA frame type in the high two bits.
 pub const UDP_FRAME_FRAGMENT: u8 = 1;
-/// Flow CLOSE frame type in bits 0..1.
+/// Flow CLOSE frame type in the high two bits.
 pub const UDP_FRAME_CLOSE: u8 = 2;
 /// Common unfragmented/CLOSE header length.
-pub const UDP_HEADER_LEN: usize = 5;
+pub const UDP_HEADER_LEN: usize = 4;
 /// Fragment header length.
-pub const UDP_FRAGMENT_HEADER_LEN: usize = 13;
+pub const UDP_FRAGMENT_HEADER_LEN: usize = 12;
 /// Largest UDP payload representable by the protocol.
 pub const UDP_PACKET_MAX: usize = u16::MAX as usize;
 
-const FRAME_TYPE_MASK: u8 = 0b0000_0011;
-const RESERVED_MASK: u8 = 0b1111_1100;
+const FRAME_TYPE_SHIFT: u32 = 30;
+const FRAME_TYPE_MASK: u32 = 0b11 << FRAME_TYPE_SHIFT;
 
 /// Fragment metadata parameterized by borrowed or owned payload storage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,12 +101,11 @@ pub fn encode_udp_fragment_header(
         "encode_udp_fragment_header",
     )?;
     let mut output = [0; UDP_FRAGMENT_HEADER_LEN];
-    output[0] = UDP_FRAME_FRAGMENT;
-    output[1..5].copy_from_slice(&flow_id.to_be_bytes());
-    output[5..9].copy_from_slice(&packet_id.to_be_bytes());
-    output[9] = fragment_index;
-    output[10] = fragment_count;
-    output[11..13].copy_from_slice(&total_len.to_be_bytes());
+    output[..4].copy_from_slice(&encode_base_word(UDP_FRAME_FRAGMENT, flow_id)?.to_be_bytes());
+    output[4..8].copy_from_slice(&packet_id.to_be_bytes());
+    output[8] = fragment_index;
+    output[9] = fragment_count;
+    output[10..12].copy_from_slice(&total_len.to_be_bytes());
     Ok(output)
 }
 
@@ -226,21 +225,19 @@ pub fn decode_udp_frame(input: &[u8]) -> Result<UdpFrame<'_>> {
     if input.len() < UDP_HEADER_LEN {
         bail!("protocol::datagram::decode_udp_frame: short header");
     }
-    let flags = input[0];
-    if flags & RESERVED_MASK != 0 {
-        bail!("protocol::datagram::decode_udp_frame: reserved flags are non-zero");
-    }
-    let flow_id = u32::from_be_bytes(input[1..5].try_into().expect("fixed flow id"));
+    let base = u32::from_be_bytes(input[..4].try_into().expect("fixed base header"));
+    let frame_type = (base & FRAME_TYPE_MASK) >> FRAME_TYPE_SHIFT;
+    let flow_id = base & super::MAX_FLOW_ID;
     validate_flow_id(flow_id, "decode_udp_frame")?;
 
-    match flags & FRAME_TYPE_MASK {
-        UDP_FRAME_DATA => {
+    match frame_type {
+        value if value == UDP_FRAME_DATA as u32 => {
             let payload = &input[UDP_HEADER_LEN..];
             validate_udp_payload(payload, "decode_udp_frame")?;
             Ok(UdpFrame::Data { flow_id, payload })
         }
-        UDP_FRAME_FRAGMENT => decode_fragment(input, flow_id),
-        UDP_FRAME_CLOSE => {
+        value if value == UDP_FRAME_FRAGMENT as u32 => decode_fragment(input, flow_id),
+        value if value == UDP_FRAME_CLOSE as u32 => {
             if input.len() != UDP_HEADER_LEN {
                 bail!("protocol::datagram::decode_udp_frame: CLOSE payload");
             }
@@ -275,11 +272,11 @@ fn decode_fragment(input: &[u8], flow_id: FlowId) -> Result<UdpFrame<'_>> {
     if input.len() < UDP_FRAGMENT_HEADER_LEN {
         bail!("protocol::datagram::decode_udp_frame: short fragment header");
     }
-    let packet_id = u32::from_be_bytes(input[5..9].try_into().expect("fixed packet id"));
+    let packet_id = u32::from_be_bytes(input[4..8].try_into().expect("fixed packet id"));
     validate_packet_id(packet_id, "decode_udp_frame")?;
-    let fragment_index = input[9];
-    let fragment_count = input[10];
-    let total_len = u16::from_be_bytes([input[11], input[12]]);
+    let fragment_index = input[8];
+    let fragment_count = input[9];
+    let total_len = u16::from_be_bytes([input[10], input[11]]);
     validate_fragment_metadata(
         fragment_index,
         fragment_count,
@@ -305,16 +302,20 @@ fn decode_fragment(input: &[u8], flow_id: FlowId) -> Result<UdpFrame<'_>> {
 }
 
 fn encode_base_header(frame_type: u8, flow_id: FlowId) -> Result<[u8; UDP_HEADER_LEN]> {
+    Ok(encode_base_word(frame_type, flow_id)?.to_be_bytes())
+}
+
+fn encode_base_word(frame_type: u8, flow_id: FlowId) -> Result<u32> {
     validate_flow_id(flow_id, "encode_base_header")?;
-    let mut output = [0; UDP_HEADER_LEN];
-    output[0] = frame_type;
-    output[1..].copy_from_slice(&flow_id.to_be_bytes());
-    Ok(output)
+    if frame_type > UDP_FRAME_CLOSE {
+        bail!("protocol::datagram::encode_base_header: invalid frame type");
+    }
+    Ok((u32::from(frame_type) << FRAME_TYPE_SHIFT) | flow_id)
 }
 
 fn validate_flow_id(flow_id: FlowId, operation: &str) -> Result<()> {
-    if flow_id == 0 {
-        bail!("protocol::datagram::{operation}: zero flow id");
+    if flow_id == 0 || flow_id > super::MAX_FLOW_ID {
+        bail!("protocol::datagram::{operation}: flow id out of range");
     }
     Ok(())
 }

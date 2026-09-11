@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 use crate::common::{Lifecycle, Logger, TLSMode};
 use crate::protocol::Credentials;
 use crate::telemetry::TelemetryHub;
-use crate::transport::{Buffers, RateLimiter, Stats};
+use crate::transport::{Buffers, MorphKeys, RateLimiter, Stats};
 
 use self::config::PortalRuntimeConfig;
 pub(crate) use self::mode::NetworkMode;
@@ -32,7 +32,6 @@ const DEFAULT_QUIC_UDP_QUEUE_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug)]
 struct UdpFlowLimits {
-    max_flows: usize,
     queue_bytes: usize,
 }
 
@@ -44,12 +43,15 @@ pub struct Portal {
 
 struct PortalInner {
     credentials: Credentials,
-    alpn: String,
+    morph_keys: Option<MorphKeys>,
     tls_mode: TLSMode,
     network_mode: NetworkMode,
     endpoint_addr: String,
-    bind_addrs: Vec<SocketAddr>,
-    listen_port: u16,
+    tcp_bind_addrs: Vec<SocketAddr>,
+    udp_bind_addrs: Vec<SocketAddr>,
+    allow_tcp_family_degrade: bool,
+    allow_udp_family_degrade: bool,
+    udp_listen_port: Option<u16>,
     outbound: PortalOutbound,
     rate_limit: i32,
     etar_limit: i32,

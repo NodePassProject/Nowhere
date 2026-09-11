@@ -3,18 +3,21 @@
 
 //! QUIC endpoint and TCP listener setup plus accept loops.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use quinn::{Endpoint, EndpointConfig, IdleTimeout, ServerConfig, VarInt, default_runtime};
+use quinn::{Endpoint, IdleTimeout, ServerConfig, VarInt, default_runtime};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::TcpListener;
 use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
 
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel};
-use crate::transport::quic_flow_control;
+use crate::transport::{
+    MorphKeys, configure_morph_mtu, morph_endpoint_config, transport_flow_control,
+    wrap_morph_udp_socket,
+};
 
 use super::{PortalInner, conn};
 
@@ -132,13 +135,22 @@ pub(super) async fn accept_tcp_loop(
 }
 
 /// Opens a Quinn endpoint on an already configured server config.
-pub(super) fn listen_endpoint(server_config: ServerConfig, addr: SocketAddr) -> Result<Endpoint> {
+pub(super) fn listen_endpoint(
+    server_config: ServerConfig,
+    addr: SocketAddr,
+    morph_keys: Option<MorphKeys>,
+) -> Result<Endpoint> {
     let socket = bind_quic_socket(addr)
         .with_context(|| format!("portal::listen_endpoint: failed to bind UDP socket: {addr}"))?;
     let runtime = default_runtime()
         .ok_or_else(|| anyhow::anyhow!("portal::listen_endpoint: no async runtime found"))?;
-    Endpoint::new(
-        EndpointConfig::default(),
+    let socket = runtime
+        .wrap_udp_socket(socket)
+        .context("portal::listen_endpoint: failed to initialize UDP runtime socket")?;
+    let morph_enabled = morph_keys.is_some();
+    let socket = wrap_morph_udp_socket(socket, morph_keys.map(|keys| keys.udp_key()))?;
+    Endpoint::new_with_abstract_socket(
+        morph_endpoint_config(morph_enabled)?,
         Some(server_config),
         socket,
         runtime,
@@ -178,22 +190,14 @@ pub(super) fn listen_tcp(addr: SocketAddr) -> Result<TcpListener> {
         .with_context(|| format!("portal::listen_tcp: failed to listen for TLS/TCP on {addr}"))
 }
 
-/// Formats a visible endpoint address without adding brackets to empty hosts.
-pub(super) fn format_endpoint_addr(host: &str, port: u16) -> String {
-    match host.parse::<IpAddr>() {
-        Ok(ip) => SocketAddr::new(ip, port).to_string(),
-        Err(_) if host.is_empty() => format!(":{port}"),
-        Err(_) => format!("{host}:{port}"),
-    }
-}
-
 /// Applies transport limits that should be set before the config is shared.
 pub(super) fn configure_transport(
     server_config: &mut quinn::ServerConfig,
     udp_idle_timeout: Duration,
     keep_alive_interval: Option<Duration>,
+    morph_enabled: bool,
 ) -> Result<()> {
-    let flow_control = quic_flow_control()?;
+    let flow_control = transport_flow_control()?;
     let transport = Arc::get_mut(&mut server_config.transport).ok_or_else(|| {
         anyhow::anyhow!("portal::configure_transport: server transport already shared")
     })?;
@@ -207,6 +211,11 @@ pub(super) fn configure_transport(
     transport.max_idle_timeout(Some(IdleTimeout::try_from(udp_idle_timeout)?));
     transport.keep_alive_interval(keep_alive_interval);
     transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
+    configure_morph_mtu(transport, morph_enabled);
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../tests/portal/listener.rs"]
+mod socket_tests;
