@@ -4,8 +4,10 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::protocol::MAX_FLOW_ID;
+
 pub(super) type FlowId = u32;
-pub(super) const HEADER_LEN: usize = 8;
+pub(super) const HEADER_LEN: usize = 7;
 
 pub(super) const CLOSE_FIN: u8 = 0;
 pub(super) const CLOSE_RESET: u8 = 1;
@@ -16,7 +18,8 @@ pub(super) enum FrameKind {
     Open = 0x01,
     Data = 0x02,
     Window = 0x03,
-    Close = 0x04,
+    Fin = 0x04,
+    Reset = 0x05,
 }
 
 impl TryFrom<u8> for FrameKind {
@@ -27,7 +30,8 @@ impl TryFrom<u8> for FrameKind {
             0x01 => Ok(Self::Open),
             0x02 => Ok(Self::Data),
             0x03 => Ok(Self::Window),
-            0x04 => Ok(Self::Close),
+            0x04 => Ok(Self::Fin),
+            0x05 => Ok(Self::Reset),
             _ => Err(WireError::UnknownKind(value)),
         }
     }
@@ -36,33 +40,36 @@ impl TryFrom<u8> for FrameKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct FrameHeader {
     pub kind: FrameKind,
-    pub code: u8,
     pub value: u16,
     pub flow_id: FlowId,
 }
 
 impl FrameHeader {
     pub fn open(flow_id: FlowId, window_extension: usize) -> Result<Self, WireError> {
-        Self::new(FrameKind::Open, 0, window_extension, flow_id)
+        Self::new(FrameKind::Open, window_extension, flow_id)
     }
 
     pub fn data(flow_id: FlowId, payload_len: usize) -> Result<Self, WireError> {
-        Self::new(FrameKind::Data, 0, payload_len, flow_id)
+        Self::new(FrameKind::Data, payload_len, flow_id)
     }
 
     pub fn window(flow_id: FlowId, credit: usize) -> Result<Self, WireError> {
-        Self::new(FrameKind::Window, 0, credit, flow_id)
+        Self::new(FrameKind::Window, credit, flow_id)
     }
 
     pub fn close(flow_id: FlowId, code: u8) -> Result<Self, WireError> {
-        Self::new(FrameKind::Close, code, 0, flow_id)
+        let kind = match code {
+            CLOSE_FIN => FrameKind::Fin,
+            CLOSE_RESET => FrameKind::Reset,
+            _ => return Err(WireError::InvalidClose),
+        };
+        Self::new(kind, 0, flow_id)
     }
 
-    fn new(kind: FrameKind, code: u8, value: usize, flow_id: FlowId) -> Result<Self, WireError> {
+    fn new(kind: FrameKind, value: usize, flow_id: FlowId) -> Result<Self, WireError> {
         let value = u16::try_from(value).map_err(|_| WireError::ValueTooLarge)?;
         let header = Self {
             kind,
-            code,
             value,
             flow_id,
         };
@@ -74,30 +81,24 @@ impl FrameHeader {
         match self.kind {
             FrameKind::Open => {
                 require_flow(self.flow_id)?;
-                if self.code != 0 {
-                    return Err(WireError::ReservedCode);
-                }
             }
             FrameKind::Data => {
                 require_flow(self.flow_id)?;
-                if self.code != 0 {
-                    return Err(WireError::ReservedCode);
-                }
                 if self.value == 0 {
                     return Err(WireError::InvalidData);
                 }
             }
             FrameKind::Window => {
-                if self.code != 0 {
-                    return Err(WireError::ReservedCode);
-                }
                 if self.value == 0 {
                     return Err(WireError::InvalidWindow);
                 }
+                if self.flow_id != 0 {
+                    require_flow(self.flow_id)?;
+                }
             }
-            FrameKind::Close => {
+            FrameKind::Fin | FrameKind::Reset => {
                 require_flow(self.flow_id)?;
-                if self.code > CLOSE_RESET || self.value != 0 {
+                if self.value != 0 {
                     return Err(WireError::InvalidClose);
                 }
             }
@@ -107,7 +108,7 @@ impl FrameHeader {
 }
 
 fn require_flow(flow_id: FlowId) -> Result<(), WireError> {
-    if flow_id == 0 {
+    if flow_id == 0 || flow_id > MAX_FLOW_ID {
         Err(WireError::InvalidFlowId)
     } else {
         Ok(())
@@ -118,9 +119,8 @@ pub(super) fn encode_header(header: FrameHeader) -> Result<[u8; HEADER_LEN], Wir
     header.validate()?;
     let mut output = [0; HEADER_LEN];
     output[0] = header.kind as u8;
-    output[1] = header.code;
-    output[2..4].copy_from_slice(&header.value.to_be_bytes());
-    output[4..8].copy_from_slice(&header.flow_id.to_be_bytes());
+    output[1..3].copy_from_slice(&header.value.to_be_bytes());
+    output[3..7].copy_from_slice(&header.flow_id.to_be_bytes());
     Ok(output)
 }
 
@@ -130,9 +130,8 @@ pub(super) fn decode_header(input: &[u8]) -> Result<FrameHeader, WireError> {
     }
     let header = FrameHeader {
         kind: FrameKind::try_from(input[0])?,
-        code: input[1],
-        value: u16::from_be_bytes([input[2], input[3]]),
-        flow_id: u32::from_be_bytes(input[4..8].try_into().expect("fixed flow ID")),
+        value: u16::from_be_bytes([input[1], input[2]]),
+        flow_id: u32::from_be_bytes(input[3..7].try_into().expect("fixed flow ID")),
     };
     header.validate()?;
     Ok(header)
@@ -143,7 +142,6 @@ pub(super) enum WireError {
     InvalidHeaderLength(usize),
     UnknownKind(u8),
     ValueTooLarge,
-    ReservedCode,
     InvalidFlowId,
     InvalidData,
     InvalidWindow,
@@ -158,8 +156,7 @@ impl fmt::Display for WireError {
             }
             Self::UnknownKind(kind) => write!(formatter, "unknown frame kind: {kind}"),
             Self::ValueTooLarge => formatter.write_str("frame value exceeds u16"),
-            Self::ReservedCode => formatter.write_str("reserved frame code is non-zero"),
-            Self::InvalidFlowId => formatter.write_str("invalid zero flow ID"),
+            Self::InvalidFlowId => formatter.write_str("flow ID is outside the 30-bit range"),
             Self::InvalidData => formatter.write_str("DATA payload must be non-empty"),
             Self::InvalidWindow => formatter.write_str("WINDOW credit must be non-zero"),
             Self::InvalidClose => formatter.write_str("invalid CLOSE code or value"),

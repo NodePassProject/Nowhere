@@ -9,8 +9,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
 use super::wire::{
-    CLOSE_FIN, CLOSE_RESET, FlowId, FrameHeader, FrameKind, HEADER_LEN, decode_header,
-    encode_header,
+    CLOSE_FIN, FlowId, FrameHeader, FrameKind, HEADER_LEN, decode_header, encode_header,
 };
 use super::{Inbound, MuxChunk, Outbound, Shared};
 
@@ -65,7 +64,7 @@ pub(super) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<
             let header = decode_header(&encoded).map_err(invalid)?;
             let payload_len = match header.kind {
                 FrameKind::Data => header.value as usize,
-                FrameKind::Open | FrameKind::Window | FrameKind::Close => 0,
+                FrameKind::Open | FrameKind::Window | FrameKind::Fin | FrameKind::Reset => 0,
             };
             let mut payload = vec![0; payload_len];
             if payload_len != 0 {
@@ -78,7 +77,7 @@ pub(super) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<
                 FrameKind::Open => receive_open(&shared, header).await?,
                 FrameKind::Data => receive_data(&shared, header, Bytes::from(payload)).await?,
                 FrameKind::Window => receive_window(&shared, header)?,
-                FrameKind::Close => receive_close(&shared, header).await,
+                FrameKind::Fin | FrameKind::Reset => receive_close(&shared, header).await,
             }
             if payload_len != 0 {
                 data_frames = data_frames.wrapping_add(1);
@@ -126,7 +125,7 @@ async fn receive_data(shared: &Arc<Shared>, header: FrameHeader, payload: Bytes)
 }
 
 async fn receive_close(shared: &Shared, header: FrameHeader) {
-    if header.code == CLOSE_RESET {
+    if header.kind == FrameKind::Reset {
         if let Some(flow) = shared.remove_flow(header.flow_id) {
             let _ = flow.inbound.send(Inbound::Reset);
         }
@@ -210,8 +209,8 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
     shared: Arc<Shared>,
     mut data_rx: mpsc::Receiver<Outbound>,
 ) {
-    let mut control = Vec::with_capacity(8 * 64);
-    let mut headers = Vec::with_capacity(8 * 256);
+    let mut control = Vec::with_capacity(HEADER_LEN * 64);
+    let mut headers = Vec::with_capacity(HEADER_LEN * 256);
     let mut pending_item = None;
     let operation = async {
         loop {
@@ -244,7 +243,7 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
                 Outbound::Control(header) => {
                     headers.clear();
                     headers.extend_from_slice(&encode_header(header).map_err(invalid)?);
-                    while headers.len() < 8 * 256 {
+                    while headers.len() < HEADER_LEN * 256 {
                         let Ok(next) = data_rx.try_recv() else { break };
                         match next {
                             Outbound::Control(header) => {

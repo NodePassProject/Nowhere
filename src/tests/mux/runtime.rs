@@ -122,13 +122,27 @@ async fn assert_raw_frame_closes_carrier(frame: &[u8]) {
 
 #[tokio::test]
 async fn invalid_kind_and_unknown_flow_data_close_carrier() {
-    assert_raw_frame_closes_carrier(&[0xff, 0, 0, 0, 0, 0, 0, 1]).await;
+    assert_raw_frame_closes_carrier(&[0xff, 0, 0, 0, 0, 0, 1]).await;
 
     let mut frame = encode_header(FrameHeader::data(99, 1).unwrap())
         .unwrap()
         .to_vec();
     frame.push(0);
     assert_raw_frame_closes_carrier(&frame).await;
+}
+
+#[tokio::test]
+async fn invalid_prepared_id_does_not_reserve_a_stream_or_close_the_carrier() {
+    let (left, _peer) = tokio::io::duplex(1024);
+    let (handle, _incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    for id in [0, crate::protocol::MAX_FLOW_ID + 1, u32::MAX] {
+        assert!(handle.prepare_stream(id).is_err());
+        assert_eq!(handle.active_streams(), 0);
+        assert!(!handle.is_closed());
+    }
+    let _stream = handle.prepare_stream(crate::protocol::MAX_FLOW_ID).unwrap();
+    assert_eq!(handle.active_streams(), 1);
+    handle.close();
 }
 
 #[tokio::test]

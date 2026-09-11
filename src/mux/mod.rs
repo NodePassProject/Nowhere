@@ -215,7 +215,13 @@ impl Shared {
         flow_id: FlowId,
         advertise_window: bool,
     ) -> io::Result<MuxStream> {
-        if flow_id == 0 || self.closed.load(Ordering::Acquire) {
+        if flow_id == 0 || flow_id > crate::protocol::MAX_FLOW_ID {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "flow ID is outside the 30-bit range",
+            ));
+        }
+        if self.closed.load(Ordering::Acquire) {
             return Err(closed());
         }
         // Every DATA frame consumes at least one KiB of connection credit,
