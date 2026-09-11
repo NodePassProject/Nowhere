@@ -39,7 +39,7 @@ use super::super::udp_flow::{UdpTunnel, open_udp};
 mod udp;
 
 #[cfg(test)]
-use self::udp::{accept_udp_source, validate_udp_source_request};
+use self::udp::{accept_udp_source, try_admit_udp_target, validate_udp_source_request};
 use self::udp::{run_udp_association, start_access};
 const TCP_LISTEN_BACKLOG: i32 = 1024;
 const SOCKS_UDP_PACKET_MAX: usize = u16::MAX as usize + 3 + 1 + 1 + 255 + 2;
@@ -78,9 +78,22 @@ pub(in crate::vector) async fn serve_listener(
             _ = shutdown.cancelled() => break,
             accepted = listener.accept() => match accepted {
                 Ok((stream, peer)) => {
+                    let Some(admission) = try_admit_client(&vector) else {
+                        vector.telemetry.emit_runtime(
+                            RuntimeEvent::new(
+                                RuntimeLevel::Warn,
+                                RuntimeKind::Listener,
+                                "SOCKS client resource limit reached",
+                            )
+                            .with_client(peer.to_string()),
+                        );
+                        drop(stream);
+                        continue;
+                    };
                     let vector = vector.clone();
                     let shutdown = shutdown.clone();
                     clients.spawn(async move {
+                        let _admission = admission;
                         if let Err(error) = handle_client(vector.clone(), stream, peer, shutdown).await {
                             vector.logger.debug(format_args!(
                                 "vector::socks::handle_client: {peer}: {error}"
@@ -104,6 +117,14 @@ pub(in crate::vector) async fn serve_listener(
         }
     }
     while clients.join_next().await.is_some() {}
+}
+
+fn try_admit_client(vector: &Arc<VectorInner>) -> Option<OwnedSemaphorePermit> {
+    vector
+        .socks_client_admission
+        .clone()
+        .try_acquire_owned()
+        .ok()
 }
 
 async fn handle_client(

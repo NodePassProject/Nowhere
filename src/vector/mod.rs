@@ -37,6 +37,9 @@ use crate::telemetry::TelemetryServer;
 use crate::telemetry::{InstanceRole, TelemetryHub};
 use crate::transport::{Buffers, RateLimiter, Stats};
 
+const SOCKS_CLIENT_RESOURCE_LIMIT: usize = 1024;
+const SOCKS_UDP_TARGET_RESOURCE_LIMIT: usize = 1024;
+
 /// Runnable native client serving a local SOCKS5 endpoint.
 pub struct Vector {
     inner: Arc<VectorInner>,
@@ -53,6 +56,8 @@ pub(super) struct VectorInner {
     rate_limiter: Option<Arc<RateLimiter>>,
     client: Arc<PortalClient>,
     local_udp_budget: Arc<Semaphore>,
+    socks_client_admission: Arc<Semaphore>,
+    socks_udp_target_admission: Arc<Semaphore>,
     shutdown: CancellationToken,
 }
 
@@ -242,6 +247,10 @@ impl Vector {
                 rate_limiter,
                 client,
                 local_udp_budget: Arc::new(Semaphore::new(udp_queue_bytes)),
+                socks_client_admission: Arc::new(Semaphore::new(SOCKS_CLIENT_RESOURCE_LIMIT)),
+                socks_udp_target_admission: Arc::new(Semaphore::new(
+                    SOCKS_UDP_TARGET_RESOURCE_LIMIT,
+                )),
                 shutdown,
             }),
         })
