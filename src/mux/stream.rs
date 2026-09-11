@@ -331,7 +331,12 @@ impl Drop for FlowWriter {
             // already queued DATA without spawning a task for every dropped
             // stream. Dropping a writer is a half-close: split-direction users
             // intentionally discard the unused half while retaining the other.
-            let _ = self.shared.terminal_tx.send(self.flow_id);
+            if self.shared.terminal_tx.try_send(self.flow_id).is_err() {
+                // Drop cannot wait for terminal delivery. A full queue means
+                // the peer is not draining control traffic, so fail the
+                // carrier before terminal metadata can grow without bound.
+                self.shared.close();
+            }
         }
         self.shared.release_part(self.flow_id);
     }

@@ -136,7 +136,7 @@ struct Shared {
     pending_connection_credit: AtomicUsize,
     ready_flows: Mutex<VecDeque<FlowId>>,
     data_tx: mpsc::Sender<Outbound>,
-    terminal_tx: mpsc::UnboundedSender<FlowId>,
+    terminal_tx: mpsc::Sender<FlowId>,
     control_notify: Notify,
     incoming_tx: mpsc::Sender<MuxStream>,
     active_streams_tx: watch::Sender<usize>,

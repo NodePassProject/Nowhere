@@ -180,10 +180,7 @@ fn receive_window(shared: &Shared, header: FrameHeader) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) async fn run_terminals(
-    shared: Arc<Shared>,
-    mut terminal_rx: mpsc::UnboundedReceiver<FlowId>,
-) {
+pub(super) async fn run_terminals(shared: Arc<Shared>, mut terminal_rx: mpsc::Receiver<FlowId>) {
     loop {
         if shared.closed.load(std::sync::atomic::Ordering::Acquire) {
             return;

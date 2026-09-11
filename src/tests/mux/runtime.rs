@@ -54,6 +54,26 @@ async fn open_reset_churn_cannot_overflow_pending_incoming_admission() {
 }
 
 #[tokio::test]
+async fn dropped_writers_close_carrier_when_terminal_delivery_is_saturated() {
+    let config = MuxConfig {
+        active_stream_limit: 2,
+        ..MuxConfig::default()
+    };
+    let (_peer, carrier) = tokio::io::duplex(1);
+    let (handle, _incoming) = MuxHandle::start(carrier, config).unwrap();
+
+    // No await gives the terminal dispatcher no opportunity to drain between
+    // drops. Flow state is released each time, so only the terminal queue can
+    // bound this churn.
+    for flow_id in 1..=3 {
+        drop(handle.prepare_stream(flow_id).unwrap());
+    }
+
+    assert!(handle.is_closed());
+    assert_eq!(handle.active_streams(), 0);
+}
+
+#[tokio::test]
 async fn remote_open_admission_closes_carrier_at_the_metadata_limit() {
     let config = MuxConfig {
         active_stream_limit: 2,
