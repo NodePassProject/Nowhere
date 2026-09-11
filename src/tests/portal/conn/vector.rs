@@ -274,32 +274,40 @@ async fn mux_symmetric_carriers_relay_tcp_and_fragmented_udp() {
 
 #[tokio::test]
 async fn mux_full_duplex_tcp_exceeds_each_direction_credit_window() {
+    full_duplex_exceeds_each_direction_credit_window("tcp").await;
+}
+
+#[tokio::test]
+async fn quic_full_duplex_tcp_exceeds_each_direction_credit_window() {
+    full_duplex_exceeds_each_direction_credit_window("udp").await;
+}
+
+async fn full_duplex_exceeds_each_direction_credit_window(carrier: &str) {
     // The throughput profile grants 16 MiB per stream. Cross that boundary in
     // both directions so progress depends on returning Mux credit.
     const DIRECTION_BYTES: usize = 20 * 1024 * 1024;
 
-    for carrier in ["tcp", "udp"] {
+    {
+        let progress = Arc::new(std::array::from_fn::<_, 4, _>(|_| {
+            std::sync::atomic::AtomicUsize::new(0)
+        }));
         let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let target_address = target.local_addr().unwrap();
+        let target_progress = progress.clone();
         let target_task = tokio::spawn(async move {
             let (stream, _) = target.accept().await.unwrap();
+            stream.set_nodelay(true).unwrap();
             let (mut reader, mut writer) = stream.into_split();
-            let upload = async {
-                let mut received = vec![0_u8; DIRECTION_BYTES];
-                reader.read_exact(&mut received).await.unwrap();
-                assert!(received.iter().all(|byte| *byte == 0xa5));
-            };
-            let download = async {
-                writer
-                    .write_all(&vec![0x5a; DIRECTION_BYTES])
-                    .await
-                    .unwrap();
-            };
+            let upload =
+                read_full_duplex_payload(&mut reader, DIRECTION_BYTES, 0xa5, &target_progress[1]);
+            let download =
+                write_full_duplex_payload(&mut writer, DIRECTION_BYTES, 0x5a, &target_progress[2]);
             tokio::join!(upload, download);
         });
         let runtime = start_runtime(carrier, carrier, 1).await;
-        timeout(FULL_DUPLEX_TIMEOUT, async {
+        let result = timeout(FULL_DUPLEX_TIMEOUT, async {
             let mut stream = TcpStream::connect(runtime.socks).await.unwrap();
+            stream.set_nodelay(true).unwrap();
             negotiate_socks(&mut stream).await;
             stream
                 .write_all(&ip_request(1, target_address))
@@ -307,23 +315,63 @@ async fn mux_full_duplex_tcp_exceeds_each_direction_credit_window() {
                 .unwrap();
             read_ipv4_reply(&mut stream).await;
             let (mut reader, mut writer) = stream.into_split();
-            let upload = async {
-                writer
-                    .write_all(&vec![0xa5; DIRECTION_BYTES])
-                    .await
-                    .unwrap();
-            };
-            let download = async {
-                let mut received = vec![0_u8; DIRECTION_BYTES];
-                reader.read_exact(&mut received).await.unwrap();
-                assert!(received.iter().all(|byte| *byte == 0x5a));
-            };
+            let upload =
+                write_full_duplex_payload(&mut writer, DIRECTION_BYTES, 0xa5, &progress[0]);
+            let download =
+                read_full_duplex_payload(&mut reader, DIRECTION_BYTES, 0x5a, &progress[3]);
             tokio::join!(upload, download);
         })
-        .await
-        .unwrap();
+        .await;
+        if result.is_err() {
+            target_task.abort();
+            runtime.stop().await;
+            panic!(
+                "{carrier} full-duplex timeout: client sent={}, target received={}, target sent={}, client received={}, expected={DIRECTION_BYTES}",
+                progress[0].load(Ordering::Relaxed),
+                progress[1].load(Ordering::Relaxed),
+                progress[2].load(Ordering::Relaxed),
+                progress[3].load(Ordering::Relaxed)
+            );
+        }
         target_task.await.unwrap();
         runtime.stop().await;
+    }
+}
+
+async fn write_full_duplex_payload(
+    writer: &mut (impl tokio::io::AsyncWrite + Unpin),
+    total: usize,
+    byte: u8,
+    progress: &std::sync::atomic::AtomicUsize,
+) {
+    let chunk = [byte; 32 * 1024];
+    let mut sent = 0;
+    while sent < total {
+        let count = writer
+            .write(&chunk[..chunk.len().min(total - sent)])
+            .await
+            .unwrap();
+        assert_ne!(count, 0, "full-duplex write made no progress");
+        sent += count;
+        progress.store(sent, Ordering::Relaxed);
+    }
+}
+
+async fn read_full_duplex_payload(
+    reader: &mut (impl tokio::io::AsyncRead + Unpin),
+    total: usize,
+    byte: u8,
+    progress: &std::sync::atomic::AtomicUsize,
+) {
+    let mut chunk = [0; 32 * 1024];
+    let mut received = 0;
+    while received < total {
+        let capacity = chunk.len().min(total - received);
+        let count = reader.read(&mut chunk[..capacity]).await.unwrap();
+        assert_ne!(count, 0, "full-duplex stream ended early");
+        assert!(chunk[..count].iter().all(|value| *value == byte));
+        received += count;
+        progress.store(received, Ordering::Relaxed);
     }
 }
 
