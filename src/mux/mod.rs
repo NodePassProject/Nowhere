@@ -121,7 +121,7 @@ pub(crate) struct MuxHandle {
 }
 
 pub(crate) struct Incoming {
-    receiver: mpsc::UnboundedReceiver<MuxStream>,
+    receiver: mpsc::Receiver<MuxStream>,
 }
 
 type WriteFuture = Pin<Box<dyn Future<Output = io::Result<usize>> + Send>>;
@@ -138,7 +138,7 @@ struct Shared {
     data_tx: mpsc::Sender<Outbound>,
     terminal_tx: mpsc::UnboundedSender<FlowId>,
     control_notify: Notify,
-    incoming_tx: mpsc::UnboundedSender<MuxStream>,
+    incoming_tx: mpsc::Sender<MuxStream>,
     active_streams_tx: watch::Sender<usize>,
     closed: AtomicBool,
     closed_notify: tokio_util::sync::CancellationToken,

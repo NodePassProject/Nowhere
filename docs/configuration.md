@@ -338,7 +338,8 @@ grows with live and pending QUIC
 flows, reserving setup headroom of at least 64 streams or 25% of that count.
 This avoids the former application flow quotas and excessive eager stream allocation.
 Byte budgets and setup, pairing, and idle deadlines apply; per-flow
-metadata and target sockets stay within the independent resource ceilings.
+Mux metadata and Vector SOCKS target tasks have the resource ceilings described
+above. These do not impose an aggregate limit on Portal sessions or target sockets.
 
 Portal and Vector use the same QUIC profile regardless of the client Mux setting.
 The stream/connection/send windows are respectively 4/8/8 MiB for `memory`,

@@ -31,6 +31,29 @@ async fn more_than_256_live_streams_transfer_and_half_close() {
 }
 
 #[tokio::test]
+async fn open_reset_churn_cannot_overflow_pending_incoming_admission() {
+    let config = MuxConfig {
+        active_stream_limit: 2,
+        ..MuxConfig::default()
+    };
+    let (mut peer, carrier) = tokio::io::duplex(4096);
+    let (server, incoming) = MuxHandle::start(carrier, config).unwrap();
+    for flow_id in 1..=3 {
+        peer.write_all(&encode_header(FrameHeader::open(flow_id, 0).unwrap()).unwrap())
+            .await
+            .unwrap();
+        peer.write_all(&encode_header(FrameHeader::close(flow_id, CLOSE_RESET).unwrap()).unwrap())
+            .await
+            .unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(1), server.closed())
+        .await
+        .expect("RESET must not bypass pending OPEN admission");
+    assert_eq!(incoming.receiver.len(), 2);
+    assert_eq!(server.active_streams(), 0);
+}
+
+#[tokio::test]
 async fn remote_open_admission_closes_carrier_at_the_metadata_limit() {
     let config = MuxConfig {
         active_stream_limit: 2,

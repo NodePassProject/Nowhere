@@ -110,7 +110,9 @@ async fn receive_open(shared: &Arc<Shared>, header: FrameHeader) -> io::Result<(
         }
         credit.add_permits(extra_credit);
     }
-    shared.incoming_tx.send(stream).map_err(|_| closed())
+    // RESET removes active flow state, but cannot remove an already queued
+    // stream. Bound pending delivery separately and never block the reader.
+    shared.incoming_tx.try_send(stream).map_err(|_| closed())
 }
 
 async fn receive_data(shared: &Arc<Shared>, header: FrameHeader, payload: Bytes) -> io::Result<()> {

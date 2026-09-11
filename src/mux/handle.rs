@@ -23,7 +23,7 @@ impl MuxHandle {
         let config = config.validate()?;
         let (data_tx, data_rx) = mpsc::channel(config.outbound_frames);
         let (terminal_tx, terminal_rx) = mpsc::unbounded_channel();
-        let (incoming_tx, incoming_rx) = mpsc::unbounded_channel();
+        let (incoming_tx, incoming_rx) = mpsc::channel(config.active_stream_limit);
         let (active_streams_tx, _) = watch::channel(0);
         let shared = Arc::new(Shared {
             config,

@@ -348,8 +348,10 @@ number of carriers for many idle logical streams.
 Receive queues use byte-credit admission rather than blocking the carrier reader
 on a per-flow frame count. Every DATA frame consumes at least one KiB of credit,
 bounding queued payload and DATA metadata across the carrier. Separate OPEN
-admission bounds stream and lifecycle metadata at 4,096 active streams per
-carrier. Authentication remains separate from Mux placement. A fully idle carrier closes after 30
+admission caps active streams and pending incoming deliveries separately at
+4,096 per carrier. A full incoming queue closes the carrier immediately without
+blocking its reader; RESET cannot bypass this queue limit. Authentication remains
+separate from Mux placement. A fully idle carrier closes after 30
 seconds. Portal applies the same timeout to an authenticated Mux carrier with
 no active streams. Sharding is runtime placement and does not add wire fields.
 

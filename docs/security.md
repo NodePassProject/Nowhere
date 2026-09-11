@@ -95,8 +95,10 @@ The transport memory profile bounds Mux stream/connection windows at 4/8,
 Vector or Portal `next` shares at most eight TLS carriers across both directions,
 reuses idle carriers before creating more, distributes flows by occupancy at capacity,
 and closes a fully idle carrier after 30 seconds. Stream and pending lifecycle
-metadata remain proportional to admitted streams; separate OPEN admission bounds
-metadata that carries no DATA credit. One
+metadata remain proportional to admitted streams. Active streams and pending
+incoming deliveries each have a separate 4,096-entry ceiling, so OPEN/RESET churn
+cannot grow the delivery queue without bound. Queue overflow closes the carrier
+without blocking its reader. One
 authenticated inbound Mux carrier is subject to the same fully idle timeout.
 The former authenticated-session logical-flow quotas are absent. Independent
 resource admission caps Mux streams, accepted SOCKS clients, and active SOCKS UDP
