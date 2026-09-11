@@ -42,14 +42,17 @@ async fn setup_quic_udp(
     target: &str,
 ) -> (FlowResult, quinn::RecvStream) {
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    send.write_all(&write_flow_header(FlowHeader {
-        role: FlowRole::Duplex,
-        flow_id,
-        kind: FlowKind::Udp,
-        uplink: Carrier::Quic,
-        downlink: Carrier::Quic,
-        hops: 0,
-    }))
+    send.write_all(
+        &write_flow_header(FlowHeader {
+            role: FlowRole::Duplex,
+            flow_id,
+            kind: FlowKind::Udp,
+            uplink: Carrier::Quic,
+            downlink: Carrier::Quic,
+            hops: 0,
+        })
+        .unwrap(),
+    )
     .await
     .unwrap();
     send.write_all(&write_request_frame(&test_target(target)).unwrap())
@@ -141,14 +144,17 @@ async fn quic_carrier_mismatch_returns_invalid_request() {
     authenticate_test_connection(&portal, &connection).await;
 
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    send.write_all(&write_flow_header(FlowHeader {
-        role: FlowRole::Duplex,
-        flow_id: 76,
-        kind: FlowKind::Tcp,
-        uplink: Carrier::TlsTcp,
-        downlink: Carrier::TlsTcp,
-        hops: 0,
-    }))
+    send.write_all(
+        &write_flow_header(FlowHeader {
+            role: FlowRole::Duplex,
+            flow_id: 76,
+            kind: FlowKind::Tcp,
+            uplink: Carrier::TlsTcp,
+            downlink: Carrier::TlsTcp,
+            hops: 0,
+        })
+        .unwrap(),
+    )
     .await
     .unwrap();
     send.finish().unwrap();
@@ -181,14 +187,17 @@ async fn first_stream_carries_auth_and_flow_while_pre_auth_datagrams_are_dropped
     send.write_all(&quic_auth_frame(&portal, &connection, [78; 16]))
         .await
         .unwrap();
-    send.write_all(&write_flow_header(FlowHeader {
-        role: FlowRole::Duplex,
-        flow_id: 78,
-        kind: FlowKind::Udp,
-        uplink: Carrier::Quic,
-        downlink: Carrier::Quic,
-        hops: 0,
-    }))
+    send.write_all(
+        &write_flow_header(FlowHeader {
+            role: FlowRole::Duplex,
+            flow_id: 78,
+            kind: FlowKind::Udp,
+            uplink: Carrier::Quic,
+            downlink: Carrier::Quic,
+            hops: 0,
+        })
+        .unwrap(),
+    )
     .await
     .unwrap();
     send.write_all(&write_request_frame(&test_target(&target_addr)).unwrap())

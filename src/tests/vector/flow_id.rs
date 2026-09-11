@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn exhausted_allocator_recovers_only_released_ids() {
+    let allocator = FlowIdAllocator::new();
+    let first = allocator.allocate_with_limit(3).unwrap();
+    let second = allocator.allocate_with_limit(3).unwrap();
+    let third = allocator.allocate_with_limit(3).unwrap();
+    assert!(
+        allocator
+            .allocate_with_limit(3)
+            .unwrap_err()
+            .to_string()
+            .contains("space exhausted")
+    );
+    let released = second.id();
+    drop(second);
+    let reused = allocator.allocate_with_limit(3).unwrap();
+    assert_eq!(reused.id(), released);
+    assert_ne!(reused.id(), first.id());
+    assert_ne!(reused.id(), third.id());
+    assert!(allocator.allocate_with_limit(3).is_err());
+}
+
+#[test]
 fn allocator_never_reuses_an_active_id() {
     let allocator = FlowIdAllocator::new();
     let first = allocator.allocate().unwrap();
@@ -18,9 +40,11 @@ fn allocator_never_reuses_an_active_id() {
 #[test]
 fn allocator_skips_zero_at_wrap() {
     let allocator = FlowIdAllocator::new();
-    allocator.next.store(u32::MAX, Ordering::Relaxed);
+    let first = allocator.allocate().unwrap();
+    assert_eq!(first.id(), 1);
+    allocator.next.store(MAX_FLOW_ID, Ordering::Relaxed);
     let max = allocator.allocate().unwrap();
     let wrapped = allocator.allocate().unwrap();
-    assert_eq!(max.id(), u32::MAX);
-    assert_ne!(wrapped.id(), 0);
+    assert_eq!(max.id(), MAX_FLOW_ID);
+    assert_eq!(wrapped.id(), 2);
 }

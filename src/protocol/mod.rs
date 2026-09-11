@@ -24,7 +24,7 @@ pub use datagram::{
     encode_udp_fragments,
 };
 pub use flow::{
-    Carrier, FLOW_HEADER_LEN, FlowHeader, FlowId, FlowKind, FlowRole, MAX_PORTAL_HOPS,
+    Carrier, FLOW_HEADER_LEN, FlowHeader, FlowId, FlowKind, FlowRole, MAX_FLOW_ID, MAX_PORTAL_HOPS,
     SESSION_ID_LEN, SessionId, decode_flow_header, encode_flow_header, read_flow_header,
     write_flow_header,
 };

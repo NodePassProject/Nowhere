@@ -38,6 +38,7 @@ fn duplex_setup(flow_id: u32, kind: FlowKind, target: &str) -> Vec<u8> {
         downlink: Carrier::TlsTcp,
         hops: 0,
     })
+    .unwrap()
     .to_vec();
     setup.extend_from_slice(&write_request_frame(&test_target(target)).unwrap());
     setup
@@ -509,14 +510,17 @@ async fn tls_tcp_carrier_mismatch_returns_invalid_request() {
 
     let mut tls = connect_test_tls(listen_addr).await;
     let mut bootstrap = tls_auth_frame(&portal, &tls, [11; 16]).to_vec();
-    bootstrap.extend_from_slice(&write_flow_header(FlowHeader {
-        role: FlowRole::Duplex,
-        flow_id: 11,
-        kind: FlowKind::Tcp,
-        uplink: Carrier::Quic,
-        downlink: Carrier::Quic,
-        hops: 0,
-    }));
+    bootstrap.extend_from_slice(
+        &write_flow_header(FlowHeader {
+            role: FlowRole::Duplex,
+            flow_id: 11,
+            kind: FlowKind::Tcp,
+            uplink: Carrier::Quic,
+            downlink: Carrier::Quic,
+            hops: 0,
+        })
+        .unwrap(),
+    );
     tls.write_all(&bootstrap).await.unwrap();
 
     assert_eq!(
@@ -569,7 +573,7 @@ async fn mismatched_open_leaves_invalid_request_for_later_attach() {
     };
     let mut first = connect_test_tls(listen_addr).await;
     let mut bootstrap = tls_auth_frame(&portal, &first, session_id).to_vec();
-    bootstrap.extend_from_slice(&write_flow_header(open));
+    bootstrap.extend_from_slice(&write_flow_header(open).unwrap());
     first.write_all(&bootstrap).await.unwrap();
     let mut eof = [0u8; 1];
     match first.read(&mut eof).await {
@@ -580,10 +584,13 @@ async fn mismatched_open_leaves_invalid_request_for_later_attach() {
 
     let mut second = connect_test_tls(listen_addr).await;
     let mut attach = tls_auth_frame(&portal, &second, session_id).to_vec();
-    attach.extend_from_slice(&write_flow_header(FlowHeader {
-        role: FlowRole::Attach,
-        ..open
-    }));
+    attach.extend_from_slice(
+        &write_flow_header(FlowHeader {
+            role: FlowRole::Attach,
+            ..open
+        })
+        .unwrap(),
+    );
     second.write_all(&attach).await.unwrap();
     assert_eq!(
         read_flow_result(&mut second).await.unwrap(),

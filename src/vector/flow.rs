@@ -271,8 +271,7 @@ pub(super) async fn write_open_request(
     header: FlowHeader,
     target: &Target,
 ) -> Result<()> {
-    header.validate()?;
-    let flow = write_flow_header(header);
+    let flow = write_flow_header(header)?;
     let mut request = [0u8; AUTH_FRAME_LEN + FLOW_HEADER_LEN + TARGET_MAX_ENCODED_LEN];
     let auth_len = if let Some(auth) = pending_auth {
         request[..AUTH_FRAME_LEN].copy_from_slice(&auth);
@@ -300,8 +299,7 @@ pub(super) async fn write_header(
     pending_auth: Option<AuthFrame>,
     header: FlowHeader,
 ) -> Result<()> {
-    header.validate()?;
-    let flow = write_flow_header(header);
+    let flow = write_flow_header(header)?;
     let mut request = [0u8; AUTH_FRAME_LEN + FLOW_HEADER_LEN];
     let auth_len = if let Some(auth) = pending_auth {
         request[..AUTH_FRAME_LEN].copy_from_slice(&auth);

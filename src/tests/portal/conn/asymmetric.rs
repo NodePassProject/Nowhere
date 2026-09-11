@@ -112,7 +112,7 @@ async fn authenticate_quic(portal: &Portal, conn: &quinn::Connection, session: [
 }
 
 fn request(header: FlowHeader, target: SocketAddr, payload: &[u8]) -> Vec<u8> {
-    let mut out = write_flow_header(header).to_vec();
+    let mut out = write_flow_header(header).unwrap().to_vec();
     if matches!(header.role, FlowRole::Open | FlowRole::Duplex) {
         out.extend_from_slice(&write_request_frame(&Target::ip(target).unwrap()).unwrap());
     }

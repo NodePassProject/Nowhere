@@ -1,7 +1,7 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Collision-free `u32` flow identifier allocation.
+//! Collision-free allocation within the shared 30-bit flow identifier space.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, bail};
 
-use crate::protocol::FlowId;
+use crate::protocol::{FlowId, MAX_FLOW_ID};
 
 #[derive(Debug)]
 pub(super) struct FlowIdAllocator {
@@ -26,17 +26,21 @@ impl FlowIdAllocator {
     }
 
     pub(super) fn allocate(self: &Arc<Self>) -> Result<FlowLease> {
+        self.allocate_with_limit(MAX_FLOW_ID)
+    }
+
+    fn allocate_with_limit(self: &Arc<Self>, max_id: FlowId) -> Result<FlowLease> {
         let mut active = self.active.lock().unwrap_or_else(|lock| lock.into_inner());
-        if active.len() == u32::MAX as usize {
+        if active.len() == max_id as usize {
             bail!("vector::flow_id: flow identifier space exhausted");
         }
         for _ in 0..=active.len() {
-            let id = self.next.fetch_add(1, Ordering::Relaxed);
-            let id = if id == 0 {
-                self.next.fetch_add(1, Ordering::Relaxed)
-            } else {
-                id
-            };
+            let id = self
+                .next
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+                    Some(if id >= max_id { 1 } else { id + 1 })
+                })
+                .unwrap_or_else(|id| id);
             if id != 0 && active.insert(id) {
                 return Ok(FlowLease {
                     id,

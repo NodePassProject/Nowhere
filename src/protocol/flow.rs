@@ -22,6 +22,8 @@ pub const MAX_PORTAL_HOPS: u8 = 7;
 pub type SessionId = [u8; SESSION_ID_LEN];
 /// Flow identifier scoped to one logical session.
 pub type FlowId = u32;
+/// Largest logical-flow identifier representable by every V2 carrier.
+pub const MAX_FLOW_ID: FlowId = 0x3fff_ffff;
 
 /// Relationship of the current physical lane to a logical flow.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -70,8 +72,8 @@ impl FlowHeader {
         if self.hops > MAX_PORTAL_HOPS {
             bail!("protocol::flow::FlowHeader::validate: hop budget exceeds {MAX_PORTAL_HOPS}")
         }
-        if self.flow_id == 0 {
-            bail!("protocol::flow::FlowHeader::validate: zero flow id");
+        if self.flow_id == 0 || self.flow_id > MAX_FLOW_ID {
+            bail!("protocol::flow::FlowHeader::validate: flow id out of range");
         }
         match self.role {
             FlowRole::Duplex if self.uplink != self.downlink => {
@@ -102,16 +104,14 @@ impl FlowHeader {
 
 /// Encodes a header after validating its semantic invariants.
 pub fn encode_flow_header(header: FlowHeader) -> Result<[u8; FLOW_HEADER_LEN]> {
-    header.validate()?;
-    Ok(write_flow_header(header))
+    write_flow_header(header)
 }
 
 /// Encodes a flow header into a fixed stack array.
 ///
-/// Callers accepting untrusted or dynamically assembled metadata should use
-/// [`encode_flow_header`] first. This low-level spelling remains allocation-free
-/// and matches the existing request-building call sites.
-pub fn write_flow_header(header: FlowHeader) -> [u8; FLOW_HEADER_LEN] {
+/// Validates the same semantic invariants as [`encode_flow_header`].
+pub fn write_flow_header(header: FlowHeader) -> Result<[u8; FLOW_HEADER_LEN]> {
+    header.validate()?;
     let flags = header.role as u8
         | (header.kind as u8) << 2
         | (header.uplink as u8) << 3
@@ -120,7 +120,7 @@ pub fn write_flow_header(header: FlowHeader) -> [u8; FLOW_HEADER_LEN] {
     let mut output = [0; FLOW_HEADER_LEN];
     output[0] = flags;
     output[1..].copy_from_slice(&header.flow_id.to_be_bytes());
-    output
+    Ok(output)
 }
 
 /// Decodes exactly one fixed flow header.

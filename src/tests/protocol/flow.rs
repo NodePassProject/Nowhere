@@ -61,7 +61,7 @@ fn every_valid_role_kind_and_carrier_combination_round_trips() {
         for role in [FlowRole::Open, FlowRole::Attach] {
             round_trip(FlowHeader {
                 role,
-                flow_id: u32::MAX,
+                flow_id: MAX_FLOW_ID,
                 kind,
                 uplink: Carrier::TlsTcp,
                 downlink: Carrier::Quic,
@@ -80,7 +80,7 @@ fn every_valid_role_kind_and_carrier_combination_round_trips() {
 }
 
 #[test]
-fn semantic_validation_rejects_zero_ids_and_duplex_carrier_conflicts() {
+fn semantic_validation_rejects_out_of_range_ids_and_duplex_carrier_conflicts() {
     let duplex = FlowHeader {
         role: FlowRole::Duplex,
         flow_id: 1,
@@ -110,6 +110,14 @@ fn semantic_validation_rejects_zero_ids_and_duplex_carrier_conflicts() {
         hops: 0,
     };
     assert!(encode_flow_header(zero).is_err());
+
+    assert!(
+        encode_flow_header(FlowHeader {
+            flow_id: MAX_FLOW_ID + 1,
+            ..zero
+        })
+        .is_err()
+    );
 }
 
 #[test]
@@ -141,6 +149,11 @@ fn decoder_rejects_invalid_ids_lengths_and_semantics() {
         assert!(decode_flow_header(input).is_err());
     }
     assert!(decode_flow_header(&[0, 0, 0, 0, 0]).is_err());
+    for id in [MAX_FLOW_ID + 1, u32::MAX] {
+        let mut bytes = [0; FLOW_HEADER_LEN];
+        bytes[1..].copy_from_slice(&id.to_be_bytes());
+        assert!(decode_flow_header(&bytes).is_err());
+    }
 
     let valid = [0, 0, 0, 0, 1];
     let mut invalid_role = valid;
@@ -192,4 +205,20 @@ fn round_trip(header: FlowHeader) {
     let encoded = encode_flow_header(header).unwrap();
     assert_eq!(encoded.len(), FLOW_HEADER_LEN);
     assert_eq!(decode_flow_header(&encoded).unwrap(), header);
+}
+
+#[test]
+fn both_public_encoders_reject_invalid_ids() {
+    for flow_id in [0, MAX_FLOW_ID + 1, u32::MAX] {
+        let header = FlowHeader {
+            role: FlowRole::Duplex,
+            flow_id,
+            kind: FlowKind::Tcp,
+            uplink: Carrier::TlsTcp,
+            downlink: Carrier::TlsTcp,
+            hops: 0,
+        };
+        assert!(write_flow_header(header).is_err());
+        assert!(encode_flow_header(header).is_err());
+    }
 }
