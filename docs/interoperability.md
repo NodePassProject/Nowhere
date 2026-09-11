@@ -11,6 +11,10 @@ Portal and Vector use the same wire contract. Alternate clients and native
 Portal chains follow it as peers rather than relying on a separately versioned
 SDK.
 
+V2 uses 7-byte Mux headers and 4-byte QUIC UDP base headers (12 bytes for
+fragments), with a shared 30-bit flow ID range. The `nw2` protocol fixes these
+frame layouts; peers and every native Portal hop use the same contract.
+
 ## Endpoint contract
 
 Portal listeners, Vector remotes, and Portal `next` endpoints share two forms:

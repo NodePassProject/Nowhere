@@ -161,7 +161,7 @@ Client -> Portal
 
 +------------+------------+-------------+-------------+-----+
 | AuthFrame  | Mux marker | MuxFrame    | MuxFrame    | ... |
-| 32 bytes   | 0xff       | 8 + N bytes | 8 + N bytes |     |
+| 32 bytes   | 0xff       | 7 + N bytes | 7 + N bytes |     |
 +------------+------------+-------------+-------------+-----+
 
 Reconstructed logical stream
@@ -267,17 +267,17 @@ Mux frame.
 
 ### MuxHeader
 
-Every Mux frame starts with an 8-byte header. A DATA frame carries
+Every Mux frame starts with a 7-byte header. A DATA frame carries
 exactly `value` payload bytes; control frames carry no payload.
 
 ```text
-MuxHeader - 8 bytes
+MuxHeader - 7 bytes
 
- offset  0        1        2               4                       8
-         +--------+--------+---------------+-----------------------+
-         | kind   | code   | value         | flow_id               |
-         | u8     | u8     | u16           | u32                   |
-         +--------+--------+---------------+-----------------------+
+ offset  0        1               3                       7
+         +--------+---------------+-----------------------+
+         | kind   | value         | flow_id               |
+         | u8     | u16           | u32                   |
+         +--------+---------------+-----------------------+
 ```
 
 | `kind` | Name | `value` | `flow_id` |
@@ -285,14 +285,16 @@ MuxHeader - 8 bytes
 | `0x01` | OPEN | opener receive-window extension in 1 KiB units | nonzero |
 | `0x02` | DATA | payload length, 1..65535 | nonzero |
 | `0x03` | WINDOW | returned credit in 1 KiB units | `0` for connection, nonzero for stream |
-| `0x04` | CLOSE | always `0` | nonzero |
+| `0x04` | FIN | always `0` | nonzero |
+| `0x05` | RESET | always `0` | nonzero |
 
-OPEN, DATA, and WINDOW require `code=0`. OPEN carries no payload and extends
+OPEN carries no payload and extends
 the opener's 4 MiB initial stream receive window. The runtime emits DATA
 payloads of at most 32 KiB.
 
-CLOSE carries no payload. `code=0` is FIN half-close and `code=1` is RESET.
-Other codes are invalid.
+FIN and RESET carry no payload. FIN half-closes a logical stream; RESET
+immediately removes it. Other frame kinds are invalid. Every nonzero `flow_id`
+must be at most `0x3fffffff`; the upper two bits of its u32 field must be zero.
 
 WINDOW carries no payload and requires nonzero credit in 1 KiB
 units. A
@@ -300,7 +302,7 @@ WINDOW with `flow_id=0` replenishes connection credit; a nonzero ID replenishes
 that logical stream. Credit that would exceed the configured window closes the
 carrier. A late stream-local WINDOW for an already closed stream is ignored.
 
-DATA for an unknown flow is a carrier error. Late or duplicate CLOSE processing
+DATA for an unknown flow is a carrier error. Late or duplicate FIN/RESET processing
 is idempotent. Closing the physical Mux carrier fails every logical stream on
 that carrier.
 
@@ -382,8 +384,9 @@ Field values:
 | `down` | 4 | `0=TLS/TCP`, `1=QUIC` |
 | `hops` | 7..5 | remaining Portal forwarding budget, `0..7` |
 
-`flow_id` is nonzero and is scoped to `session_id`. The same logical flow uses
-the same ID on OPEN and ATTACH, in MuxHeader, and in QUIC UDP DATAGRAM frames.
+`flow_id` is in `1..=0x3fffffff` and is scoped to `session_id`. Its u32 field's
+upper two bits must be zero. The same logical flow uses the same ID on OPEN
+and ATTACH, in MuxHeader, and in QUIC UDP DATAGRAM frames.
 
 Role semantics:
 
@@ -527,34 +530,28 @@ Every DATAGRAM contains exactly one DATA, FRAGMENT, or CLOSE frame.
 ### Common DATA/CLOSE header
 
 ```text
-QUIC UDP DATA or CLOSE - 5 + N bytes
+QUIC UDP DATA or CLOSE - 4 + N bytes
 
- offset  0                        1                       5
-         +------------------------+-----------------------+
-         | flags                  | flow_id               |
-         | u8                     | u32                   |
-         +------------------------+-----------------------+
+ offset  0                                               4
+         +------------------------------------------------+
+         | type:2 | flow_id:30                             |
+         | u32, network byte order                        |
+         +------------------------------------------------+
          | payload ...                                    |  DATA only
          +------------------------------------------------+
-
-flags byte
-
- bit     7                           2   1       0
-         +-----------------------------+-----------+
-         | reserved, MUST be zero      | type      |
-         | 6 bits                      | 2 bits    |
-         +-----------------------------+-----------+
 ```
 
 | `type` | Name | Payload |
 |---:|---|---|
 | `0b00` | DATA | remaining DATAGRAM bytes; zero length is valid |
-| `0b01` | FRAGMENT | uses the 13-byte header below |
-| `0b10` | CLOSE | none; total DATAGRAM length MUST be 5 |
+| `0b01` | FRAGMENT | uses the 12-byte header below |
+| `0b10` | CLOSE | none; total DATAGRAM length MUST be 4 |
 | `0b11` | invalid | — |
 
-`flow_id` is nonzero. DATA has no payload-length field because the QUIC
-DATAGRAM boundary supplies the length. CLOSE immediately removes the UDP route.
+The common word is `(type << 30) | flow_id`, with type in bits 31..30 and
+`flow_id` in bits 29..0. `flow_id` is in `1..=0x3fffffff`. DATA has no
+payload-length field because the QUIC DATAGRAM boundary supplies the length.
+CLOSE immediately removes the UDP route.
 
 ### Fragment header
 
@@ -562,13 +559,13 @@ Packets that exceed the current QUIC maximum DATAGRAM size are divided into
 2–255 fragments.
 
 ```text
-QUIC UDP FRAGMENT - 13 + N bytes
+QUIC UDP FRAGMENT - 12 + N bytes
 
- offset  0      1            5            9          10        11           13
-         +------+------------+------------+----------+---------+------------+
-         | 0x01 | flow_id    | packet_id  | frag_ix  | count   | total_len  |
-         | u8   | u32        | u32        | u8       | u8      | u16        |
-         +------+------------+------------+----------+---------+------------+
+ offset  0                    4            8          9         10           12
+         +--------------------+------------+----------+---------+------------+
+         | type:2|flow_id:30   | packet_id  | frag_ix  | count   | total_len  |
+         | u32                | u32        | u8       | u8      | u16        |
+         +--------------------+------------+----------+---------+------------+
          | fragment payload, N > 0                                          |
          +------------------------------------------------------------------+
 ```
@@ -600,8 +597,10 @@ ATTACH.
 ## 11. Runtime limits and failure scope
 
 Application sessions impose no fixed TCP, UDP, or pending-pair count limit.
-Flow IDs are unique within their wire identifier space. Byte flow control,
-queue budgets, and pairing/setup timeouts apply.
+Active flow IDs are unique within `1..=0x3fffffff`. Allocation wraps to 1,
+skips IDs held by live leases, and fails when the space is exhausted. Released
+IDs may be reused; this does not provide generation isolation for delayed
+messages. Byte flow control, queue budgets, and pairing/setup timeouts apply.
 
 QUIC bidirectional-stream credit grows with live and pending QUIC flows, with
 setup headroom of max(64, live / 4). A QUIC TCP flow owns one reliable stream;

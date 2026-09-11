@@ -104,7 +104,7 @@ bound their total memory use.
 Per-stream and connection credit plus bounded channel admission limit how much
 one stream can occupy. The finite frame queue has 512 slots, but
 payload admission is capped by the selected connection window; empty
-OPEN/CLOSE/WINDOW frames cannot turn those slots into
+OPEN/FIN/RESET/WINDOW frames cannot turn those slots into
 retained application payload. These are credit ceilings rather than eagerly
 allocated payload buffers.
 
