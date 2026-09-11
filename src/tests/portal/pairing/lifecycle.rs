@@ -275,3 +275,104 @@ async fn pending_pairs_exceed_former_limit_and_release_quic_credit_on_drain() {
     assert!(registry.claims.lock().unwrap().is_empty());
     assert_eq!(registry.quic_stream_credit(session).into_inner(), 64);
 }
+
+#[tokio::test]
+async fn session_claim_admission_is_bounded_and_reusable() {
+    let registry = registry(Duration::from_secs(30));
+    let session = [0x33; SESSION_ID_LEN];
+    let _guard = registry.register_tcp_link(session, Arc::new(Stats::default()));
+    let admission = registry.session_flow_admission(session).unwrap();
+    let _held = admission
+        .clone()
+        .try_acquire_many_owned((SESSION_FLOW_RESOURCE_LIMIT - 1) as u32)
+        .unwrap();
+
+    let first = submit_resource_test_flow(&registry, session, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    let error = submit_resource_test_flow(&registry, session, 2)
+        .await
+        .unwrap_pairing_error();
+    assert_eq!(error.code(), FlowErrorCode::FlowLimit);
+
+    drop(first);
+    assert!(
+        submit_resource_test_flow(&registry, session, 3)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn portal_claim_admission_is_bounded_and_reusable() {
+    let registry = registry(Duration::from_secs(30));
+    let first_session = [0x34; SESSION_ID_LEN];
+    let second_session = [0x35; SESSION_ID_LEN];
+    let stats = Arc::new(Stats::default());
+    let _first_guard = registry.register_tcp_link(first_session, stats.clone());
+    let _second_guard = registry.register_tcp_link(second_session, stats);
+    let _held = registry
+        .claim_admission
+        .clone()
+        .try_acquire_many_owned((PORTAL_FLOW_RESOURCE_LIMIT - 1) as u32)
+        .unwrap();
+
+    let first = submit_resource_test_flow(&registry, first_session, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    let error = submit_resource_test_flow(&registry, second_session, 1)
+        .await
+        .unwrap_pairing_error();
+    assert_eq!(error.code(), FlowErrorCode::FlowLimit);
+
+    drop(first);
+    assert!(
+        submit_resource_test_flow(&registry, second_session, 2)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn quic_stream_credit_is_clamped_to_the_session_claim_budget() {
+    let registry = registry(Duration::from_secs(30));
+    let session = [0x36; SESSION_ID_LEN];
+    let _guard = registry.register_tcp_link(session, Arc::new(Stats::default()));
+    let counter = registry.quic_flow_counter(session).unwrap();
+    counter.store(SESSION_FLOW_RESOURCE_LIMIT * 2, Ordering::Relaxed);
+
+    assert_eq!(
+        registry.quic_stream_credit(session).into_inner(),
+        SESSION_FLOW_RESOURCE_LIMIT as u64
+    );
+}
+
+async fn submit_resource_test_flow(
+    registry: &Arc<PairingRegistry>,
+    session: [u8; SESSION_ID_LEN],
+    flow_id: u32,
+) -> Result<Option<PairedTcp>, PairingError> {
+    let (uplink, _uplink_peer) = tokio::io::duplex(64);
+    let (downlink, _downlink_peer) = tokio::io::duplex(64);
+    registry
+        .submit_tcp(
+            session,
+            header(
+                FlowRole::Duplex,
+                flow_id,
+                FlowKind::Tcp,
+                Carrier::TlsTcp,
+                Carrier::TlsTcp,
+            ),
+            Some(target("target.test:443")),
+            tcp_half("resource"),
+            Some(Box::pin(uplink)),
+            Some(Box::pin(downlink)),
+            None,
+        )
+        .await
+}

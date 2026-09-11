@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use quinn::Connection;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{FlowKind, SessionId, Target};
@@ -198,11 +198,22 @@ pub(in crate::portal) struct PairedTcp {
     pub(in crate::portal) _flow_lease: FlowLease,
 }
 
-#[derive(Default)]
 pub(in crate::portal) struct LinkCounts {
     pub(in crate::portal) tcp: usize,
     pub(in crate::portal) udp: Option<ActiveQuic>,
     pub(in crate::portal) quic_flows: Arc<AtomicUsize>,
+    pub(in crate::portal) flow_admission: Arc<Semaphore>,
+}
+
+impl Default for LinkCounts {
+    fn default() -> Self {
+        Self {
+            tcp: 0,
+            udp: None,
+            quic_flows: Arc::new(AtomicUsize::new(0)),
+            flow_admission: Arc::new(Semaphore::new(super::SESSION_FLOW_RESOURCE_LIMIT)),
+        }
+    }
 }
 
 pub(in crate::portal) struct ActiveQuic {
@@ -211,6 +222,8 @@ pub(in crate::portal) struct ActiveQuic {
 }
 
 pub(in crate::portal) struct FlowClaim {
+    pub(in crate::portal) _portal_admission: OwnedSemaphorePermit,
+    pub(in crate::portal) _session_admission: OwnedSemaphorePermit,
     pub(in crate::portal) quic_count: Option<Arc<AtomicUsize>>,
     pub(in crate::portal) epoch: u64,
     pub(in crate::portal) metadata: Metadata,

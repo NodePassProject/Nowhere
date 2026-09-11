@@ -32,6 +32,7 @@ impl PairingRegistry {
     ) -> Result<Option<PairedTcp>, PairingError> {
         let session_id = session_id.into();
         let quic_count = self.quic_flow_counter(session_id);
+        let session_admission = self.session_flow_admission(session_id);
         if let Err(err) =
             self.validate_header_and_link(session_id, header, FlowKind::Tcp, target.as_ref(), &link)
         {
@@ -81,6 +82,7 @@ impl PairingRegistry {
                 target.clone(),
                 link.quic_generation,
                 quic_count.clone(),
+                session_admission.clone(),
             ) {
                 Ok(claim) => claim,
                 Err(err) => {
@@ -196,6 +198,7 @@ impl PairingRegistry {
                 target.clone(),
                 link.quic_generation,
                 quic_count.clone(),
+                session_admission.clone(),
             ) {
                 Ok(claim) => claim,
                 Err(error) => {

@@ -7,11 +7,11 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::protocol::{
     Carrier, FlowErrorCode, FlowHeader, FlowKind, FlowResult, FlowRole, Target, write_flow_result,
@@ -34,6 +34,8 @@ use self::tcp::reject_tcp_writer;
 use self::udp::reject_udp_downlink_ref;
 
 const FLOW_RESULT_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+const SESSION_FLOW_RESOURCE_LIMIT: usize = 4096;
+const PORTAL_FLOW_RESOURCE_LIMIT: usize = 65_536;
 
 #[derive(Clone, Copy)]
 struct TerminalRejection {
@@ -70,6 +72,7 @@ pub(super) struct PairingRegistry {
     pub(super) udp: Mutex<HashMap<FlowKey, PendingUdp>>,
     pub(super) links: StdMutex<HashMap<SessionKey, LinkCounts>>,
     claims: StdMutex<HashMap<FlowKey, FlowClaim>>,
+    claim_admission: Arc<Semaphore>,
     rejections: StdMutex<HashMap<FlowKey, TerminalRejection>>,
     accepting: AtomicBool,
     pub(super) next_quic_generation: AtomicU64,
@@ -87,6 +90,7 @@ impl PairingRegistry {
             udp: Mutex::new(HashMap::new()),
             links: StdMutex::new(HashMap::new()),
             claims: StdMutex::new(HashMap::new()),
+            claim_admission: Arc::new(Semaphore::new(PORTAL_FLOW_RESOURCE_LIMIT)),
             rejections: StdMutex::new(HashMap::new()),
             accepting: AtomicBool::new(true),
             next_quic_generation: AtomicU64::new(1),
@@ -180,7 +184,8 @@ impl PairingRegistry {
         metadata: Metadata,
         target: Option<Target>,
         quic_generation: Option<u64>,
-        quic_count: Option<Arc<std::sync::atomic::AtomicUsize>>,
+        quic_count: Option<Arc<AtomicUsize>>,
+        session_admission: Option<Arc<Semaphore>>,
     ) -> Result<(u64, bool), PairingError> {
         let mut claims = self.claims.lock().expect("flow claim registry poisoned");
         // The claims lock is the drain/admission linearization point. Once
@@ -218,6 +223,28 @@ impl PairingRegistry {
             return Ok((claim.epoch, false));
         }
         let epoch = self.next_epoch.fetch_add(1, Ordering::Relaxed);
+        let session_admission = session_admission.ok_or_else(|| {
+            PairingError::new(
+                FlowErrorCode::SessionReplaced,
+                "portal::pairing: session disappeared before flow admission",
+            )
+        })?;
+        let session_admission = session_admission.try_acquire_owned().map_err(|_| {
+            PairingError::new(
+                FlowErrorCode::FlowLimit,
+                "portal::pairing: session flow resource limit reached",
+            )
+        })?;
+        let portal_admission = self
+            .claim_admission
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| {
+                PairingError::new(
+                    FlowErrorCode::FlowLimit,
+                    "portal::pairing: Portal flow resource limit reached",
+                )
+            })?;
         let quic_count = quic_count
             .filter(|_| metadata.uplink == Carrier::Quic || metadata.downlink == Carrier::Quic);
         if let Some(count) = &quic_count {
@@ -226,6 +253,8 @@ impl PairingRegistry {
         claims.insert(
             key,
             FlowClaim {
+                _portal_admission: portal_admission,
+                _session_admission: session_admission,
                 quic_count,
                 epoch,
                 metadata,
@@ -238,15 +267,20 @@ impl PairingRegistry {
         Ok((epoch, true))
     }
 
-    fn quic_flow_counter(
-        &self,
-        session_id: SessionKey,
-    ) -> Option<Arc<std::sync::atomic::AtomicUsize>> {
+    fn quic_flow_counter(&self, session_id: SessionKey) -> Option<Arc<AtomicUsize>> {
         self.links
             .lock()
             .expect("link registry poisoned")
             .get(&session_id)
             .map(|counts| counts.quic_flows.clone())
+    }
+
+    fn session_flow_admission(&self, session_id: SessionKey) -> Option<Arc<Semaphore>> {
+        self.links
+            .lock()
+            .expect("link registry poisoned")
+            .get(&session_id)
+            .map(|counts| counts.flow_admission.clone())
     }
 
     pub(super) fn quic_stream_credit(&self, session_id: SessionKey) -> quinn::VarInt {
@@ -259,7 +293,7 @@ impl PairingRegistry {
         // must grow too, otherwise a fixed reserve eventually stalls updates.
         quinn::VarInt::from_u32(
             live.saturating_add((live / 4).max(64))
-                .min(u32::MAX as usize) as u32,
+                .min(SESSION_FLOW_RESOURCE_LIMIT) as u32,
         )
     }
 
