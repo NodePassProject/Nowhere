@@ -25,6 +25,7 @@ use crate::transport::Stats;
 use crate::vector::{PortalClient, PortalClientConfig, Vector};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
+const FULL_DUPLEX_TIMEOUT: Duration = Duration::from_secs(60);
 const ROUTE_POLICY_MATRIX: [(&str, &str); 9] = [
     ("tcp", "tcp"),
     ("tcp", "udp"),
@@ -273,7 +274,9 @@ async fn mux_symmetric_carriers_relay_tcp_and_fragmented_udp() {
 
 #[tokio::test]
 async fn mux_full_duplex_tcp_exceeds_each_direction_credit_window() {
-    const DIRECTION_BYTES: usize = 3 * 1024 * 1024;
+    // The throughput profile grants 16 MiB per stream. Cross that boundary in
+    // both directions so progress depends on returning Mux credit.
+    const DIRECTION_BYTES: usize = 20 * 1024 * 1024;
 
     for carrier in ["tcp", "udp"] {
         let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -295,7 +298,7 @@ async fn mux_full_duplex_tcp_exceeds_each_direction_credit_window() {
             tokio::join!(upload, download);
         });
         let runtime = start_runtime(carrier, carrier, 1).await;
-        timeout(TEST_TIMEOUT, async {
+        timeout(FULL_DUPLEX_TIMEOUT, async {
             let mut stream = TcpStream::connect(runtime.socks).await.unwrap();
             negotiate_socks(&mut stream).await;
             stream
