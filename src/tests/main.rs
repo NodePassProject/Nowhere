@@ -71,10 +71,9 @@ fn parse_command_url_keeps_vector_remote_host() {
         "vector://secret@relay.example:2000?up=udp&down=tcp&socks=127.0.0.1:1080",
     )
     .unwrap();
-    assert_eq!(parsed.url.scheme(), "vector");
-    assert_eq!(parsed.url.host_str(), Some("relay.example"));
-    assert_eq!(parsed.url.port(), Some(2000));
-    assert_eq!(parsed.listen_host, None);
+    assert_eq!(parsed.scheme(), "vector");
+    assert_eq!(parsed.host_str(), Some("relay.example"));
+    assert_eq!(parsed.port(), Some(2000));
 }
 
 #[test]
@@ -86,16 +85,15 @@ fn logger_rejects_unknown_or_empty_levels() {
 }
 
 #[test]
-fn parse_command_url_accepts_empty_listen_host() {
+fn parse_command_url_normalizes_legacy_empty_listen_host() {
     let parsed = parse_command_url("portal://secret@:2000?log=none&dial=::1").unwrap();
 
-    assert_eq!(parsed.url.scheme(), "portal");
-    assert_eq!(parsed.url.username(), "secret");
-    assert_eq!(parsed.url.port(), Some(2000));
-    assert_eq!(parsed.listen_host.as_deref(), Some(""));
+    assert_eq!(parsed.scheme(), "portal");
+    assert_eq!(parsed.username(), "secret");
+    assert_eq!(parsed.host_str(), Some("*"));
+    assert_eq!(parsed.port(), Some(2000));
     assert_eq!(
         parsed
-            .url
             .query_pairs()
             .find(|(key, _)| key == "dial")
             .map(|(_, value)| value.into_owned())
@@ -105,13 +103,13 @@ fn parse_command_url_accepts_empty_listen_host() {
 }
 
 #[test]
-fn parse_command_url_accepts_empty_listen_host_without_userinfo() {
+fn parse_command_url_normalizes_legacy_empty_host_without_userinfo() {
     let parsed = parse_command_url("portal://:2000").unwrap();
 
-    assert_eq!(parsed.url.scheme(), "portal");
-    assert_eq!(parsed.url.username(), "");
-    assert_eq!(parsed.url.port(), Some(2000));
-    assert_eq!(parsed.listen_host.as_deref(), Some(""));
+    assert_eq!(parsed.scheme(), "portal");
+    assert_eq!(parsed.username(), "");
+    assert_eq!(parsed.host_str(), Some("*"));
+    assert_eq!(parsed.port(), Some(2000));
 }
 
 #[test]
@@ -123,9 +121,8 @@ fn parse_command_url_rejects_empty_host_for_explicit_carriers() {
 fn parse_command_url_keeps_normal_hosts() {
     let parsed = parse_command_url("portal://secret@[::]:2000?dial=auto").unwrap();
 
-    assert_eq!(parsed.url.host_str(), Some("[::]"));
-    assert_eq!(parsed.url.port(), Some(2000));
-    assert_eq!(parsed.listen_host, None);
+    assert_eq!(parsed.host_str(), Some("[::]"));
+    assert_eq!(parsed.port(), Some(2000));
 }
 
 #[tokio::test]

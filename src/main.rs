@@ -196,28 +196,24 @@ async fn start(args: Vec<String>) -> Result<()> {
     }
 
     let command_url = parse_command_url(&args[1]).with_context(|| "invalid configuration URL")?;
-    let scheme = command_url.url.scheme().to_string();
+    let scheme = command_url.scheme().to_string();
     if !matches!(scheme.as_str(), "portal" | "vector") {
         bail!("invalid configuration URL: scheme must be portal or vector, found {scheme:?}");
     }
     // Startup only needs `log` here. Each role parses its own configuration,
     // including Portal's intentionally ignored upstream options when `next`
     // is disabled.
-    let query = query_first(&command_url.url, &["log"])
-        .with_context(|| "invalid configuration URL query")?;
+    let query =
+        query_first(&command_url, &["log"]).with_context(|| "invalid configuration URL query")?;
     let logger = init_logger(query.get("log").map(String::as_str))?;
 
     match scheme.as_str() {
         "portal" => {
-            let portal = Portal::new_with_listen_host(
-                command_url.url,
-                command_url.listen_host.as_deref(),
-                logger,
-            )?;
+            let portal = Portal::new(command_url, logger)?;
             portal.run().await
         }
         "vector" => {
-            let vector = Vector::new(command_url.url, logger)?;
+            let vector = Vector::new(command_url, logger)?;
             vector.run().await
         }
         _ => unreachable!("scheme was validated above"),
@@ -239,32 +235,22 @@ fn print_help() {
     );
 }
 
-struct CommandUrl {
-    url: Url,
-    listen_host: Option<String>,
-}
-
-fn parse_command_url(raw: &str) -> Result<CommandUrl> {
+fn parse_command_url(raw: &str) -> Result<Url> {
     validate_endpoint_url_input(raw, "endpoint")?;
     match Url::parse(raw) {
-        Ok(url) => Ok(CommandUrl {
-            url,
-            listen_host: None,
-        }),
+        Ok(url) => Ok(url),
         Err(ParseError::EmptyHost) => {
-            let normalized = normalize_empty_portal_host(raw)
+            let normalized = normalize_legacy_empty_portal_host(raw)
                 .ok_or(ParseError::EmptyHost)
                 .and_then(|url| Url::parse(&url))?;
-            Ok(CommandUrl {
-                url: normalized,
-                listen_host: Some(String::new()),
-            })
+            Ok(normalized)
         }
         Err(err) => Err(err.into()),
     }
 }
 
-fn normalize_empty_portal_host(raw: &str) -> Option<String> {
+/// Converts the V1 compact wildcard alias into the canonical V2 host form.
+fn normalize_legacy_empty_portal_host(raw: &str) -> Option<String> {
     let prefix = "portal://";
     let rest = raw.strip_prefix(prefix)?;
     let authority_len = rest.find(['/', '?', '#']).unwrap_or(rest.len());
@@ -276,10 +262,10 @@ fn normalize_empty_portal_host(raw: &str) -> Option<String> {
         return None;
     }
 
-    let mut normalized = String::with_capacity(raw.len() + "localhost".len());
+    let mut normalized = String::with_capacity(raw.len() + 1);
     normalized.push_str(prefix);
     normalized.push_str(&authority[..host_port_start]);
-    normalized.push_str("localhost");
+    normalized.push('*');
     normalized.push_str(host_port);
     normalized.push_str(suffix);
     Some(normalized)
