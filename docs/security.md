@@ -91,25 +91,25 @@ and DATA for unknown streams close the carrier. Late terminal and credit frames
 for a terminal stream are idempotent.
 
 The transport memory profile bounds Mux stream/connection windows at 4/8,
-8/16, or 16/32 MiB. Mux has no fixed logical-stream count limit. With client `mux=1`,
+8/16, or 16/32 MiB. Each Mux carrier admits at most 4,096 active streams. With client `mux=1`,
 Vector or Portal `next` shares at most eight TLS carriers across both directions,
 reuses idle carriers before creating more, distributes flows by occupancy at capacity,
 and closes a fully idle carrier after 30 seconds. Stream and pending lifecycle
-metadata remain proportional to admitted streams; byte credit bounds DATA, not
-arbitrary OPEN traffic. One
+metadata remain proportional to admitted streams; separate OPEN admission bounds
+metadata that carries no DATA credit. One
 authenticated inbound Mux carrier is subject to the same fully idle timeout.
-Authenticated sessions have no fixed logical-flow count limit. Stream metadata,
-pending pairs, and target sockets grow with concurrency; byte windows do not
-bound their total memory use.
-Per-stream and connection credit plus bounded channel admission limit how much
+The former authenticated-session logical-flow quotas are absent. Independent
+resource admission caps Mux streams, accepted SOCKS clients, and active SOCKS UDP
+targets; byte windows do not bound those resources.
+Per-stream and connection credit plus OPEN admission limit how much
 one stream can occupy. The finite frame queue has 512 slots, but
 payload admission is capped by the selected connection window; empty
 OPEN/FIN/RESET/WINDOW frames cannot turn those slots into
 retained application payload. These are credit ceilings rather than eagerly
 allocated payload buffers.
 
-TCP, UoT, and QUIC flows all follow the same policy: byte budgets and lifecycle
-timeouts apply without fixed application flow-count admission. QUIC expands
+TCP, UoT, and QUIC flows all follow the same policy: byte budgets, lifecycle
+timeouts, and resource admission apply without restoring legacy application quotas. QUIC expands
 stream credit with actual demand instead of preallocating a huge stream ceiling.
 Operators control aggregate exposure through key distribution, host resource
 limits, and network-level admission policy.

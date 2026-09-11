@@ -60,8 +60,8 @@ TLS listener.
 The Mux pool is full duplex and shared by both logical directions. It opens
 carriers lazily, reuses idle carriers, selects the least occupied carrier at
 capacity, and contains at most eight connecting or established carriers per
-session. A fully idle carrier closes after 30 seconds. Logical stream counts
-have no fixed application limit.
+session. A fully idle carrier closes after 30 seconds. There is no legacy
+application stream quota; each carrier has a 4,096-stream resource ceiling.
 
 ## Route contract
 

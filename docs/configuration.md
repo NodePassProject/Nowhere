@@ -235,7 +235,8 @@ they establish another carrier. Establishments may run in parallel and count
 against the same eight slots. At capacity, flows choose the lowest credit/queue
 occupancy, breaking ties by live streams plus pending reservations. Connecting
 carriers also accept reservations to balance cold bursts. Existing streams do not migrate, and a full pool
-continues accepting new streams. There is no fixed Mux stream density or count limit.
+continues accepting new streams until a carrier's 4,096-stream resource ceiling.
+There is no stream-density target.
 A carrier closes after 30 seconds
 fully idle. With `mux=0`, every TLS-carried
 Flow owns one on-demand lane that closes with the Flow. Mux applies when at
@@ -323,19 +324,21 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 | `NOW_RELOAD_INTERVAL` | `1h` | Supplied-certificate reload interval |
 
 TLS Mux shares the transport profile's 4/8, 8/16, or 16/32 MiB stream/connection
-receive windows with QUIC. A Mux carrier has no fixed stream count limit and 512
-queued frame slots; queued payload remains charged against the connection
+receive windows with QUIC. A Mux carrier admits at most 4,096 active streams and
+has 512 queued frame slots; queued payload remains charged against the connection
 window. Each flow has at most one DATA frame queued or being written, so a bulk
 writer cannot fill the shared queue. Receive queues are bounded by byte credit
 without blocking unrelated flows on per-flow frame counts. The application
 shares at most eight carriers across both directions and retires
-fully idle shards after 30 seconds. TCP, UDP, SOCKS associations, and pending
-split pairs have no fixed application flow-count setting. QUIC stream credit
+fully idle shards after 30 seconds. The former TCP, UDP, SOCKS association, and
+pending split-pair application quotas are absent. Independent resource admission
+allows up to 1,024 accepted SOCKS clients and 1,024 active SOCKS UDP targets per
+Vector. QUIC stream credit
 grows with live and pending QUIC
 flows, reserving setup headroom of at least 64 streams or 25% of that count.
-This avoids a fixed active-flow ceiling and excessive eager stream allocation.
+This avoids the former application flow quotas and excessive eager stream allocation.
 Byte budgets and setup, pairing, and idle deadlines apply; per-flow
-metadata and target sockets grow with concurrency.
+metadata and target sockets stay within the independent resource ceilings.
 
 Portal and Vector use the same QUIC profile regardless of the client Mux setting.
 The stream/connection/send windows are respectively 4/8/8 MiB for `memory`,

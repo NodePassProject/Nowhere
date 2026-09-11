@@ -57,8 +57,10 @@ the other family.
 
 Payload memory is controlled by the selected 4/8, 8/16, or 16/32 MiB
 per-stream/per-Mux receive windows, bounded reusable relay-buffer caches, and
-QUIC UDP queue/reassembly limits. Logical TCP, UDP, SOCKS, and pending-pair
-counts have no fixed application cap; metadata and sockets grow with concurrency.
+QUIC UDP queue/reassembly limits. The former logical TCP, UDP, SOCKS, and
+pending-pair application quotas are absent. Implementation safeguards admit at
+most 4,096 active streams per Mux carrier, 1,024 accepted SOCKS clients per
+Vector, and 1,024 active SOCKS UDP targets per Vector.
 TLS
 shards originated with `mux=1` by Vector or a Portal `next` client adapt their
 pool to concurrent flow demand, stop at eight carriers per session
@@ -85,7 +87,8 @@ reseeded before stream exhaustion.
 ### TLS Shard placement
 
 An originating client shares one full-duplex TLS carrier pool across directions.
-Mux and application sessions impose no fixed logical-flow count limit.
+There is no legacy logical-flow quota; each Mux carrier has an independent
+4,096-stream resource ceiling.
 
 ```text
 new flow --> idle carrier? --> reuse
@@ -166,7 +169,7 @@ Functional validation belongs on every deployment platform:
   up a failed pre-commit attempt;
 - negotiated protocol version, credentials, certificate verification, and
   native chains match at both ends;
-- flow limits fail promptly instead of waiting for capacity;
+- resource admission fails promptly instead of waiting for capacity;
 - idle Mux Shards and UDP flows retire at their documented deadlines;
 - graceful shutdown reaches `STOPPED` within the configured deadline;
 - the local TUI discovers the process without exposing credentials or payload.

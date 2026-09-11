@@ -310,7 +310,8 @@ Mux uses an initial 4 MiB stream window and 8 MiB connection window. Each side
 sends one WINDOW to extend its connection window. OPEN advertises the opener's
 stream extension; the receiver returns its stream extension with WINDOW.
 The selected transport profile sets final windows to 4/8, 8/16, or 16/32 MiB.
-There is no fixed Mux logical-stream count limit. Each carrier has 512 queued
+Each carrier admits at most 4,096 active streams as an implementation resource
+ceiling, independent of application flow policy. Each carrier has 512 queued
 outbound frame slots; each stream may have one DATA frame queued or being written.
 Payload must obtain
 both stream and connection credit before it enters the outbound queue.
@@ -339,16 +340,16 @@ credit, receive credit, and outbound frame slots; stream count plus pending
 reservations breaks ties. Connecting slots also accept reservations, so a cold
 burst does not pile onto the first completed handshake. Each slot shares one
 initializer; cancellation allows a waiter to retry it. Failed expansion can
-fall back to an established carrier. There is
-no fixed stream density, latency threshold, background polling, or migration
+fall back to an established carrier. There is no stream-density target, latency
+threshold, background polling, or migration
 of established streams. This favors parallel throughput over minimizing the
 number of carriers for many idle logical streams.
 
 Receive queues use byte-credit admission rather than blocking the carrier reader
 on a per-flow frame count. Every DATA frame consumes at least one KiB of credit,
-bounding queued payload and DATA metadata across the carrier. Stream and lifecycle
-metadata grow with live/pending streams; no fixed stream limit does not mean
-constant process memory. Authentication remains separate from Mux placement. A fully idle carrier closes after 30
+bounding queued payload and DATA metadata across the carrier. Separate OPEN
+admission bounds stream and lifecycle metadata at 4,096 active streams per
+carrier. Authentication remains separate from Mux placement. A fully idle carrier closes after 30
 seconds. Portal applies the same timeout to an authenticated Mux carrier with
 no active streams. Sharding is runtime placement and does not add wire fields.
 
@@ -596,7 +597,10 @@ ATTACH.
 
 ## 11. Runtime limits and failure scope
 
-Application sessions impose no fixed TCP, UDP, or pending-pair count limit.
+The former application-level TCP, UDP, and pending-pair quotas are absent.
+Independent implementation safeguards admit at most 4,096 active streams per
+Mux carrier, 1,024 accepted SOCKS clients per Vector, and 1,024 active SOCKS UDP
+targets per Vector.
 Active flow IDs are unique within `1..=0x3fffffff`. Allocation wraps to 1,
 skips IDs held by live leases, and fails when the space is exhausted. Released
 IDs may be reused; this does not provide generation isolation for delayed

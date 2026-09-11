@@ -101,7 +101,8 @@ Carrier bootstrap                 Logical flow
         +-- QUIC: first stream only        +-- UDP: UoT or QUIC DATAGRAM
 ```
 
-Frames are compact, queues are bounded, and hot-path buffers are reused. See
+Frames are compact, DATA payload queues are bounded by byte credit, and hot-path
+buffers are reused. See
 [Protocol](docs/protocol.md) for the wire contract and
 [Security](docs/security.md) for trust boundaries.
 
