@@ -95,14 +95,16 @@ The transport memory profile bounds Mux stream/connection windows at 4/8,
 Vector or Portal `next` shares at most eight TLS carriers across both directions,
 reuses idle carriers before creating more, distributes flows by occupancy at capacity,
 and closes a fully idle carrier after 30 seconds. Stream and pending lifecycle
-metadata remain proportional to admitted streams. Active streams and pending
-incoming deliveries each have a separate 4,096-entry ceiling, so OPEN/RESET churn
-cannot grow the delivery queue without bound. Queue overflow closes the carrier
-without blocking its reader. One
+metadata remain proportional to admitted streams. Active streams, pending
+incoming deliveries, and terminal deliveries each have a separate 4,096-entry
+ceiling, so OPEN/RESET churn cannot grow either delivery queue without bound.
+Queue overflow closes the carrier without blocking its reader. One
 authenticated inbound Mux carrier is subject to the same fully idle timeout.
 The former authenticated-session logical-flow quotas are absent. Independent
-resource admission caps Mux streams, accepted SOCKS clients, and active SOCKS UDP
-targets; byte windows do not bound those resources.
+resource admission caps Mux streams, accepted SOCKS clients, active SOCKS UDP
+targets, and Portal flow claims. Each authenticated Portal session admits 4,096
+active or pending claims, with 65,536 across the pairing registry; byte windows
+do not bound those resources.
 Per-stream and connection credit plus OPEN admission limit how much
 one stream can occupy. The finite frame queue has 512 slots, but
 payload admission is capped by the selected connection window; empty
@@ -112,7 +114,7 @@ allocated payload buffers.
 
 TCP, UoT, and QUIC flows all follow the same policy: byte budgets, lifecycle
 timeouts, and resource admission apply without restoring legacy application quotas. QUIC expands
-stream credit with actual demand instead of preallocating a huge stream ceiling.
+stream credit with actual demand and clamps it to the session claim budget.
 Operators control aggregate exposure through key distribution, host resource
 limits, and network-level admission policy.
 

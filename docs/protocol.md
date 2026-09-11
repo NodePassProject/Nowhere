@@ -312,7 +312,8 @@ stream extension; the receiver returns its stream extension with WINDOW.
 The selected transport profile sets final windows to 4/8, 8/16, or 16/32 MiB.
 Each carrier admits at most 4,096 active streams as an implementation resource
 ceiling, independent of application flow policy. Each carrier has 512 queued
-outbound frame slots; each stream may have one DATA frame queued or being written.
+outbound frame slots and 4,096 queued terminal-delivery slots; each stream may
+have one DATA frame queued or being written.
 Payload must obtain
 both stream and connection credit before it enters the outbound queue.
 
@@ -348,9 +349,10 @@ number of carriers for many idle logical streams.
 Receive queues use byte-credit admission rather than blocking the carrier reader
 on a per-flow frame count. Every DATA frame consumes at least one KiB of credit,
 bounding queued payload and DATA metadata across the carrier. Separate OPEN
-admission caps active streams and pending incoming deliveries separately at
-4,096 per carrier. A full incoming queue closes the carrier immediately without
-blocking its reader; RESET cannot bypass this queue limit. Authentication remains
+admission caps active streams, pending incoming deliveries, and pending terminal
+deliveries separately at 4,096 per carrier. A full incoming or terminal queue
+closes the carrier immediately without blocking its reader; OPEN/RESET churn
+cannot bypass these queue limits. Authentication remains
 separate from Mux placement. A fully idle carrier closes after 30
 seconds. Portal applies the same timeout to an authenticated Mux carrier with
 no active streams. Sharding is runtime placement and does not add wire fields.
@@ -602,14 +604,16 @@ ATTACH.
 The former application-level TCP, UDP, and pending-pair quotas are absent.
 Independent implementation safeguards admit at most 4,096 active streams per
 Mux carrier, 1,024 accepted SOCKS clients per Vector, and 1,024 active SOCKS UDP
-targets per Vector.
+targets per Vector. Portal admits at most 4,096 active or pending claims per
+authenticated session and 65,536 claims across its pairing registry.
 Active flow IDs are unique within `1..=0x3fffffff`. Allocation wraps to 1,
 skips IDs held by live leases, and fails when the space is exhausted. Released
 IDs may be reused; this does not provide generation isolation for delayed
 messages. Byte flow control, queue budgets, and pairing/setup timeouts apply.
 
 QUIC bidirectional-stream credit grows with live and pending QUIC flows, with
-setup headroom of max(64, live / 4). A QUIC TCP flow owns one reliable stream;
+setup headroom of max(64, live / 4), and is clamped to the 4,096-claim session
+budget. A QUIC TCP flow owns one reliable stream;
 a QUIC UDP flow owns one reliable control stream plus its DATAGRAM route.
 This is sliding transport credit, not a fixed application concurrency ceiling.
 

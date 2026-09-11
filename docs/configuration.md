@@ -333,9 +333,11 @@ shares at most eight carriers across both directions and retires
 fully idle shards after 30 seconds. The former TCP, UDP, SOCKS association, and
 pending split-pair application quotas are absent. Independent resource admission
 allows up to 1,024 accepted SOCKS clients and 1,024 active SOCKS UDP targets per
-Vector. QUIC stream credit
+Vector. Portal pairing admits up to 4,096 active or pending claims per
+authenticated session and 65,536 total. QUIC stream credit
 grows with live and pending QUIC
-flows, reserving setup headroom of at least 64 streams or 25% of that count.
+flows, reserving setup headroom of at least 64 streams or 25% of that count and
+stopping at the per-session claim budget.
 This avoids the former application flow quotas and excessive eager stream allocation.
 Byte budgets and setup, pairing, and idle deadlines apply; per-flow
 Mux metadata and Vector SOCKS target tasks have the resource ceilings described

@@ -60,7 +60,8 @@ per-stream/per-Mux receive windows, bounded reusable relay-buffer caches, and
 QUIC UDP queue/reassembly limits. The former logical TCP, UDP, SOCKS, and
 pending-pair application quotas are absent. Implementation safeguards admit at
 most 4,096 active streams per Mux carrier, 1,024 accepted SOCKS clients per
-Vector, and 1,024 active SOCKS UDP targets per Vector.
+Vector, and 1,024 active SOCKS UDP targets per Vector. Portal pairing admits at
+most 4,096 active or pending claims per authenticated session and 65,536 total.
 TLS
 shards originated with `mux=1` by Vector or a Portal `next` client adapt their
 pool to concurrent flow demand, stop at eight carriers per session
@@ -68,8 +69,9 @@ across both directions, use lowest-occupancy placement, and
 close after 30 seconds fully idle. Frame queue slots do not bypass byte credit. Windows are granted as
 permits and payload is admitted incrementally.
 
-QUIC stream credit grows with live and pending QUIC flows plus setup headroom.
-Pairing and setup deadlines reclaim incomplete requests.
+QUIC stream credit grows with live and pending QUIC flows plus setup headroom,
+then stops at the 4,096-claim session budget. Pairing and setup deadlines reclaim
+incomplete requests.
 
 QUIC uses the shared `throughput` memory profile by default. Select `balanced`
 or `memory` when connection density matters more than a single flow's
