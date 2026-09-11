@@ -162,6 +162,7 @@ impl<R> DatagramReassembler<R> {
         F: FnOnce(u16) -> Option<R>,
     {
         if flow_id == 0
+            || flow_id > crate::protocol::MAX_FLOW_ID
             || fragment.packet_id == 0
             || validate_fragment_metadata(
                 fragment.fragment_index,
