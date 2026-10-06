@@ -33,10 +33,11 @@ certificate to be used securely. Obtain the expected fingerprint through a
 trusted channel, such as the Portal host's certificate log. A generated
 certificate changes when Portal restarts, so its configured pin must be updated.
 
-`nowhere fingerprint <portal-url>` reads a certificate without CA or pin
-validation for inspection. This command sends no Nowhere authentication or Flow
-data and does not establish the certificate's trusted identity. It cannot
-disable verification for Vector, `probe`, or native `next`.
+`nowhere fingerprint <nowhere-url>` accepts a `nowhere://` share link and reads
+a certificate without CA or pin validation for inspection. This command sends
+no Nowhere authentication or Flow data and does not establish the certificate's
+trusted identity. It cannot disable verification for Vector, `probe`, or native
+`next`.
 
 An active man-in-the-middle can present its own certificate, causing the
 command to report the attacker's fingerprint. Copying that result directly

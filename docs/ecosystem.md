@@ -66,7 +66,7 @@ Nowhere uses separate URL schemes for client sharing and service configuration:
 
 | Scheme | Purpose | Used by |
 | --- | --- | --- |
-| `nowhere://` | Share a Portal connection and display name | Anywhere |
+| `nowhere://` | Share a Portal connection and display name | Anywhere, CLI `fingerprint` |
 | `vector://` | Connect to Portal and expose a local SOCKS5 listener | `nowhere` CLI |
 | `portal://` | Configure a server listener and optional forwarding | `nowhere` CLI |
 
@@ -143,8 +143,12 @@ percent-encode the entire inner URL again.
 
 ### CLI configuration URLs
 
-The CLI accepts `portal://` and `vector://`. Vector additionally requires
-`socks=` for its local listener; CLI URLs do not accept display-name fragments.
+Service configuration uses `portal://` and `vector://` in the CLI. Vector
+additionally requires `socks=` for its local listener; these service URLs do
+not accept display-name fragments.
+The `fingerprint` subcommand instead accepts `nowhere://` share links, including
+their display-name fragments, and reads the certificate over TCP. It uses only
+the endpoint, shared key, `morph`, and `sni`; Flow route options are ignored.
 Vector uses the endpoint host as its verified server name by default and
 requires system CA trust unless an exact certificate pin is configured. `sni`
 can override the server name. See [Security](security.md) for Vector's

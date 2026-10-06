@@ -26,17 +26,24 @@ from the operating system.
 Use `fingerprint` to read a Portal's TLS leaf certificate SHA-256 fingerprint:
 
 ```text
-nowhere fingerprint "portal://secret@portal.example:2000"
-nowhere fingerprint "portal://secret@portal.example/tcp:2006/udp:2017?morph=1"
+nowhere fingerprint "nowhere://secret@portal.example:2000#My%20Portal"
+nowhere fingerprint "nowhere://secret@portal.example/tcp:2006/udp:2017?morph=1"
 ```
 
 The output is one line of 64 lowercase hex characters, suitable for `pin=`.
-The command requires a concrete host and a TCP carrier, uses the existing TLS
-handshake timeout, and supports `morph=1` with the Portal's shared key. `sni=`
-selects the requested TLS server name. It retrieves the certificate without
+The command accepts a `nowhere://` share link with a shared key, a concrete host,
+and a TCP carrier. Share-link carrier paths use `tcp` and `udp`; address-family
+suffixes are not supported. It uses the existing TLS handshake timeout and
+supports `morph=1` with the Portal's shared key. `sni=` selects the requested
+TLS server name. It retrieves the certificate without
 CA or pin validation, sends no Nowhere authentication or Flow data, and exits
-after the handshake. Portal listener options such as `tls`, `crt`, and `key`
-do not load local certificate files for this command.
+after the handshake. The display-name fragment and Flow route options such as
+`up`, `down`, and `mux` are ignored. `portal://` listener URLs and `vector://`
+client configuration URLs are not accepted. See
+[share links](ecosystem.md#anywhere-share-links) for the endpoint and key encoding.
+Failures identify configuration errors or the failed connection stage, such as
+DNS resolution, TCP connection, or TLS/Morph handshake, without echoing URL
+values. Common transport causes such as connection refusal are included.
 
 Use `probe` to open one real TCP Flow through the normal Portal client path:
 
@@ -64,6 +71,8 @@ Each instance is printed vertically with lifecycle, endpoint, uptime, logical
 Flow counts, physical carrier counts and traffic totals. The command uses the
 same local discovery and telemetry connection as the TUI, then exits without
 changing instance state or runtime configuration.
+If an instance cannot be read, the command reports its PID and a safe IPC
+failure reason while still printing snapshots from successful instances.
 
 ## Listener lifecycle
 
