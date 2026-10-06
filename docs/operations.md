@@ -14,6 +14,30 @@ Run `nowhere` without a URL and select:
 
 ## One-shot toolbox
 
+Use `generate-key` to print a cryptographically random 256-bit shared key:
+
+```text
+nowhere generate-key
+```
+
+The output is one line of 64 lowercase hex characters encoding 32 random bytes
+from the operating system.
+
+Use `fingerprint` to read a Portal's TLS leaf certificate SHA-256 fingerprint:
+
+```text
+nowhere fingerprint "portal://secret@portal.example:2000"
+nowhere fingerprint "portal://secret@portal.example/tcp:2006/udp:2017?morph=1"
+```
+
+The output is one line of 64 lowercase hex characters, suitable for `pin=`.
+The command requires a concrete host and a TCP carrier, uses the existing TLS
+handshake timeout, and supports `morph=1` with the Portal's shared key. `sni=`
+selects the requested TLS server name. It retrieves the certificate without
+CA or pin validation, sends no Nowhere authentication or Flow data, and exits
+after the handshake. Portal listener options such as `tls`, `crt`, and `key`
+do not load local certificate files for this command.
+
 Use `probe` to open one real TCP Flow through the normal Portal client path:
 
 ```text
