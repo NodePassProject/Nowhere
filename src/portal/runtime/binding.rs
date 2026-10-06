@@ -8,12 +8,16 @@ use super::*;
 impl Portal {
     pub(in crate::portal) fn effective_url(&self) -> String {
         let base = format!(
-            "portal://{}?tls={}&rate={}&etar={}&dial={}&morph={}&socks={}&next={}",
+            "portal://{}?tls={}&rate={}&etar={}&{}&morph={}&socks={}&next={}",
             self.inner.endpoint_addr,
             self.inner.tls_mode,
             self.inner.rate_limit,
             self.inner.etar_limit,
-            self.inner.outbound.dialer_ip(),
+            self.inner
+                .outbound
+                .dial_policy()
+                .to_string()
+                .replace(' ', "&"),
             u8::from(self.inner.morph_keys.is_some()),
             self.inner.outbound.socks_endpoint(),
             self.inner.outbound.next_endpoint(),

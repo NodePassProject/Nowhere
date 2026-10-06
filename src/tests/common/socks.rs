@@ -125,7 +125,7 @@ async fn tcp_connect_uses_only_no_auth_and_preserves_domain() {
     });
 
     let config = parse(&format!("portal://secret@127.0.0.1:2000?socks={endpoint}")).unwrap();
-    let dialer = OutboundDialer::new("auto".to_string(), config);
+    let dialer = OutboundDialer::new("auto".into(), config);
     let target = Target::domain("target.test", 443).unwrap();
     let mut stream = dialer
         .dial_tcp_target(&target, Duration::from_secs(2))
@@ -157,7 +157,7 @@ async fn authenticated_connect_cannot_downgrade_to_no_auth() {
         "portal://secret@127.0.0.1:2000?socks=user:pass@{endpoint}"
     ))
     .unwrap();
-    let dialer = OutboundDialer::new("auto".to_string(), config);
+    let dialer = OutboundDialer::new("auto".into(), config);
     let target = Target::domain("target.test", 443).unwrap();
     assert!(
         dialer
@@ -211,7 +211,7 @@ async fn udp_associate_wraps_payload_and_keeps_control_alive() {
     });
 
     let config = parse(&format!("portal://secret@127.0.0.1:2000?socks={endpoint}")).unwrap();
-    let dialer = OutboundDialer::new("127.0.0.1".to_string(), config);
+    let dialer = OutboundDialer::new("127.0.0.1".into(), config);
     let target = Target::domain("dns.test", 53).unwrap();
     let socket = dialer
         .dial_udp_target(&target, Duration::from_secs(2))
@@ -255,7 +255,7 @@ async fn proxy_failure_never_falls_back_to_direct_target() {
         "portal://secret@127.0.0.1:2000?socks={proxy_addr}"
     ))
     .unwrap();
-    let dialer = OutboundDialer::new("auto".to_string(), config);
+    let dialer = OutboundDialer::new("auto".into(), config);
     let protocol_target = Target::ip(target_addr).unwrap();
     assert!(
         dialer
@@ -290,7 +290,7 @@ async fn udp_association_ends_when_control_connection_closes() {
     });
 
     let config = parse(&format!("portal://secret@127.0.0.1:2000?socks={endpoint}")).unwrap();
-    let dialer = OutboundDialer::new("auto".to_string(), config);
+    let dialer = OutboundDialer::new("auto".into(), config);
     let target = Target::domain("dns.test", 53).unwrap();
     let socket = dialer
         .dial_udp_target(&target, Duration::from_secs(2))
@@ -342,7 +342,7 @@ async fn each_udp_flow_uses_a_distinct_association() {
     });
 
     let config = parse(&format!("portal://secret@127.0.0.1:2000?socks={endpoint}")).unwrap();
-    let dialer = OutboundDialer::new("auto".to_string(), config);
+    let dialer = OutboundDialer::new("auto".into(), config);
     let first_target = Target::domain("one.test", 53).unwrap();
     let first = dialer
         .dial_udp_target(&first_target, Duration::from_secs(2))
@@ -373,4 +373,230 @@ async fn write_test_reply(stream: &mut TcpStream, address: SocketAddr) {
     let mut response = vec![SOCKS_VERSION, 0, 0];
     encode_address(&mut response, &SocksAddress::Ip(address)).unwrap();
     stream.write_all(&response).await.unwrap();
+}
+
+#[tokio::test]
+async fn direct_ip_targets_apply_source_policy_and_reject_legacy_family_conflicts() {
+    use crate::common::DialPolicy;
+    let listener4 = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener6 = match TcpListener::bind("[::1]:0").await {
+        Ok(listener) => Some(listener),
+        Err(error) => {
+            eprintln!("SKIP IPv6 direct IP target: IPv6 loopback unavailable: {error}");
+            None
+        }
+    };
+    for listener in std::iter::once(&listener4).chain(listener6.as_ref()) {
+        let address = listener.local_addr().unwrap();
+        let policy = DialPolicy::DualStack {
+            v4: Some("127.0.0.1".parse().unwrap()),
+            v6: Some("::1".parse().unwrap()),
+        };
+        let dialer = OutboundDialer::new(policy, None);
+        let stream = dialer
+            .dial_tcp_target(&Target::ip(address).unwrap(), Duration::from_secs(2))
+            .await
+            .unwrap();
+        let (_, peer) = listener.accept().await.unwrap();
+        assert_eq!(stream.local_addr().unwrap().ip(), address.ip());
+        assert_eq!(peer.ip(), address.ip());
+        let relay = UdpSocket::bind(SocketAddr::new(address.ip(), 0))
+            .await
+            .unwrap();
+        let target = Target::ip(relay.local_addr().unwrap()).unwrap();
+        let socket = dialer
+            .dial_udp_target(&target, Duration::from_secs(2))
+            .await
+            .unwrap();
+        socket.send(b"direct", &mut Vec::new()).await.unwrap();
+        let mut bytes = [0; 16];
+        let (_, peer) = relay.recv_from(&mut bytes).await.unwrap();
+        assert_eq!(peer.ip(), address.ip());
+        let opposite = if address.is_ipv4() {
+            "::1"
+        } else {
+            "127.0.0.1"
+        };
+        let legacy = OutboundDialer::new(opposite.into(), None);
+        assert!(
+            legacy
+                .dial_tcp_target(&Target::ip(address).unwrap(), Duration::from_secs(2))
+                .await
+                .is_err()
+        );
+        assert!(
+            legacy
+                .dial_udp_target(&target, Duration::from_secs(2))
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn socks_control_and_udp_relay_select_sources_independently() {
+    use crate::common::DialPolicy;
+    let relay = match UdpSocket::bind("[::1]:0").await {
+        Ok(relay) => relay,
+        Err(error) => {
+            eprintln!("SKIP SOCKS cross-family relay: IPv6 loopback unavailable: {error}");
+            return;
+        }
+    };
+    let relay_addr = relay.local_addr().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut control, peer) = listener.accept().await.unwrap();
+        assert_eq!(peer.ip(), "127.0.0.1".parse::<std::net::IpAddr>().unwrap());
+        let mut methods = [0; 3];
+        control.read_exact(&mut methods).await.unwrap();
+        control
+            .write_all(&[SOCKS_VERSION, AUTH_NONE])
+            .await
+            .unwrap();
+        let request = read_test_command(&mut control).await;
+        assert_eq!(request.0, COMMAND_UDP_ASSOCIATE);
+        write_test_reply(&mut control, relay_addr).await;
+        let mut packet = [0; 128];
+        let (size, peer) = relay.recv_from(&mut packet).await.unwrap();
+        assert_eq!(peer.ip(), "::1".parse::<std::net::IpAddr>().unwrap());
+        let (header, _) = parse_udp_header(&packet[..size]).unwrap();
+        assert_eq!(&packet[header..size], b"cross-family");
+        relay.send_to(&packet[..size], peer).await.unwrap();
+        let mut eof = [0];
+        assert_eq!(control.read(&mut eof).await.unwrap(), 0);
+    });
+    let policy = DialPolicy::DualStack {
+        v4: Some("127.0.0.1".parse().unwrap()),
+        v6: Some("::1".parse().unwrap()),
+    };
+    let config = parse(&format!("portal://secret@localhost:2000?socks={proxy}")).unwrap();
+    let dialer = OutboundDialer::new(policy, config);
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let socket = dialer
+            .dial_udp_target(
+                &Target::domain("remote.test", 53).unwrap(),
+                Duration::from_secs(2),
+            )
+            .await
+            .unwrap();
+        socket.send(b"cross-family", &mut Vec::new()).await.unwrap();
+        let mut bytes = [0; 128];
+        let payload = socket.recv(&mut bytes).await.unwrap();
+        assert_eq!(&bytes[payload], b"cross-family");
+        drop(socket);
+        server.await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn socks_tcp_selects_source_without_restricting_the_remote_target_family() {
+    use crate::common::DialPolicy;
+    for bind in ["127.0.0.1:0", "[::1]:0"] {
+        let listener = match TcpListener::bind(bind).await {
+            Ok(listener) => listener,
+            Err(error) if bind.starts_with('[') => {
+                eprintln!("SKIP IPv6 SOCKS TCP source: IPv6 loopback unavailable: {error}");
+                continue;
+            }
+            Err(error) => panic!("bind failed: {error}"),
+        };
+        let proxy = listener.local_addr().unwrap();
+        let target_addr: SocketAddr = if proxy.is_ipv4() {
+            "[2001:db8::1]:443"
+        } else {
+            "192.0.2.1:443"
+        }
+        .parse()
+        .unwrap();
+        let server = tokio::spawn(async move {
+            let (mut control, peer) = listener.accept().await.unwrap();
+            assert_eq!(peer.ip(), proxy.ip());
+            let mut methods = [0; 3];
+            control.read_exact(&mut methods).await.unwrap();
+            control
+                .write_all(&[SOCKS_VERSION, AUTH_NONE])
+                .await
+                .unwrap();
+            let (command, host, port) = read_test_command(&mut control).await;
+            assert_eq!(command, COMMAND_CONNECT);
+            assert_eq!(host, target_addr.ip().to_string());
+            assert_eq!(port, target_addr.port());
+            write_test_reply(&mut control, proxy).await;
+            let mut bytes = [0; 4];
+            control.read_exact(&mut bytes).await.unwrap();
+            control.write_all(&bytes).await.unwrap();
+        });
+        let policy = DialPolicy::DualStack {
+            v4: Some("127.0.0.1".parse().unwrap()),
+            v6: Some("::1".parse().unwrap()),
+        };
+        let config = parse(&format!("portal://secret@localhost:2000?socks={proxy}")).unwrap();
+        let dialer = OutboundDialer::new(policy, config);
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let mut stream = dialer
+                .dial_tcp_target(&Target::ip(target_addr).unwrap(), Duration::from_secs(2))
+                .await
+                .unwrap();
+            assert_eq!(stream.local_addr().unwrap().ip(), proxy.ip());
+            stream.write_all(b"ping").await.unwrap();
+            let mut bytes = [0; 4];
+            stream.read_exact(&mut bytes).await.unwrap();
+            assert_eq!(&bytes, b"ping");
+            server.await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn omitted_source_family_remains_automatic_for_tcp_and_udp() {
+    use crate::common::{DialPolicy, query_first};
+    for (bind, query) in [
+        ("127.0.0.1:0", "dial6=2001:db8::dead"),
+        ("[::1]:0", "dial4=192.0.2.254"),
+    ] {
+        let listener = match TcpListener::bind(bind).await {
+            Ok(listener) => listener,
+            Err(error) if bind.starts_with('[') => {
+                eprintln!("SKIP automatic IPv6 source: IPv6 loopback unavailable: {error}");
+                continue;
+            }
+            Err(error) => panic!("bind failed: {error}"),
+        };
+        let address = listener.local_addr().unwrap();
+        let url = Url::parse(&format!("portal://secret@localhost:2000?{query}")).unwrap();
+        let policy =
+            DialPolicy::from_query(&query_first(&url, &["dial", "dial4", "dial6"]).unwrap())
+                .unwrap();
+        let dialer = OutboundDialer::new(policy, None);
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let stream = dialer
+                .dial_tcp_target(&Target::ip(address).unwrap(), Duration::from_secs(2))
+                .await
+                .unwrap();
+            let (_, peer) = listener.accept().await.unwrap();
+            assert_eq!(peer.ip(), address.ip());
+            assert_eq!(stream.local_addr().unwrap().ip(), address.ip());
+            let receiver = UdpSocket::bind(SocketAddr::new(address.ip(), 0))
+                .await
+                .unwrap();
+            let target = Target::ip(receiver.local_addr().unwrap()).unwrap();
+            let socket = dialer
+                .dial_udp_target(&target, Duration::from_secs(2))
+                .await
+                .unwrap();
+            socket.send(b"automatic", &mut Vec::new()).await.unwrap();
+            let mut bytes = [0; 16];
+            let (size, peer) = receiver.recv_from(&mut bytes).await.unwrap();
+            assert_eq!(&bytes[..size], b"automatic");
+            assert_eq!(peer.ip(), address.ip());
+        })
+        .await
+        .unwrap();
+    }
 }

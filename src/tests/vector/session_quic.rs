@@ -129,3 +129,94 @@ async fn close_rejects_new_quic_sessions_without_dialing() {
     assert!(shutdown.is_cancelled());
     assert!(manager.state.lock().await.is_none());
 }
+
+#[tokio::test]
+async fn native_next_quic_uses_the_matching_dual_stack_source() {
+    use crate::common::{DialPolicy, LogLevel, Logger, new_server_configs_with_reload_interval};
+    for (bind, carrier, source) in [
+        ("127.0.0.1:0", "udp4", "127.0.0.1"),
+        ("[::1]:0", "udp6", "::1"),
+    ] {
+        let server_url = Url::parse("portal://secret@localhost:2000").unwrap();
+        let (_, _, quic_server) = new_server_configs_with_reload_interval(
+            &server_url,
+            Duration::from_secs(60),
+            Logger::new(LogLevel::None, false),
+        )
+        .unwrap();
+        let server = match Endpoint::server(quic_server, bind.parse().unwrap()) {
+            Ok(server) => server,
+            Err(error) if carrier == "udp6" => {
+                eprintln!("SKIP native next IPv6 QUIC source: IPv6 loopback unavailable: {error}");
+                continue;
+            }
+            Err(error) => panic!("bind failed: {error}"),
+        };
+        let address = server.local_addr().unwrap();
+        let policy = DialPolicy::DualStack {
+            v4: Some(
+                if carrier == "udp4" {
+                    "127.0.0.1"
+                } else {
+                    "192.0.2.254"
+                }
+                .parse()
+                .unwrap(),
+            ),
+            v6: Some(
+                if carrier == "udp6" {
+                    "::1"
+                } else {
+                    "2001:db8::dead"
+                }
+                .parse()
+                .unwrap(),
+            ),
+        };
+        let (config, credentials) = PortalClientConfig::from_upstream_authority(
+            &format!("secret@localhost/{carrier}:{}", address.port()),
+            &HashMap::new(),
+            &policy,
+        )
+        .unwrap();
+        let tls = ClientTls::new(&config).unwrap();
+        let manager = QuicManager::new(
+            config,
+            tls,
+            &credentials,
+            [0; crate::protocol::SESSION_ID_LEN],
+            ClientSignals::new(
+                Arc::new(Stats::default()),
+                TelemetryHub::for_current_process(
+                    InstanceRole::Portal,
+                    "test",
+                    "test",
+                    Duration::from_secs(1),
+                ),
+                LatencyTracker::new(),
+            ),
+            CancellationToken::new(),
+        );
+        timeout(Duration::from_secs(3), async {
+            let accept = async { server.accept().await.unwrap().await.unwrap() };
+            let (session, peer) = tokio::join!(manager.get(), accept);
+            let session = session.unwrap();
+            assert_eq!(
+                peer.remote_address().ip(),
+                source.parse::<IpAddr>().unwrap()
+            );
+            assert_eq!(
+                session._endpoint.local_addr().unwrap().ip(),
+                source.parse::<IpAddr>().unwrap()
+            );
+            peer.close(VarInt::from_u32(0), b"test complete");
+            manager
+                .close(Instant::now() + Duration::from_millis(100))
+                .await;
+        })
+        .await
+        .unwrap();
+        server.close(VarInt::from_u32(0), b"test complete");
+        server.wait_idle().await;
+    }
+}

@@ -282,11 +282,11 @@ fn upstream_authority_decodes_reserved_key_bytes_and_ipv6() {
         ("down".to_owned(), "tcp".to_owned()),
     ]);
     let (config, credentials) =
-        PortalClientConfig::from_upstream_authority("part%40key@[::1]:2080", &query, "::2")
+        PortalClientConfig::from_upstream_authority("part%40key@[::1]:2080", &query, &"::2".into())
             .unwrap();
 
     assert_eq!(config.endpoint(), "[::1]:2080");
-    assert_eq!(config.dialer_ip, "::2");
+    assert_eq!(config.dial_policy.to_string(), "dial=::2");
     assert_eq!(
         credentials,
         crate::protocol::Credentials::from_shared_key(b"part@key").unwrap()
@@ -299,7 +299,7 @@ fn upstream_morph_derives_from_the_nested_shared_key() {
     let (config, _) = PortalClientConfig::from_upstream_authority(
         "upstream-key@origin.example:2080",
         &query,
-        "auto",
+        &"auto".into(),
     )
     .unwrap();
     let actual = config.morph_keys.unwrap().udp_keys();
@@ -314,7 +314,7 @@ fn upstream_authority_decodes_the_shared_key_exactly_once() {
     let (_, credentials) = PortalClientConfig::from_upstream_authority(
         "part%2540key@origin.example/udp:2080",
         &query,
-        "auto",
+        &"auto".into(),
     )
     .unwrap();
     assert_eq!(
@@ -329,7 +329,7 @@ fn upstream_authority_accepts_explicit_carriers() {
     let (config, _) = PortalClientConfig::from_upstream_authority(
         "secret@origin.example/tcp6:2006",
         &query,
-        "auto",
+        &"auto".into(),
     )
     .unwrap();
     assert_eq!(config.endpoint(), "origin.example/tcp6:2006");
@@ -347,7 +347,7 @@ fn upstream_authority_requires_unambiguous_key_endpoint_separator() {
         "@origin.example:2080",
     ] {
         assert!(
-            PortalClientConfig::from_upstream_authority(authority, &query, "auto").is_err(),
+            PortalClientConfig::from_upstream_authority(authority, &query, &"auto".into()).is_err(),
             "authority accepted: {authority}"
         );
     }
@@ -383,7 +383,7 @@ fn upstream_authority_rejects_every_invalid_endpoint_shape() {
         ),
         ("bad%GG@origin.example/tcp:2006", "malformed percent escape"),
     ] {
-        let error = PortalClientConfig::from_upstream_authority(authority, &query, "auto")
+        let error = PortalClientConfig::from_upstream_authority(authority, &query, &"auto".into())
             .unwrap_err()
             .to_string();
         assert!(error.contains(expected), "{authority} returned {error:?}");
@@ -392,4 +392,13 @@ fn upstream_authority_rejects_every_invalid_endpoint_shape() {
             "error leaked the next shared key"
         );
     }
+}
+
+#[test]
+fn standalone_vector_ignores_portal_source_parameters() {
+    let config = VectorConfig::from_url(&Url::parse("vector://secret@localhost:2000?socks=127.0.0.1:1080&dial=127.0.0.1&dial4=bad&dial6=bad").unwrap()).unwrap();
+    assert_eq!(
+        config.portal_client_config().dial_policy.to_string(),
+        "dial=auto"
+    );
 }

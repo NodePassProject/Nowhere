@@ -10,7 +10,7 @@ use anyhow::{Result, anyhow, bail};
 use url::Url;
 
 use crate::common::{
-    CarrierEndpoint, DEFAULT_DIALER_IP, ServiceEndpoint, SocksCredentials, first_raw_socks_value,
+    CarrierEndpoint, DialPolicy, ServiceEndpoint, SocksCredentials, first_raw_socks_value,
     format_host_port, parse_host_port, parse_socks_value, query_first, validate_endpoint_url_input,
 };
 use crate::transport::MorphKeys;
@@ -99,14 +99,14 @@ pub(crate) struct PortalClientConfig {
     pub(crate) morph_keys: Option<MorphKeys>,
     pub(crate) sni: Option<String>,
     pub(crate) pin: Option<String>,
-    pub(crate) dialer_ip: String,
+    pub(crate) dial_policy: DialPolicy,
 }
 
 impl PortalClientConfig {
     fn parse(
         url: &Url,
         query: &HashMap<String, String>,
-        dialer_ip: &str,
+        dial_policy: &DialPolicy,
         context: &str,
     ) -> Result<Self> {
         let remote = ServiceEndpoint::parse(url, false, context)?;
@@ -164,14 +164,14 @@ impl PortalClientConfig {
             morph_keys,
             sni,
             pin,
-            dialer_ip: dialer_ip.to_owned(),
+            dial_policy: dial_policy.to_owned(),
         })
     }
 
     pub(crate) fn from_upstream_authority(
         raw_authority: &str,
         query: &HashMap<String, String>,
-        dialer_ip: &str,
+        dial_policy: &DialPolicy,
     ) -> Result<(Self, crate::protocol::Credentials)> {
         validate_endpoint_url_input(&format!("vector://{raw_authority}"), "Portal next endpoint")?;
         let separator = raw_authority.rfind('@').ok_or_else(|| {
@@ -188,13 +188,13 @@ impl PortalClientConfig {
             );
         }
         let credentials = crate::protocol::Credentials::new(&url)?;
-        let config = Self::parse(&url, query, dialer_ip, "Portal next endpoint")?;
+        let config = Self::parse(&url, query, dial_policy, "Portal next endpoint")?;
         Ok((config, credentials))
     }
 
     pub(crate) fn from_probe_url(url: &Url) -> Result<(Self, crate::protocol::Credentials)> {
         let query = vector_query(url)?;
-        let config = Self::parse(url, &query, DEFAULT_DIALER_IP, "Vector endpoint")?;
+        let config = Self::parse(url, &query, &DialPolicy::default(), "Vector endpoint")?;
         parse_rate(query.get("rate").map(String::as_str), "rate")?;
         parse_rate(query.get("etar").map(String::as_str), "etar")?;
         if first_raw_socks_value(url).is_some() {
@@ -293,7 +293,8 @@ pub(crate) struct VectorConfig {
 impl VectorConfig {
     pub(super) fn from_url(url: &Url) -> Result<Self> {
         let query = vector_query(url)?;
-        let portal = PortalClientConfig::parse(url, &query, DEFAULT_DIALER_IP, "Vector endpoint")?;
+        let portal =
+            PortalClientConfig::parse(url, &query, &DialPolicy::default(), "Vector endpoint")?;
         let rate_mbps = parse_rate(query.get("rate").map(String::as_str), "rate")?;
         let etar_mbps = parse_rate(query.get("etar").map(String::as_str), "etar")?;
         let socks = SocksListenConfig::from_url(url)?;
@@ -323,7 +324,7 @@ impl VectorConfig {
             morph_keys: self.morph_keys.clone(),
             sni: self.sni.clone(),
             pin: self.pin.clone(),
-            dialer_ip: DEFAULT_DIALER_IP.to_owned(),
+            dial_policy: DialPolicy::default(),
         }
     }
 

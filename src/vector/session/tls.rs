@@ -10,7 +10,7 @@ use tokio::task::JoinSet;
 
 pub(in crate::vector) struct TlsManager {
     endpoint: Option<(String, crate::common::AddressFamily)>,
-    dialer_ip: String,
+    dial_policy: crate::common::DialPolicy,
     tls: ClientTls,
     auth_key: AuthKey,
     session_id: SessionId,
@@ -54,7 +54,7 @@ impl TlsManager {
             endpoint: config
                 .tcp_endpoint()
                 .map(|endpoint| (config.remote.carrier_addr(endpoint), endpoint.family)),
-            dialer_ip: config.dialer_ip.clone(),
+            dial_policy: config.dial_policy.clone(),
             tls,
             auth_key: credentials.auth_key,
             session_id,
@@ -222,7 +222,7 @@ impl TlsManager {
             .ok_or_else(|| anyhow!("vector::session::TlsManager: TCP carrier is not configured"))?;
         let (stream, exporter) = self
             .tls
-            .connect_tcp(endpoint, &self.dialer_ip, *family)
+            .connect_tcp(endpoint, &self.dial_policy, *family)
             .await?;
         let latency = self.latency.register();
         latency.update_tcp(stream.get_ref().0.get_ref());

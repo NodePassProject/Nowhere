@@ -19,9 +19,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
-use crate::common::{
-    AddressFamily, certificate_sha256, dial_tcp_from_local_ip_family, handshake_timeout,
-};
+use crate::common::{AddressFamily, certificate_sha256, dial_tcp_with_policy, handshake_timeout};
 use crate::protocol::{ALPN, TLS_EXPORTER_LEN, TlsExporter};
 use crate::transport::{MorphKeys, MorphTcpStream};
 
@@ -108,13 +106,12 @@ impl ClientTls {
     pub(super) async fn connect_tcp(
         &self,
         endpoint: &str,
-        dialer_ip: &str,
+        dial_policy: &crate::common::DialPolicy,
         family: AddressFamily,
     ) -> Result<(TlsStream<MorphTcpStream<TcpStream>>, TlsExporter)> {
-        let stream =
-            dial_tcp_from_local_ip_family(dialer_ip, endpoint, handshake_timeout(), family)
-                .await
-                .with_context(|| format!("vector::tls::connect_tcp: failed to dial {endpoint}"))?;
+        let stream = dial_tcp_with_policy(dial_policy, endpoint, handshake_timeout(), family)
+            .await
+            .with_context(|| format!("vector::tls::connect_tcp: failed to dial {endpoint}"))?;
         stream
             .set_nodelay(true)
             .context("vector::tls::connect_tcp: failed to set TCP_NODELAY")?;

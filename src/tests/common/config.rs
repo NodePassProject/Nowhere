@@ -45,15 +45,6 @@ fn query_first_preserves_literal_slash_and_plus_and_validates_the_selected_value
 }
 
 #[test]
-fn init_dialer_ip_accepts_only_ip_literals() {
-    assert_eq!(init_dialer_ip(Some("127.0.0.1")), "127.0.0.1");
-    assert_eq!(init_dialer_ip(Some("::1")), "::1");
-    assert_eq!(init_dialer_ip(Some(DEFAULT_DIALER_IP)), DEFAULT_DIALER_IP);
-    assert_eq!(init_dialer_ip(Some("example.com")), DEFAULT_DIALER_IP);
-    assert_eq!(init_dialer_ip(None), DEFAULT_DIALER_IP);
-}
-
-#[test]
 fn rate_limit_converts_mbps_to_bytes_per_second() {
     assert_eq!(rate_limit_bytes_per_second(-1), 0);
     assert_eq!(rate_limit_bytes_per_second(0), 0);

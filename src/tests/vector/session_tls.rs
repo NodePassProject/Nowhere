@@ -300,3 +300,91 @@ async fn idle_retirement_reports_failure_that_closed_carrier_first() {
     );
     assert!(manager.mux.lock().await.is_empty());
 }
+
+#[tokio::test]
+async fn native_next_tls_uses_the_matching_dual_stack_source() {
+    use crate::common::{DialPolicy, LogLevel, Logger, new_server_configs_with_reload_interval};
+    for (bind, carrier, source) in [
+        ("127.0.0.1:0", "tcp4", "127.0.0.1"),
+        ("[::1]:0", "tcp6", "::1"),
+    ] {
+        let listener = match tokio::net::TcpListener::bind(bind).await {
+            Ok(listener) => listener,
+            Err(error) if carrier == "tcp6" => {
+                eprintln!("SKIP native next IPv6 TLS source: IPv6 loopback unavailable: {error}");
+                continue;
+            }
+            Err(error) => panic!("bind failed: {error}"),
+        };
+        let address = listener.local_addr().unwrap();
+        let server_url = Url::parse("portal://secret@localhost:2000").unwrap();
+        let (_, tls_server, _) = new_server_configs_with_reload_interval(
+            &server_url,
+            Duration::from_secs(60),
+            Logger::new(LogLevel::None, false),
+        )
+        .unwrap();
+        let policy = DialPolicy::DualStack {
+            v4: Some(
+                if carrier == "tcp4" {
+                    "127.0.0.1"
+                } else {
+                    "192.0.2.254"
+                }
+                .parse()
+                .unwrap(),
+            ),
+            v6: Some(
+                if carrier == "tcp6" {
+                    "::1"
+                } else {
+                    "2001:db8::dead"
+                }
+                .parse()
+                .unwrap(),
+            ),
+        };
+        let (config, credentials) = PortalClientConfig::from_upstream_authority(
+            &format!("secret@localhost/{carrier}:{}", address.port()),
+            &HashMap::new(),
+            &policy,
+        )
+        .unwrap();
+        let tls = ClientTls::new(&config).unwrap();
+        let manager = TlsManager::new(
+            &config,
+            tls,
+            &credentials,
+            [0; crate::protocol::SESSION_ID_LEN],
+            ClientSignals::new(
+                Arc::new(Stats::default()),
+                TelemetryHub::for_current_process(
+                    InstanceRole::Portal,
+                    "test",
+                    "test",
+                    Duration::from_secs(1),
+                ),
+                LatencyTracker::new(),
+            ),
+        );
+        timeout(Duration::from_secs(3), async {
+            let server = async {
+                let (stream, peer) = listener.accept().await.unwrap();
+                assert_eq!(peer.ip(), source.parse::<IpAddr>().unwrap());
+                tokio_rustls::TlsAcceptor::from(tls_server)
+                    .accept(stream)
+                    .await
+                    .unwrap()
+            };
+            let (lane, _server) = tokio::join!(manager.connect_lane(), server);
+            let lane = lane.unwrap();
+            assert_eq!(
+                lane.stream.get_ref().0.get_ref().local_addr().unwrap().ip(),
+                source.parse::<IpAddr>().unwrap()
+            );
+        })
+        .await
+        .unwrap();
+        manager.close().await;
+    }
+}

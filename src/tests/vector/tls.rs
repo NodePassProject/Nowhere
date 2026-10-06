@@ -47,7 +47,7 @@ async fn client_prefers_fixed_v2_alpn() {
         .unwrap()
         .connect_tcp(
             &endpoint.to_string(),
-            "auto",
+            &"auto".into(),
             crate::common::AddressFamily::Any,
         )
         .await
@@ -133,7 +133,7 @@ async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<()> {
     let result = ClientTls::new(&config(&raw))?
         .connect_tcp(
             &endpoint.to_string(),
-            "auto",
+            &"auto".into(),
             crate::common::AddressFamily::Any,
         )
         .await
@@ -169,7 +169,7 @@ async fn tcp_server_without_nw2_is_rejected() {
             .unwrap()
             .connect_tcp(
                 &endpoint.to_string(),
-                "auto",
+                &"auto".into(),
                 crate::common::AddressFamily::Any
             )
             .await

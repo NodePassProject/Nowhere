@@ -195,3 +195,23 @@ fn operator_metadata_preserves_ports_and_effective_options_without_secrets() {
         "socks=<redacted>"
     );
 }
+
+#[test]
+fn dual_stack_source_summary_retains_only_valid_family_values() {
+    assert_eq!(
+        config_summary("dial4=127.0.0.1 dial6=::1 key=secret"),
+        "dial4=127.0.0.1 dial6=::1"
+    );
+    assert_eq!(
+        config_summary("dial4=auto dial6=auto"),
+        "dial4=auto dial6=auto"
+    );
+    assert_eq!(
+        config_summary("dial4=0.0.0.0 dial6=::"),
+        "dial4=0.0.0.0 dial6=::"
+    );
+    assert_eq!(
+        config_summary("dial4=::1 dial6=127.0.0.1 dial6=::ffff:192.0.2.1 dial4=secret dial6=bad"),
+        ""
+    );
+}

@@ -374,7 +374,7 @@ fn mix_test_client(
     let (config, credentials) = PortalClientConfig::from_upstream_authority(
         &format!("secret@127.0.0.1:{portal_port}"),
         &query,
-        "auto",
+        &"auto".into(),
     )
     .unwrap();
     PortalClient::with_session_id(

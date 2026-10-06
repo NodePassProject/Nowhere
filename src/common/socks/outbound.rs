@@ -3,7 +3,7 @@
 
 //! Direct-or-SOCKS5 TCP/UDP connection establishment and proxy address retry.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
@@ -18,29 +18,29 @@ use super::protocol::{
     COMMAND_CONNECT, COMMAND_UDP_ASSOCIATE, SocksAddress, negotiate, send_command, udp_header,
 };
 use super::udp::{OutboundUdpSocket, SocksUdpAssociation};
-use crate::common::network::{connect_tcp_addr, connect_udp_addr, filter_addrs, parse_local_ip};
+use crate::common::network::{connect_tcp_addr, connect_udp_addr, filter_addrs_for_family};
+use crate::common::{AddressFamily, DialPolicy, dial_tcp_with_policy, dial_udp_with_policy};
 use crate::common::{LatencyGuard, LatencyTracker};
-use crate::common::{dial_tcp_from_local_ip, dial_udp_from_local_ip};
 use crate::protocol::Target;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OutboundDialer {
-    dialer_ip: String,
+    dial_policy: DialPolicy,
     socks: Option<SocksConfig>,
     latency: Arc<LatencyTracker>,
 }
 
 impl OutboundDialer {
-    pub(crate) fn new(dialer_ip: String, socks: Option<SocksConfig>) -> Self {
+    pub(crate) fn new(dial_policy: DialPolicy, socks: Option<SocksConfig>) -> Self {
         Self {
-            dialer_ip,
+            dial_policy,
             socks,
             latency: LatencyTracker::new(),
         }
     }
 
-    pub(crate) fn dialer_ip(&self) -> &str {
-        &self.dialer_ip
+    pub(crate) fn dial_policy(&self) -> &DialPolicy {
+        &self.dial_policy
     }
 
     pub(crate) fn socks_endpoint(&self) -> String {
@@ -67,16 +67,19 @@ impl OutboundDialer {
             return match target {
                 Target::Ip(address) => tokio::time::timeout(
                     timeout,
-                    connect_tcp_addr(parse_local_ip(&self.dialer_ip), *address),
+                    connect_tcp_addr(self.dial_policy.local_ip(address.ip())?, *address),
                 )
                 .await
                 .map_err(|_| anyhow!("common::socks::OutboundDialer::dial_tcp: dial timeout"))?
                 .map(OutboundTcpStream::direct),
-                Target::Domain { .. } => {
-                    dial_tcp_from_local_ip(&self.dialer_ip, &target.to_string(), timeout)
-                        .await
-                        .map(OutboundTcpStream::direct)
-                }
+                Target::Domain { .. } => dial_tcp_with_policy(
+                    &self.dial_policy,
+                    &target.to_string(),
+                    timeout,
+                    AddressFamily::Any,
+                )
+                .await
+                .map(OutboundTcpStream::direct),
             };
         };
         let target = SocksAddress::from_target(target);
@@ -94,13 +97,13 @@ impl OutboundDialer {
             return match target {
                 Target::Ip(address) => tokio::time::timeout(
                     timeout,
-                    connect_udp_addr(parse_local_ip(&self.dialer_ip), *address),
+                    connect_udp_addr(self.dial_policy.local_ip(address.ip())?, *address),
                 )
                 .await
                 .map_err(|_| anyhow!("common::socks::OutboundDialer::dial_udp: dial timeout"))?
                 .map(OutboundUdpSocket::Direct),
                 Target::Domain { .. } => {
-                    dial_udp_from_local_ip(&self.dialer_ip, &target.to_string(), timeout)
+                    dial_udp_with_policy(&self.dial_policy, &target.to_string(), timeout)
                         .await
                         .map(OutboundUdpSocket::Direct)
                 }
@@ -117,17 +120,17 @@ impl OutboundDialer {
         config: &SocksConfig,
         target: &SocksAddress,
     ) -> Result<OutboundTcpStream> {
-        let local_ip = parse_local_ip(&self.dialer_ip);
-        let addrs = resolve_proxy(config, local_ip).await?;
+        let addrs = resolve_proxy(config, &self.dial_policy).await?;
         let mut last_err = None;
         for addr in addrs {
-            let mut stream = match connect_tcp_addr(local_ip, addr).await {
-                Ok(stream) => stream,
-                Err(err) => {
-                    last_err = Some(err);
-                    continue;
-                }
-            };
+            let mut stream =
+                match connect_tcp_addr(self.dial_policy.local_ip(addr.ip())?, addr).await {
+                    Ok(stream) => stream,
+                    Err(err) => {
+                        last_err = Some(err);
+                        continue;
+                    }
+                };
             if let Err(err) = negotiate(&mut stream, config.credentials()).await {
                 last_err = Some(err);
                 continue;
@@ -151,12 +154,11 @@ impl OutboundDialer {
         config: &SocksConfig,
         target: SocksAddress,
     ) -> Result<OutboundUdpSocket> {
-        let local_ip = parse_local_ip(&self.dialer_ip);
-        let addrs = resolve_proxy(config, local_ip).await?;
+        let addrs = resolve_proxy(config, &self.dial_policy).await?;
         let mut last_err = None;
         for addr in addrs {
             match self
-                .open_socks_udp_candidate(config, target.clone(), local_ip, addr)
+                .open_socks_udp_candidate(config, target.clone(), addr)
                 .await
             {
                 Ok(association) => return Ok(OutboundUdpSocket::Socks(association)),
@@ -172,10 +174,10 @@ impl OutboundDialer {
         &self,
         config: &SocksConfig,
         target: SocksAddress,
-        local_ip: Option<IpAddr>,
         proxy_addr: SocketAddr,
     ) -> Result<SocksUdpAssociation> {
-        let mut control = connect_tcp_addr(local_ip, proxy_addr).await?;
+        let mut control =
+            connect_tcp_addr(self.dial_policy.local_ip(proxy_addr.ip())?, proxy_addr).await?;
         negotiate(&mut control, config.credentials()).await?;
         let unspecified = if proxy_addr.is_ipv4() {
             SocksAddress::Ip(SocketAddr::from(([0, 0, 0, 0], 0)))
@@ -184,8 +186,9 @@ impl OutboundDialer {
         };
         let mut relay = send_command(&mut control, COMMAND_UDP_ASSOCIATE, &unspecified).await?;
         relay.replace_unspecified_ip(proxy_addr.ip());
-        let relay_addr = resolve_relay(&relay, local_ip).await?;
-        let socket = connect_udp_addr(local_ip, relay_addr).await?;
+        let relay_addr = resolve_relay(&relay, &self.dial_policy).await?;
+        let socket =
+            connect_udp_addr(self.dial_policy.local_ip(relay_addr.ip())?, relay_addr).await?;
         let target_header = udp_header(&target)?;
         let latency = self.latency.register();
         latency.update_tcp(&control);
@@ -266,25 +269,25 @@ impl AsyncWrite for OutboundTcpStream {
     }
 }
 
-async fn resolve_proxy(config: &SocksConfig, local_ip: Option<IpAddr>) -> Result<Vec<SocketAddr>> {
+async fn resolve_proxy(config: &SocksConfig, policy: &DialPolicy) -> Result<Vec<SocketAddr>> {
     let endpoint = config.endpoint();
     let addrs = lookup_host(endpoint.as_str())
         .await
         .context("common::socks::resolve_proxy: failed to resolve proxy endpoint")?;
-    let addrs = filter_addrs(addrs, local_ip);
+    let addrs = filter_addrs_for_family(addrs, policy, AddressFamily::Any);
     if addrs.is_empty() {
         bail!("common::socks::resolve_proxy: no proxy address matches dial address family");
     }
     Ok(addrs)
 }
 
-async fn resolve_relay(relay: &SocksAddress, local_ip: Option<IpAddr>) -> Result<SocketAddr> {
+async fn resolve_relay(relay: &SocksAddress, policy: &DialPolicy) -> Result<SocketAddr> {
     match relay {
         SocksAddress::Ip(addr) => {
             if addr.port() == 0 {
                 bail!("common::socks::resolve_relay: proxy returned zero relay port");
             }
-            if local_ip.is_some_and(|ip| ip.is_ipv4() != addr.is_ipv4()) {
+            if !policy.accepts(addr.ip()) {
                 bail!("common::socks::resolve_relay: relay address family conflicts with dial");
             }
             Ok(*addr)
@@ -297,7 +300,7 @@ async fn resolve_relay(relay: &SocksAddress, local_ip: Option<IpAddr>) -> Result
             let addrs = lookup_host(endpoint.as_str())
                 .await
                 .context("common::socks::resolve_relay: failed to resolve relay endpoint")?;
-            filter_addrs(addrs, local_ip)
+            filter_addrs_for_family(addrs, policy, AddressFamily::Any)
                 .into_iter()
                 .next()
                 .ok_or_else(|| anyhow!("common::socks::resolve_relay: no matching relay address"))

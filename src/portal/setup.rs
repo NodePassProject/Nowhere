@@ -10,8 +10,8 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::common::{
-    DEFAULT_RATE_LIMIT, Logger, OutboundDialer, ServiceEndpoint, SocksConfig,
-    first_raw_query_value, init_dialer_ip, new_server_configs_with_reload_interval, query_first,
+    DEFAULT_RATE_LIMIT, DialPolicy, Logger, OutboundDialer, ServiceEndpoint, SocksConfig,
+    first_raw_query_value, new_server_configs_with_reload_interval, query_first,
     rate_limit_bytes_per_second, resolve_bind_addrs,
 };
 use crate::protocol::Credentials;
@@ -24,7 +24,7 @@ use super::listener::configure_transport;
 use super::{NetworkMode, Portal, PortalInner, UdpFlowLimits, admission, outbound::PortalOutbound};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
-    "tls", "crt", "key", "rate", "etar", "dial", "morph", "socks", "next", "log",
+    "tls", "crt", "key", "rate", "etar", "dial", "dial4", "dial6", "morph", "socks", "next", "log",
 ];
 const PORTAL_UPSTREAM_PARAMETERS: &[&str] = &["up", "down", "mux", "sni", "pin"];
 
@@ -74,7 +74,8 @@ impl Portal {
             .map_err(|e| anyhow::anyhow!("Portal configuration: invalid runtime setting: {e}"))?;
         let network_mode =
             NetworkMode::from_carriers(service_endpoint.has_tcp(), service_endpoint.has_udp());
-        let dialer_ip = init_dialer_ip(query.get("dial").map(String::as_str));
+        let dial_policy = DialPolicy::from_query(&query)
+            .map_err(|e| anyhow::anyhow!("Portal configuration: {e}"))?;
         let socks = SocksConfig::from_url(&parsed_url)
             .map_err(|e| anyhow::anyhow!("Portal configuration: invalid socks parameter: {e}"))?;
         let next = match query.get("next").map(String::as_str) {
@@ -89,7 +90,9 @@ impl Portal {
                 let raw = first_raw_query_value(&parsed_url, "next")
                     .expect("decoded next came from the raw query");
                 Some(PortalClientConfig::from_upstream_authority(
-                    raw, &query, &dialer_ip,
+                    raw,
+                    &query,
+                    &dial_policy,
                 )?)
             }
         };
@@ -154,7 +157,7 @@ impl Portal {
             },
         );
         let telemetry_summary = format!(
-            "listen={endpoint_addr} tls={tls_mode} rate={rate_limit} etar={etar_limit} dial={dialer_ip} morph={} socks={socks_endpoint} {next_summary}",
+            "listen={endpoint_addr} tls={tls_mode} rate={rate_limit} etar={etar_limit} {dial_policy} morph={} socks={socks_endpoint} {next_summary}",
             u8::from(morph),
         );
         let telemetry = TelemetryHub::for_current_process(
@@ -172,7 +175,7 @@ impl Portal {
                 telemetry.clone(),
                 CancellationToken::new(),
             )?),
-            None => PortalOutbound::network(OutboundDialer::new(dialer_ip, socks)),
+            None => PortalOutbound::network(OutboundDialer::new(dial_policy, socks)),
         };
 
         Ok(Self {
@@ -244,12 +247,6 @@ fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<(
     let has_key = query.contains_key("key");
     if (tls_is_ca && !(has_crt && has_key)) || (!tls_is_ca && (has_crt || has_key)) {
         anyhow::bail!("crt and key are required exactly when tls=2");
-    }
-    if let Some(dial) = query.get("dial")
-        && dial != "auto"
-        && dial.parse::<std::net::IpAddr>().is_err()
-    {
-        anyhow::bail!("dial must be auto or an IP literal");
     }
     Ok(())
 }

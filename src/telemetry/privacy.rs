@@ -59,6 +59,17 @@ pub(crate) fn config_summary(value: &str) -> String {
                 "dial" if value == "auto" || value.parse::<std::net::IpAddr>().is_ok() => {
                     value.to_owned()
                 }
+                "dial4" if value == "auto" || value.parse::<std::net::Ipv4Addr>().is_ok() => {
+                    value.to_owned()
+                }
+                "dial6"
+                    if value == "auto"
+                        || value
+                            .parse::<std::net::Ipv6Addr>()
+                            .is_ok_and(|ip| ip.to_ipv4_mapped().is_none()) =>
+                {
+                    value.to_owned()
+                }
                 "sni"
                     if value.len() <= 253
                         && value

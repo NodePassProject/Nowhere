@@ -30,7 +30,10 @@ fn empty_host_listens_on_both_wildcard_families() {
         ]
     );
     assert_eq!(portal.inner.udp_bind_addrs, portal.inner.tcp_bind_addrs);
-    assert_eq!(portal.inner.outbound.dialer_ip(), "127.0.0.1");
+    assert_eq!(
+        portal.inner.outbound.dial_policy().to_string(),
+        "dial=127.0.0.1"
+    );
     assert_eq!(portal.inner.network_mode, NetworkMode::Mix);
     assert_eq!(
         portal.effective_url(),
@@ -56,14 +59,14 @@ fn explicit_wildcard_host_selects_one_address_family() {
         ipv4.inner.tcp_bind_addrs,
         vec![SocketAddr::from(([0, 0, 0, 0], 2000))]
     );
-    assert_eq!(ipv4.inner.outbound.dialer_ip(), "auto");
+    assert_eq!(ipv4.inner.outbound.dial_policy().to_string(), "dial=auto");
 
     assert_eq!(ipv6.inner.endpoint_addr, "[::]:2000");
     assert_eq!(
         ipv6.inner.tcp_bind_addrs,
         vec![SocketAddr::from(([0u16; 8], 2000))]
     );
-    assert_eq!(ipv6.inner.outbound.dialer_ip(), "::1");
+    assert_eq!(ipv6.inner.outbound.dial_policy().to_string(), "dial=::1");
 }
 
 #[test]
@@ -219,7 +222,10 @@ fn native_next_reuses_transport_identity_and_source_binding() {
         test_logger(),
     )
     .unwrap();
-    assert_eq!(portal.inner.outbound.dialer_ip(), "127.0.0.2");
+    assert_eq!(
+        portal.inner.outbound.dial_policy().to_string(),
+        "dial=127.0.0.2"
+    );
     assert_eq!(portal.inner.outbound.next_endpoint(), "[::1]:2080");
     assert_eq!(
         portal.inner.outbound.next_transport().as_deref(),
@@ -555,4 +561,67 @@ fn telemetry_metadata_retains_portal_socks_endpoint_without_credentials() {
     for secret in ["shared-secret", "user", "password"] {
         assert!(!encoded.contains(secret));
     }
+}
+
+#[test]
+fn dual_stack_sources_are_validated_and_rendered_for_every_outbound_path() {
+    for (query, summary) in [
+        ("dial4=127.0.0.1", "dial4=127.0.0.1 dial6=auto"),
+        ("dial6=%3A%3A1", "dial4=auto dial6=::1"),
+        ("dial4=auto&dial6=auto", "dial4=auto dial6=auto"),
+        (
+            "dial4=127.0.0.1&dial4=bad&dial6=::1",
+            "dial4=127.0.0.1 dial6=::1",
+        ),
+    ] {
+        for route in [
+            "",
+            "&socks=localhost:1080",
+            "&next=upstream@localhost/tcp4:2080",
+            "&next=upstream@localhost/udp6:2080",
+        ] {
+            let portal = Portal::new(
+                Url::parse(&format!("portal://secret@127.0.0.1:2000?{query}{route}")).unwrap(),
+                test_logger(),
+            )
+            .unwrap();
+            assert_eq!(portal.inner.outbound.dial_policy().to_string(), summary);
+            let output = portal.effective_url();
+            assert!(output.contains(&summary.replace(' ', "&")), "{output}");
+            assert!(!output.contains("&dial="), "{output}");
+            assert!(
+                portal
+                    .inner
+                    .telemetry
+                    .descriptor()
+                    .config_summary
+                    .contains(summary)
+            );
+            assert!(!output.contains("secret"));
+        }
+    }
+    for query in [
+        "dial=auto&dial4=auto",
+        "dial6=auto&dial=::1",
+        "dial4=",
+        "dial6=127.0.0.1",
+        "dial6=::ffff:192.0.2.1",
+    ] {
+        assert!(
+            Portal::new(
+                Url::parse(&format!("portal://secret@127.0.0.1:2000?{query}")).unwrap(),
+                test_logger()
+            )
+            .is_err(),
+            "{query}"
+        );
+    }
+    assert!(
+        Portal::new(
+            Url::parse("portal://secret@127.0.0.1:2000?dial4=192.0.2.254&dial6=2001:db8::1")
+                .unwrap(),
+            test_logger()
+        )
+        .is_ok()
+    );
 }

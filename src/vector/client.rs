@@ -91,8 +91,8 @@ impl PortalClient {
         self.config.endpoint()
     }
 
-    pub(crate) fn dialer_ip(&self) -> &str {
-        &self.config.dialer_ip
+    pub(crate) fn dial_policy(&self) -> &crate::common::DialPolicy {
+        &self.config.dial_policy
     }
 
     pub(crate) fn effective_route(&self) -> String {

@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::anyhow;
 use tokio::time::Instant;
 
-use crate::common::OutboundDialer;
+use crate::common::{DialPolicy, OutboundDialer};
 use crate::protocol::{MAX_PORTAL_HOPS, SetupResult, Target};
 use crate::vector::{OpenFlowError, PortalClient};
 
@@ -79,10 +79,10 @@ impl PortalOutbound {
         }
     }
 
-    pub(super) fn dialer_ip(&self) -> &str {
+    pub(super) fn dial_policy(&self) -> &DialPolicy {
         match self {
-            Self::Network(dialer) => dialer.dialer_ip(),
-            Self::Portal(client) => client.dialer_ip(),
+            Self::Network(dialer) => dialer.dial_policy(),
+            Self::Portal(client) => client.dial_policy(),
         }
     }
 

@@ -111,7 +111,7 @@ impl QuicManager {
         .context("vector::session::QuicManager::connect: Portal DNS failed")?;
         let addresses = crate::common::filter_addrs_for_family(
             resolved,
-            parse_local_ip(&self.config.dialer_ip),
+            &self.config.dial_policy,
             endpoint.family,
         );
         if addresses.is_empty() {
@@ -128,7 +128,7 @@ impl QuicManager {
     }
 
     async fn connect_address(&self, address: SocketAddr) -> Result<Arc<QuicSession>> {
-        let bind = match parse_local_ip(&self.config.dialer_ip) {
+        let bind = match self.config.dial_policy.local_ip(address.ip())? {
             Some(ip) => SocketAddr::new(ip, 0),
             None if address.is_ipv4() => {
                 SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)

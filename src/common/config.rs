@@ -4,14 +4,12 @@
 //! Runtime defaults and helpers for environment and URL-derived configuration.
 
 use std::collections::HashMap;
-use std::net::IpAddr;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use percent_encoding::percent_decode_str;
 use url::Url;
 
-pub const DEFAULT_DIALER_IP: &str = "auto";
 pub const DEFAULT_RATE_LIMIT: i32 = 0;
 pub const DEFAULT_TELEMETRY_INTERVAL: Duration = Duration::from_secs(1);
 pub const MIN_TELEMETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -80,13 +78,6 @@ pub fn env_duration(name: &str, default_value: Duration) -> Duration {
         .ok()
         .and_then(|s| humantime::parse_duration(&s).ok())
         .unwrap_or(default_value)
-}
-
-pub fn init_dialer_ip(value: Option<&str>) -> String {
-    match value {
-        Some(ip) if ip != DEFAULT_DIALER_IP && ip.parse::<IpAddr>().is_ok() => ip.to_string(),
-        _ => DEFAULT_DIALER_IP.to_string(),
-    }
 }
 
 pub fn rate_limit_bytes_per_second(mbps: i32) -> u64 {

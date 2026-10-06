@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use tokio::net::{TcpSocket, TcpStream, UdpSocket, lookup_host};
 
-use super::{AddressFamily, CarrierEndpoint, DEFAULT_DIALER_IP};
+use super::{AddressFamily, CarrierEndpoint, DialPolicy};
 
 pub(crate) fn resolve_bind_addrs(host: &str, endpoint: CarrierEndpoint) -> Result<Vec<SocketAddr>> {
     let mut addrs = if host == "*" || host.is_empty() {
@@ -66,37 +66,18 @@ pub fn bind_udp_addrs(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     Ok(vec![addr])
 }
 
-pub async fn dial_tcp_from_local_ip(
-    dialer_ip: &str,
-    target: &str,
-    timeout: Duration,
-) -> Result<TcpStream> {
-    dial_tcp_from_local_ip_family(dialer_ip, target, timeout, AddressFamily::Any).await
-}
-
-pub(crate) async fn dial_tcp_from_local_ip_family(
-    dialer_ip: &str,
+pub(crate) async fn dial_tcp_with_policy(
+    policy: &DialPolicy,
     target: &str,
     timeout: Duration,
     family: AddressFamily,
 ) -> Result<TcpStream> {
     let connect = async {
-        let local_ip = parse_local_ip(dialer_ip);
-        let mut last_err = None;
         let addrs = lookup_host(target).await.with_context(|| {
             format!("common::util::dial_tcp_from_local_ip: failed to resolve target: {target}")
         })?;
 
-        for addr in filter_addrs_for_family(addrs, local_ip, family) {
-            match connect_tcp_addr(local_ip, addr).await {
-                Ok(stream) => return Ok(stream),
-                Err(err) => last_err = Some(err),
-            }
-        }
-
-        Err(last_err.unwrap_or_else(|| {
-            anyhow!("common::util::dial_tcp_from_local_ip: no target address matches configured address family")
-        }))
+        connect_tcp_candidates(policy, filter_addrs_for_family(addrs, policy, family)).await
     };
 
     tokio::time::timeout(timeout, connect)
@@ -104,27 +85,21 @@ pub(crate) async fn dial_tcp_from_local_ip_family(
         .map_err(|_| anyhow!("common::util::dial_tcp_from_local_ip: dial timeout"))?
 }
 
-pub async fn dial_udp_from_local_ip(
-    dialer_ip: &str,
+pub(crate) async fn dial_udp_with_policy(
+    policy: &DialPolicy,
     target: &str,
     timeout: Duration,
 ) -> Result<UdpSocket> {
     let connect = async {
-        let local_ip = parse_local_ip(dialer_ip);
-        let mut last_err = None;
         let addrs = lookup_host(target).await.with_context(|| {
             format!("common::util::dial_udp_from_local_ip: failed to resolve target: {target}")
         })?;
 
-        for addr in filter_addrs(addrs, local_ip) {
-            match connect_udp_addr(local_ip, addr).await {
-                Ok(socket) => return Ok(socket),
-                Err(err) => last_err = Some(err),
-            }
-        }
-
-        Err(last_err
-            .unwrap_or_else(|| anyhow!("common::util::dial_udp_from_local_ip: no target address")))
+        connect_udp_candidates(
+            policy,
+            filter_addrs_for_family(addrs, policy, AddressFamily::Any),
+        )
+        .await
     };
 
     tokio::time::timeout(timeout, connect)
@@ -132,34 +107,42 @@ pub async fn dial_udp_from_local_ip(
         .map_err(|_| anyhow!("common::util::dial_udp_from_local_ip: dial timeout"))?
 }
 
-pub(crate) fn parse_local_ip(dialer_ip: &str) -> Option<IpAddr> {
-    if dialer_ip == DEFAULT_DIALER_IP {
-        None
-    } else {
-        dialer_ip.parse::<IpAddr>().ok()
+async fn connect_tcp_candidates(
+    policy: &DialPolicy,
+    addresses: Vec<SocketAddr>,
+) -> Result<TcpStream> {
+    let mut last_err = None;
+    for address in addresses {
+        match connect_tcp_addr(policy.local_ip(address.ip())?, address).await {
+            Ok(stream) => return Ok(stream),
+            Err(error) => last_err = Some(error),
+        }
     }
+    Err(last_err.unwrap_or_else(|| anyhow!("common::util::dial_tcp_from_local_ip: no target address matches configured address family")))
 }
 
-pub(crate) fn filter_addrs(
-    addrs: impl Iterator<Item = SocketAddr>,
-    local_ip: Option<IpAddr>,
-) -> Vec<SocketAddr> {
-    addrs
-        .filter(|addr| match local_ip {
-            Some(ip) => ip.is_ipv4() == addr.is_ipv4(),
-            None => true,
-        })
-        .collect()
+async fn connect_udp_candidates(
+    policy: &DialPolicy,
+    addresses: Vec<SocketAddr>,
+) -> Result<UdpSocket> {
+    let mut last_err = None;
+    for address in addresses {
+        match connect_udp_addr(policy.local_ip(address.ip())?, address).await {
+            Ok(socket) => return Ok(socket),
+            Err(error) => last_err = Some(error),
+        }
+    }
+    Err(last_err
+        .unwrap_or_else(|| anyhow!("common::util::dial_udp_from_local_ip: no target address")))
 }
 
 pub(crate) fn filter_addrs_for_family(
     addrs: impl Iterator<Item = SocketAddr>,
-    local_ip: Option<IpAddr>,
+    policy: &DialPolicy,
     family: AddressFamily,
 ) -> Vec<SocketAddr> {
-    filter_addrs(addrs, local_ip)
-        .into_iter()
-        .filter(|addr| family.accepts(addr.ip()))
+    addrs
+        .filter(|addr| policy.accepts(addr.ip()) && family.accepts(addr.ip()))
         .collect()
 }
 
