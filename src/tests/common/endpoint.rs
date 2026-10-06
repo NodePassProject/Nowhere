@@ -150,6 +150,8 @@ fn raw_input_validation_rejects_dot_segments_before_url_normalization() {
         "portal://key@*/tcp:2006/./udp:2017",
         "portal://key@*/tcp:2006/%2e%2e/udp:2017",
         "vector://key@example.com/%2E./tcp:2006?socks=:1080",
+        "nowhere://key@example.com/tcp:2006/../udp:2017#Name",
+        "nowhere://key@example.com/tcp:2006/%2e%2e/udp:2017#Name",
     ] {
         let error = validate_endpoint_url_input(raw, "test")
             .unwrap_err()

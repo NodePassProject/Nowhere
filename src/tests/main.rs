@@ -35,20 +35,49 @@ async fn commands_reject_extra_arguments() {
 }
 
 #[tokio::test]
-async fn fingerprint_requires_exactly_one_portal_url() {
+async fn fingerprint_requires_exactly_one_share_link() {
     for arguments in [
         vec!["nowhere", "fingerprint"],
         vec![
             "nowhere",
             "fingerprint",
-            "portal://secret@localhost:2000",
+            "nowhere://secret@localhost:2000#My%20Portal",
             "extra",
         ],
     ] {
         let error = start(arguments.into_iter().map(str::to_owned).collect())
             .await
             .unwrap_err();
-        assert_eq!(error.to_string(), "usage: nowhere fingerprint <portal-url>");
+        assert_eq!(
+            error.to_string(),
+            "usage: nowhere fingerprint <nowhere-url>"
+        );
+    }
+}
+
+#[tokio::test]
+async fn fingerprint_rejects_invalid_raw_share_links_before_network_access() {
+    for raw in [
+        "nowhere://secret@localhost/tcp:2006/../udp:2017",
+        "nowhere://secret@localhost/tcp:2006/%2e%2e/udp:2017#Name",
+        "nowhere://secret@localhost/tcp:secret",
+        "portal://secret@localhost:2000",
+        "vector://secret@localhost:2000",
+    ] {
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            start(vec![
+                "nowhere".to_owned(),
+                "fingerprint".to_owned(),
+                raw.to_owned(),
+            ]),
+        )
+        .await
+        .expect("invalid share link attempted network access")
+        .unwrap_err();
+        let message = format_start_error(&error);
+        assert!(message.contains("invalid Nowhere share link"), "{message}");
+        assert!(!message.contains("secret"), "{message}");
     }
 }
 
@@ -74,9 +103,15 @@ async fn probe_requires_exactly_a_url_and_target() {
 
 #[tokio::test]
 async fn toolbox_errors_do_not_expose_configuration_values() {
-    for url in [
-        "vector://secret@localhost:2000?up=secret",
-        "vector://secret@localhost/tcp:secret",
+    for (url, expected) in [
+        (
+            "vector://secret@localhost:2000?up=secret",
+            "up must be tcp, udp, or mix",
+        ),
+        (
+            "vector://secret@localhost/tcp:secret",
+            "carrier port must contain decimal digits only",
+        ),
     ] {
         let error = start(vec![
             "nowhere".to_owned(),
@@ -87,6 +122,7 @@ async fn toolbox_errors_do_not_expose_configuration_values() {
         .await
         .unwrap_err();
         let message = format_start_error(&error);
+        assert!(message.contains(expected), "{message}");
         assert!(!message.contains("secret"), "{message}");
     }
 }
@@ -100,7 +136,7 @@ fn help_text_documents_usage_and_configuration_surface() {
         "nowhere probe <vector-url> <target>",
         "nowhere status",
         "nowhere generate-key",
-        "nowhere fingerprint <portal-url>",
+        "nowhere fingerprint <nowhere-url>",
         "nowhere <portal-url>",
         "nowhere <vector-url>",
         "-h | --help",
@@ -108,6 +144,7 @@ fn help_text_documents_usage_and_configuration_surface() {
         "portal://<key>@<listen-host>:<port>",
         "<carrier>:<port>",
         "vector://<key>@<portal-host>:<port>",
+        "nowhere://<key>@<portal-host>:<port>",
         "tls=1|2",
         "tcp4, udp4",
         "tcp6, udp6",

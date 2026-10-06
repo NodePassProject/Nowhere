@@ -37,17 +37,17 @@ pub fn generate_key() -> Result<String> {
 }
 
 pub async fn fingerprint(url: Url) -> Result<()> {
-    let config = PortalClientConfig::from_fingerprint_url(&url).map_err(|_| {
-        anyhow::anyhow!("invalid Portal URL; expected a concrete host and valid TLS/Morph options")
-    })?;
+    let config =
+        PortalClientConfig::from_fingerprint_url(&url).context("invalid Nowhere share link")?;
     if config.tcp_endpoint().is_none() {
-        bail!("fingerprint requires a TCP carrier in the Portal URL");
+        bail!("fingerprint requires a TCP carrier in the Nowhere share link");
     }
     let fingerprint = crate::vector::fetch_certificate_fingerprint(&config)
         .await
-        .map_err(|_| {
+        .map_err(|error| {
             anyhow::anyhow!(
-                "failed to retrieve Portal TLS certificate; check the endpoint and Morph key"
+                "failed to retrieve Portal TLS certificate: {}",
+                connection_failure_reason(&error)
             )
         })?;
     println!("{fingerprint}");
@@ -153,12 +153,14 @@ fn carrier_name(carrier: Carrier) -> &'static str {
 pub async fn probe(url: Url, raw_target: &str) -> Result<bool> {
     let target = raw_target
         .parse::<Target>()
-        .map_err(|_| anyhow::anyhow!("invalid TCP target; expected host:port or [IPv6]:port"))?;
+        .context("invalid TCP target; expected host:port or [IPv6]:port")?;
     let client = parse_client(&url)?;
-    let report = client
-        .probe(target)
-        .await
-        .map_err(|_| anyhow::anyhow!("failed to initialize Flow client"))?;
+    let report = client.probe(target).await.map_err(|error| {
+        anyhow::anyhow!(
+            "failed to initialize Flow client: {}",
+            connection_failure_reason(&error)
+        )
+    })?;
     let ready = matches!(report.result, Ok(SetupResult::Ready));
     let result = match &report.result {
         Ok(SetupResult::Ready) if report.cleanup.is_ok() => "OK".to_owned(),
@@ -199,15 +201,18 @@ pub async fn status() -> Result<()> {
         let semaphore = semaphore.clone();
         tasks.spawn(async move {
             let _permit = semaphore.acquire_owned().await.expect("status semaphore");
-            read_status(instance).await
+            (instance.pid, read_status(instance).await)
         });
     }
     let mut items = Vec::new();
-    let mut failures = 0;
+    let mut failures = Vec::new();
     while let Some(joined) = tasks.join_next().await {
         match joined {
-            Ok(Ok(item)) => items.push(item),
-            Ok(Err(_)) | Err(_) => failures += 1,
+            Ok((_, Ok(item))) => items.push(item),
+            Ok((pid, Err(error))) => {
+                failures.push(format!("PID {pid}: {}", connection_failure_reason(&error)))
+            }
+            Err(_) => failures.push("status task failed".to_owned()),
         }
     }
     items.sort_by_key(|item| (item.role, item.pid, item.id.clone()));
@@ -217,8 +222,13 @@ pub async fn status() -> Result<()> {
         }
         println!("{}", status_panel(item));
     }
-    if failures > 0 {
-        bail!("{failures} local instance(s) could not be read");
+    if !failures.is_empty() {
+        failures.sort();
+        bail!(
+            "{} local instance(s) could not be read: {}",
+            failures.len(),
+            failures.join("; ")
+        );
     }
     Ok(())
 }
@@ -335,16 +345,158 @@ fn format_duration(value: Duration) -> String {
 }
 
 fn parse_client(url: &Url) -> Result<ToolboxClient> {
-    let query = crate::query_first(url, &["log"])
-        .map_err(|_| anyhow::anyhow!("invalid configuration query"))?;
+    let query = crate::query_first(url, &["log"]).context("invalid configuration query")?;
     if !matches!(
         query.get("log").map(String::as_str),
         None | Some("none" | "debug" | "info" | "warn" | "error")
     ) {
         bail!("log must be none, debug, info, warn, or error");
     }
-    ToolboxClient::parse(url)
-        .map_err(|_| anyhow::anyhow!("invalid Vector configuration or TLS policy"))
+    ToolboxClient::parse(url).context("invalid Vector configuration")
+}
+
+fn connection_failure_reason(error: &anyhow::Error) -> String {
+    let messages: Vec<_> = error.chain().map(ToString::to_string).collect();
+    let stage = [
+        (
+            "common::util::dial_tcp_from_local_ip: failed to resolve target:",
+            "DNS resolution failed",
+        ),
+        (
+            "common::util::dial_tcp_from_local_ip: dial timeout",
+            "TCP connection timed out",
+        ),
+        (
+            "vector::tls::connect_tcp: TLS handshake timeout",
+            "TLS/Morph handshake timed out",
+        ),
+        (
+            "vector::tls::connect_tcp: invalid negotiated protocol",
+            "Portal did not negotiate nw2 ALPN",
+        ),
+        (
+            "vector::tls::ClientTls::new: system root loading failed:",
+            "system CA loading failed",
+        ),
+        (
+            "vector::tls::ClientTls::new: invalid system root",
+            "invalid system CA certificate",
+        ),
+        (
+            "vector::tls::ClientTls::new: no system trust roots available",
+            "no system CA trust roots available",
+        ),
+        (
+            "vector::tls::ClientTls::new: invalid TLS server name",
+            "invalid TLS server name",
+        ),
+        (
+            "Portal did not provide a TLS certificate",
+            "Portal did not provide a TLS certificate",
+        ),
+        ("telemetry snapshot timed out", "IPC status read timed out"),
+        ("telemetry: hello timed out", "IPC hello timed out"),
+        (
+            "telemetry: discovered registry disappeared",
+            "IPC registry unavailable",
+        ),
+        (
+            "telemetry: invalid discovered registry",
+            "invalid IPC registry",
+        ),
+        (
+            "telemetry: discovered registry identity mismatch",
+            "IPC registry identity mismatch",
+        ),
+        (
+            "telemetry: hello identity does not match discovered registry",
+            "IPC service identity mismatch",
+        ),
+        (
+            "telemetry: service rejected connection:",
+            "IPC service rejected connection",
+        ),
+        (
+            "telemetry rejected status:",
+            "IPC service rejected status request",
+        ),
+        (
+            "telemetry: service did not begin with hello",
+            "invalid IPC hello",
+        ),
+        (
+            "telemetry: failed to decode JSON frame",
+            "invalid IPC message",
+        ),
+        ("telemetry: failed to read frame", "IPC message read failed"),
+        (
+            "telemetry: failed to write frame",
+            "IPC subscription write failed",
+        ),
+        (
+            "telemetry: timed out writing frame",
+            "IPC subscription write timed out",
+        ),
+        ("partial frame timeout", "IPC message read timed out"),
+        (
+            "vector::tls::connect_tcp: TLS handshake failed",
+            "TLS/Morph handshake failed",
+        ),
+        (
+            "vector::tls::connect_tcp: TLS exporter failed",
+            "TLS exporter failed",
+        ),
+        (
+            "vector::tls::connect_tcp: failed to dial",
+            "TCP connection failed",
+        ),
+        (
+            "vector::PortalClient::new: failed to generate logical session ID:",
+            "session randomness unavailable",
+        ),
+        (
+            "vector::PortalClient::new: failed to build client TLS policy",
+            "client TLS policy initialization failed",
+        ),
+    ]
+    .into_iter()
+    .find_map(|(prefix, reason)| {
+        messages
+            .iter()
+            .any(|message| message.starts_with(prefix))
+            .then_some(reason)
+    })
+    .unwrap_or("connection or local IPC failed");
+    let detail = error.chain().find_map(|cause| {
+        let tls_error = cause.downcast_ref::<rustls::Error>().or_else(|| {
+            cause
+                .downcast_ref::<std::io::Error>()?
+                .get_ref()?
+                .downcast_ref::<rustls::Error>()
+        });
+        if let Some(error) = tls_error {
+            return Some(match error {
+                rustls::Error::InvalidCertificate(_) => "certificate validation failed",
+                rustls::Error::NoCertificatesPresented => "peer provided no certificate",
+                rustls::Error::AlertReceived(_) => "peer sent a TLS alert",
+                _ => "TLS protocol error",
+            });
+        }
+        cause.downcast_ref::<std::io::Error>().and_then(|error| {
+            use std::io::ErrorKind;
+            match error.kind() {
+                ErrorKind::ConnectionRefused => Some("connection refused"),
+                ErrorKind::ConnectionReset => Some("connection reset"),
+                ErrorKind::TimedOut => Some("operation timed out"),
+                ErrorKind::PermissionDenied => Some("permission denied"),
+                ErrorKind::NotFound => Some("endpoint or registry not found"),
+                ErrorKind::UnexpectedEof => Some("peer closed the connection"),
+                ErrorKind::BrokenPipe => Some("connection closed"),
+                _ => None,
+            }
+        })
+    });
+    detail.map_or_else(|| stage.to_owned(), |detail| format!("{stage}: {detail}"))
 }
 
 #[cfg(test)]

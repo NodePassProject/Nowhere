@@ -87,7 +87,7 @@ impl ServiceEndpoint {
         };
         for endpoint in [self.tcp, self.udp].into_iter().flatten() {
             if !endpoint.family.accepts(ip) {
-                bail!("{context}: address family does not match host {ip}");
+                bail!("{context}: address family does not match host");
             }
         }
         Ok(())
@@ -128,7 +128,10 @@ pub fn validate_endpoint_url_input(raw: &str, context: &str) -> Result<()> {
     let Some((scheme, remainder)) = raw.split_once("://") else {
         return Ok(());
     };
-    if !scheme.eq_ignore_ascii_case("portal") && !scheme.eq_ignore_ascii_case("vector") {
+    if !scheme.eq_ignore_ascii_case("portal")
+        && !scheme.eq_ignore_ascii_case("vector")
+        && !scheme.eq_ignore_ascii_case("nowhere")
+    {
         return Ok(());
     }
     let endpoint = remainder
@@ -156,11 +159,11 @@ fn parse_carrier_path(
         if is_dot_segment(segment) {
             bail!("{context}: carrier path must not contain '.' or '..' segments");
         }
-        let (carrier, raw_port) = segment.split_once(':').ok_or_else(|| {
-            anyhow!("{context}: carrier segment {segment:?} must use CARRIER:PORT")
-        })?;
+        let (carrier, raw_port) = segment
+            .split_once(':')
+            .ok_or_else(|| anyhow!("{context}: carrier segment must use CARRIER:PORT"))?;
         if raw_port.is_empty() || !raw_port.bytes().all(|byte| byte.is_ascii_digit()) {
-            bail!("{context}: carrier port in {segment:?} must contain decimal digits only");
+            bail!("{context}: carrier port must contain decimal digits only");
         }
         let port = raw_port
             .parse::<u16>()
@@ -174,9 +177,7 @@ fn parse_carrier_path(
             "udp" => ("UDP", &mut udp, AddressFamily::Any),
             "udp4" => ("UDP", &mut udp, AddressFamily::V4),
             "udp6" => ("UDP", &mut udp, AddressFamily::V6),
-            _ => bail!(
-                "{context}: unknown carrier {carrier:?}; expected tcp, tcp4, tcp6, udp, udp4, or udp6"
-            ),
+            _ => bail!("{context}: unknown carrier; expected tcp, tcp4, tcp6, udp, udp4, or udp6"),
         };
         if slot.is_some() {
             bail!("{context}: {name} carrier is declared more than once");

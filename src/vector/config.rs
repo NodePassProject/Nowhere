@@ -193,11 +193,28 @@ impl PortalClientConfig {
     }
 
     pub(crate) fn from_fingerprint_url(url: &Url) -> Result<Self> {
-        if url.scheme() != "portal" || url.password().is_some() || url.fragment().is_some() {
-            bail!("fingerprint requires a Portal URL without a password or fragment");
+        if url.scheme() != "nowhere" {
+            bail!("fingerprint requires a nowhere:// share link");
+        }
+        if url.password().is_some() {
+            bail!("password credentials are not supported; percent-encode ':' in the shared key");
+        }
+        crate::protocol::Credentials::decode_shared_key(url)?;
+        if url.path().split('/').skip(1).any(|segment| {
+            !matches!(
+                segment.split_once(':').map(|(carrier, _)| carrier),
+                Some("tcp" | "udp")
+            )
+        }) {
+            bail!("Nowhere share-link carrier paths support only tcp and udp");
         }
         let query = query_first(url, &["morph", "sni"])?;
-        Self::parse(url, &query, &DialPolicy::default(), "Portal endpoint")
+        Self::parse(
+            url,
+            &query,
+            &DialPolicy::default(),
+            "Nowhere share-link endpoint",
+        )
     }
 
     pub(crate) fn from_probe_url(url: &Url) -> Result<(Self, crate::protocol::Credentials)> {

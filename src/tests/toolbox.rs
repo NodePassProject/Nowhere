@@ -23,22 +23,160 @@ fn generated_keys_are_256_bit_lowercase_hex() {
     assert_ne!(first, second);
 }
 
-#[tokio::test]
-async fn fingerprint_rejects_udp_only_and_invalid_portal_urls_without_leaking_secrets() {
+#[test]
+fn toolbox_configuration_errors_explain_the_failure_without_echoing_values() {
     for (raw, expected) in [
         (
-            "portal://secret@localhost/udp:2000",
+            "vector://secret@localhost:2000?up=secret",
+            "up must be tcp, udp, or mix",
+        ),
+        (
+            "vector://secret@localhost/tcp:secret",
+            "carrier port must contain decimal digits only",
+        ),
+        ("vector://secret@localhost/secret:2000", "unknown carrier"),
+        (
+            "vector://secret@localhost:2000?morph=secret",
+            "morph must be 0 or 1",
+        ),
+        (
+            "vector://secret@localhost:2000?sni=secret:443",
+            "sni must be an ASCII DNS name",
+        ),
+        (
+            "vector://secret@localhost:2000?socks=user:secret@localhost:secret",
+            "port must be in 1..=65535",
+        ),
+        (
+            "vector://secret@localhost:2000?up=%FFsecret",
+            "invalid UTF-8 in query value",
+        ),
+    ] {
+        let error = parse_client(&Url::parse(raw).unwrap()).err().unwrap();
+        let message = format!("{error:#}");
+        assert!(message.contains(expected), "{message}");
+        assert!(!message.contains("secret"), "{message}");
+        assert!(!message.contains("user:"), "{message}");
+    }
+}
+
+#[test]
+fn connection_diagnostics_keep_stages_and_causes_without_echoing_values() {
+    let refused = anyhow::Error::new(std::io::Error::new(
+        std::io::ErrorKind::ConnectionRefused,
+        "secret remote detail",
+    ))
+    .context("vector::tls::connect_tcp: failed to dial secret:2000");
+    assert_eq!(
+        connection_failure_reason(&refused),
+        "TCP connection failed: connection refused"
+    );
+    let tls = anyhow::Error::new(rustls::Error::InvalidCertificate(
+        rustls::CertificateError::UnknownIssuer,
+    ))
+    .context("vector::tls::connect_tcp: TLS handshake failed");
+    assert_eq!(
+        connection_failure_reason(&tls),
+        "TLS/Morph handshake failed: certificate validation failed"
+    );
+    let wrapped_tls = anyhow::Error::new(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer),
+    ))
+    .context("vector::tls::connect_tcp: TLS handshake failed");
+    assert_eq!(
+        connection_failure_reason(&wrapped_tls),
+        "TLS/Morph handshake failed: certificate validation failed"
+    );
+    for (raw, expected) in [
+        (
+            "common::util::dial_tcp_from_local_ip: failed to resolve target: secret",
+            "DNS resolution failed",
+        ),
+        (
+            "vector::tls::connect_tcp: TLS handshake timeout",
+            "TLS/Morph handshake timed out",
+        ),
+        (
+            "vector::tls::connect_tcp: invalid negotiated protocol: secret",
+            "Portal did not negotiate nw2 ALPN",
+        ),
+        (
+            "vector::tls::ClientTls::new: system root loading failed: secret",
+            "system CA loading failed",
+        ),
+        (
+            "vector::tls::ClientTls::new: no system trust roots available",
+            "no system CA trust roots available",
+        ),
+        ("telemetry snapshot timed out", "IPC status read timed out"),
+        (
+            "telemetry: service rejected connection: secret",
+            "IPC service rejected connection",
+        ),
+        (
+            "telemetry rejected status: secret",
+            "IPC service rejected status request",
+        ),
+        ("unknown secret error", "connection or local IPC failed"),
+    ] {
+        assert_eq!(connection_failure_reason(&anyhow::anyhow!(raw)), expected);
+    }
+}
+
+#[tokio::test]
+async fn fingerprint_connection_refusal_reports_the_cause_without_echoing_the_endpoint() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let error = fingerprint(Url::parse(&format!("nowhere://secret@{address}")).unwrap())
+        .await
+        .unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("TCP connection failed: connection refused"),
+        "{message}"
+    );
+    assert!(!message.contains("secret"), "{message}");
+    assert!(!message.contains(&address.to_string()), "{message}");
+}
+
+#[tokio::test]
+async fn fingerprint_rejects_udp_only_and_invalid_share_links_without_leaking_secrets() {
+    for (raw, expected) in [
+        (
+            "nowhere://secret@localhost/udp:2000#My%20Portal",
             "requires a TCP carrier",
         ),
-        ("vector://secret@localhost:2000", "invalid Portal URL"),
-        ("portal://secret@*:2000", "invalid Portal URL"),
         (
-            "portal://secret@localhost:2000?morph=secret",
-            "invalid Portal URL",
+            "vector://secret@localhost:2000",
+            "invalid Nowhere share link",
         ),
         (
-            "portal://secret@localhost:2000?sni=secret:443",
-            "invalid Portal URL",
+            "portal://secret@localhost:2000",
+            "invalid Nowhere share link",
+        ),
+        ("nowhere://secret@*:2000", "invalid Nowhere share link"),
+        ("nowhere://localhost:2000", "invalid Nowhere share link"),
+        (
+            "nowhere://secret:password@localhost:2000",
+            "invalid Nowhere share link",
+        ),
+        (
+            "nowhere://secret%ZZ@localhost:2000",
+            "invalid Nowhere share link",
+        ),
+        (
+            "nowhere://secret@localhost/tcp4:2000",
+            "invalid Nowhere share link",
+        ),
+        (
+            "nowhere://secret@localhost:2000?morph=secret",
+            "invalid Nowhere share link",
+        ),
+        (
+            "nowhere://secret@localhost:2000?sni=secret:443",
+            "invalid Nowhere share link",
         ),
     ] {
         let error = fingerprint(Url::parse(raw).unwrap()).await.unwrap_err();
@@ -46,6 +184,27 @@ async fn fingerprint_rejects_udp_only_and_invalid_portal_urls_without_leaking_se
         assert!(message.contains(expected), "{message}");
         assert!(!message.contains("secret"), "{message}");
     }
+}
+
+#[test]
+fn fingerprint_share_links_decode_keys_and_ignore_display_names_and_flow_options() {
+    let url = Url::parse(
+        "nowhere://shared%40key%3A%2F%3F%23%25%2B@[::1]/tcp:2006/udp:2017?morph=1&morph=0&sni=relay.example&up=udp&down=udp&mux=1&pin=wrong&socks=missing#My%20Portal",
+    ).unwrap();
+    let config = PortalClientConfig::from_fingerprint_url(&url).unwrap();
+    assert_eq!(config.endpoint(), "[::1]/tcp:2006/udp:2017");
+    assert_eq!(config.sni.as_deref(), Some("relay.example"));
+    assert!(config.pin.is_none());
+    assert_eq!(
+        config.morph_keys.unwrap().udp_keys(),
+        crate::transport::MorphKeys::derive(b"shared@key:/?#%+").udp_keys(),
+    );
+    assert!(
+        PortalClientConfig::from_fingerprint_url(
+            &Url::parse("nowhere://secret@localhost:2000").unwrap(),
+        )
+        .is_ok()
+    );
 }
 
 #[tokio::test]
@@ -75,7 +234,7 @@ async fn fingerprint_reads_the_leaf_certificate_with_and_without_morph_without_f
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let url = Url::parse(&format!(
-            "portal://secret@{address}?morph={morph}&sni=wrong.example&pin=wrong&tls=2&crt=missing&key=missing"
+            "nowhere://secret@{address}?morph={morph}&sni=wrong.example&up=udp&down=udp&mux=1#My%20Portal"
         )).unwrap();
         let config = PortalClientConfig::from_fingerprint_url(&url).unwrap();
         let morph_keys = config.morph_keys.clone();

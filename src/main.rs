@@ -34,7 +34,7 @@ Usage:
   nowhere <portal-url>                 Run a Portal relay
   nowhere <vector-url>                 Run a Vector SOCKS5 client
   nowhere generate-key                 Generate a random 256-bit key as hex
-  nowhere fingerprint <portal-url>     Read the TLS certificate SHA-256 fingerprint
+  nowhere fingerprint <nowhere-url>    Read the TLS certificate SHA-256 fingerprint
   nowhere probe <vector-url> <target>  Test one real TCP Flow
   nowhere status                       Read one local telemetry snapshot
   nowhere -h | --help                  Show this help
@@ -52,6 +52,8 @@ URL forms:
   portal://<key>@<listen-host>/<carrier>:<port>[/<carrier>:<port>][?<options>]
   vector://<key>@<portal-host>:<port>?socks=<listener>[&<options>]
   vector://<key>@<portal-host>/<carrier>:<port>[/<carrier>:<port>]?socks=...
+  nowhere://<key>@<portal-host>:<port>[?<options>][#<name>]  For fingerprint
+  nowhere://<key>@<portal-host>/tcp:<port>[/udp:<port>][?<options>][#<name>]
 
 Endpoint syntax:
   host:port                   Use TCP and UDP on the same port.
@@ -66,7 +68,7 @@ Examples:
   nowhere \"vector://secret@relay.example/tcp:2006/udp:2017?up=udp&down=tcp&morph=1&socks=:1080\"
   nowhere probe \"vector://secret@relay.example:2000\" \"example.com:443\"
   nowhere generate-key
-  nowhere fingerprint \"portal://secret@relay.example:2000\"
+  nowhere fingerprint \"nowhere://secret@relay.example:2000#My%20Portal\"
   nowhere status
 
 Common options:
@@ -158,8 +160,9 @@ async fn start(args: Vec<String>) -> Result<()> {
             return Ok(());
         }
         "fingerprint" => {
-            require_args(&args, 3, "nowhere fingerprint <portal-url>")?;
-            return run_fingerprint(parse_toolbox_url(&args[2])?).await;
+            require_args(&args, 3, "nowhere fingerprint <nowhere-url>")?;
+            let url = parse_command_url(&args[2]).context("invalid Nowhere share link")?;
+            return run_fingerprint(url).await;
         }
         "probe" => {
             require_args(&args, 4, "nowhere probe <URL> <TARGET>")?;
@@ -209,7 +212,7 @@ fn require_args(args: &[String], expected: usize, usage: &str) -> Result<()> {
 }
 
 fn parse_toolbox_url(raw: &str) -> Result<Url> {
-    parse_command_url(raw).map_err(|_| anyhow::anyhow!("invalid configuration URL"))
+    parse_command_url(raw).context("invalid configuration URL")
 }
 
 async fn run_tui() -> Result<()> {
