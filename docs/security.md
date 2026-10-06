@@ -38,6 +38,13 @@ validation for inspection. This command sends no Nowhere authentication or Flow
 data and does not establish the certificate's trusted identity. It cannot
 disable verification for Vector, `probe`, or native `next`.
 
+An active man-in-the-middle can present its own certificate, causing the
+command to report the attacker's fingerprint. Copying that result directly
+into `pin=` would trust the attacker. Compare the returned fingerprint with an
+expected value obtained independently through a trusted channel, such as the
+Portal host's startup log accessed through an authenticated administration
+session. The remote inspection result alone is not a trusted source for a pin.
+
 ## Morph boundary
 
 With `morph=1`, HKDF-SHA256 derives separate client-to-server and
