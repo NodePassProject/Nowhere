@@ -109,4 +109,7 @@ does not reuse its inbound Morph keys on the next hop.
 The nested value contains no scheme, query, or fragment. Percent-encoded key
 bytes are decoded exactly once. `up`, `down`, `mux`, `sni`, `pin`, and `morph` stay on
 the outer Portal URL, while the outer `dial` address also constrains the local
-family used for upstream TCP and UDP sockets.
+family used for upstream TCP and UDP sockets. Alternatively, `dial4` and `dial6`
+can be used together instead of `dial` to bind each family independently, with
+an omitted family using automatic source selection. The selected upstream
+carrier still controls which address families may be used.

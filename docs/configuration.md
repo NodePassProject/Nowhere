@@ -103,7 +103,9 @@ sockets instead of relying on an operating-system dual-stack default.
 | `tls` | `1` generated certificate, `2` supplied certificate | `1` |
 | `crt`, `key` | PEM paths, required with `tls=2` | — |
 | `rate`, `etar` | Mbps, `0` disables limit | `0` |
-| `dial` | `auto` or local IP | `auto` |
+| `dial` | `auto` or local IP; an IP restricts outbound to its family | `auto` |
+| `dial4` | `auto` or local IPv4; mutually exclusive with `dial` | `auto` |
+| `dial6` | `auto` or local IPv6; mutually exclusive with `dial` | `auto` |
 | `morph` | `0` bare TLS/QUIC wire, `1` keyed wire transform | `0` |
 | `socks` | outbound SOCKS5 configuration | disabled |
 | `next` | `shared-key@host:port` or explicit carrier endpoint | disabled |
@@ -112,6 +114,47 @@ sockets instead of relying on an operating-system dual-stack default.
 | `sni` | native next-hop verified DNS name, or `none` | `none` |
 | `pin` | native next-hop certificate SHA-256 pin, or `none` | `none` |
 | `log` | `none`, `debug`, `info`, `warn`, `error` | `info` |
+
+Outbound source selection uses one of two mutually exclusive modes:
+
+| Configuration | IPv4 source | IPv6 source |
+|---|---|---|
+| No dial parameters, or `dial=auto` | System automatic | System automatic |
+| `dial=192.0.2.10` | `192.0.2.10` | Disabled |
+| `dial=2001:db8::10` | Disabled | `2001:db8::10` |
+| `dial4=192.0.2.10` | `192.0.2.10` | System automatic |
+| `dial6=2001:db8::10` | System automatic | `2001:db8::10` |
+| `dial4=192.0.2.10&dial6=2001:db8::10` | `192.0.2.10` | `2001:db8::10` |
+
+Any occurrence of `dial`, including `dial=auto`, conflicts with `dial4` or
+`dial6`. Both new parameters accept lowercase `auto`; omitting either means
+automatic source selection for that family. Recognized duplicate keys keep
+only their first value. Effective configuration preserves the old `dial=...`
+form for legacy mode and always shows both `dial4=...` and `dial6=...` in the
+new mode, including when both are automatic.
+
+Source addresses must be bare IP literals after the normal query decoding.
+Empty values, hostnames, ports, brackets, zone IDs, and wrong-family literals
+are invalid. `dial6` also rejects IPv4-mapped IPv6 literals. `0.0.0.0` and `::`
+remain valid wildcard bind addresses, matching legacy `dial` behavior; with
+`dial4` or `dial6` they do not disable the other family.
+
+The policy applies to direct TCP/UDP targets, local SOCKS5 control and UDP
+relay sockets, and native `next` TCP/QUIC sockets. SOCKS5 control and relay
+addresses may use different families; each selects its own local source.
+The policy does not constrain the SOCKS5 server's connection to the final
+target. Inbound listener families do not constrain outbound families.
+
+Startup validates syntax only. Source availability is checked when a socket
+is bound. A failed bind follows the existing candidate retry loop, allowing
+another family to succeed, but never silently replaces a configured source
+with automatic binding. DNS order, sequential attempts, and existing timeout
+boundaries are preserved. UDP connect success does not establish remote
+reachability. No Happy Eyeballs or reachability probes are added.
+
+Legacy configurations retain their behavior. `dial4` and `dial6` require a
+binary that supports these parameters: older binaries ignore unknown query
+keys and therefore do not enforce the requested source binding.
 
 When `next` is enabled, `up`, `down`, `mux`, `sni`, and `pin` configure that
 upstream hop. Protocol version is negotiated independently with the next
@@ -177,7 +220,9 @@ decoded once when the upstream credentials are built.
 The `dial` IP from the outer Portal URL also constrains native upstream
 connections. The selected endpoint family and the local `dial` family must
 both match a resolved upstream address. No connection crosses an explicit
-family boundary to recover from a failure.
+family boundary to recover from a failure. In dual-stack source mode,
+`dial4` and `dial6` only bind matching candidates; an unused family binding is
+allowed (for example, `next=key@host/tcp4:2000&dial6=::1`).
 
 ## Option scope
 
@@ -185,7 +230,7 @@ family boundary to recover from a failure.
 Portal URL
     |
     +-- listener: endpoint path, tls, crt, key, morph
-    +-- relay:    rate, etar, dial, log
+    +-- relay:    rate, etar, dial or dial4/dial6, log
     |
     +-- outbound path
           |

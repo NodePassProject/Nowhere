@@ -73,7 +73,10 @@ Portal options:
   tls=1|2             Generated certificate or supplied PEM files. Default: 1.
   crt=<path>          PEM certificate chain for tls=2.
   key=<path>          PEM private key for tls=2.
-  dial=<ip|auto>      Source IP for outbound connections. Default: auto.
+  dial=<ip|auto>      Outbound source IP and single-family restriction, or auto.
+  dial4=<ipv4|auto>   IPv4 source in dual-stack mode. Default: auto.
+  dial6=<ipv6|auto>   IPv6 source in dual-stack mode. Default: auto.
+                      dial is mutually exclusive with dial4/dial6. Default: auto.
   socks=<proxy>       Outbound SOCKS5 proxy; mutually exclusive with next.
   next=<portal>       Native upstream Portal: key@host or key@host/<carriers>.
 
