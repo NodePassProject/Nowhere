@@ -30,6 +30,7 @@ pub(crate) use self::flow::{BoxReader, BoxWriter, OpenFlowError, TcpTunnel, TcpT
 use self::flow_id::FlowIdAllocator;
 use self::session::{ClientSignals, QuicManager, TlsManager};
 use self::tls::ClientTls;
+pub(crate) use self::tls::fetch_certificate_fingerprint;
 pub(crate) use self::udp_flow::{ReceivedUdpPacket, UdpTunnel, UdpTunnelReceiver, UdpTunnelSender};
 use crate::common::{
     LatencyTracker, LifeReason, LifeState, Logger, ShutdownSignals, rate_limit_bytes_per_second,

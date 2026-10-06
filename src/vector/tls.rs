@@ -134,6 +134,33 @@ impl ClientTls {
     }
 }
 
+pub(crate) async fn fetch_certificate_fingerprint(config: &PortalClientConfig) -> Result<String> {
+    let endpoint = config
+        .tcp_endpoint()
+        .context("TCP carrier is not configured")?;
+    let mut unverified = config.clone();
+    unverified.sni = None;
+    unverified.pin = None;
+    let mut tls = ClientTls::new(&unverified)?;
+    if let Some(sni) = &config.sni {
+        tls.server_name = ServerName::try_from(sni.clone()).context("invalid TLS server name")?;
+    }
+    let (stream, _) = tls
+        .connect_tcp(
+            &config.remote.carrier_addr(endpoint),
+            &config.dial_policy,
+            endpoint.family,
+        )
+        .await?;
+    let certificate = stream
+        .get_ref()
+        .1
+        .peer_certificates()
+        .and_then(|chain| chain.first())
+        .context("Portal did not provide a TLS certificate")?;
+    Ok(certificate_sha256(certificate))
+}
+
 pub(super) fn require_quic_nw2(connection: &Connection) -> Result<()> {
     let handshake = connection
         .handshake_data()

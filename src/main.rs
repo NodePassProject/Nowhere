@@ -9,8 +9,8 @@ use std::{error, fmt};
 
 use anyhow::{Context, Result, bail};
 use nowhere::{
-    LogLevel, Logger, Portal, Vector, query_first, run_probe, run_status,
-    validate_endpoint_url_input,
+    LogLevel, Logger, Portal, Vector, generate_key, query_first, run_fingerprint, run_probe,
+    run_status, validate_endpoint_url_input,
 };
 use url::{ParseError, Url};
 
@@ -33,15 +33,19 @@ Usage:
   nowhere tui                          Open the local telemetry TUI
   nowhere <portal-url>                 Run a Portal relay
   nowhere <vector-url>                 Run a Vector SOCKS5 client
+  nowhere generate-key                 Generate a random 256-bit key as hex
+  nowhere fingerprint <portal-url>     Read the TLS certificate SHA-256 fingerprint
   nowhere probe <vector-url> <target>  Test one real TCP Flow
   nowhere status                       Read one local telemetry snapshot
   nowhere -h | --help                  Show this help
   nowhere -v | --version               Show version information
 
 Commands:
-  tui       Interactive read-only multi-instance telemetry.
-  probe     End-to-end TCP Flow setup; sends no application payload.
-  status    Read-only local instance telemetry; exits after one snapshot.
+  tui           Interactive read-only multi-instance telemetry.
+  generate-key  Print 32 random bytes as 64 lowercase hex characters.
+  fingerprint   Print the leaf certificate SHA-256 over TCP; supports Morph.
+  probe         End-to-end TCP Flow setup; sends no application payload.
+  status        Read-only local instance telemetry; exits after one snapshot.
 
 URL forms:
   portal://<key>@<listen-host>:<port>[?<options>]
@@ -61,6 +65,8 @@ Examples:
   nowhere \"vector://secret@relay.example:2000?socks=127.0.0.1:1080\"
   nowhere \"vector://secret@relay.example/tcp:2006/udp:2017?up=udp&down=tcp&morph=1&socks=:1080\"
   nowhere probe \"vector://secret@relay.example:2000\" \"example.com:443\"
+  nowhere generate-key
+  nowhere fingerprint \"portal://secret@relay.example:2000\"
   nowhere status
 
 Common options:
@@ -144,6 +150,15 @@ async fn start(args: Vec<String>) -> Result<()> {
         "tui" => {
             require_args(&args, 2, "nowhere tui")?;
             return run_tui().await;
+        }
+        "generate-key" => {
+            require_args(&args, 2, "nowhere generate-key")?;
+            println!("{}", generate_key()?);
+            return Ok(());
+        }
+        "fingerprint" => {
+            require_args(&args, 3, "nowhere fingerprint <portal-url>")?;
+            return run_fingerprint(parse_toolbox_url(&args[2])?).await;
         }
         "probe" => {
             require_args(&args, 4, "nowhere probe <URL> <TARGET>")?;

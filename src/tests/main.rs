@@ -14,7 +14,15 @@ fn probe_results_use_the_panel_as_the_only_error_output() {
 
 #[tokio::test]
 async fn commands_reject_extra_arguments() {
-    for command in ["help", "--help", "version", "--version", "tui", "status"] {
+    for command in [
+        "help",
+        "--help",
+        "version",
+        "--version",
+        "tui",
+        "status",
+        "generate-key",
+    ] {
         let error = start(vec![
             "nowhere".to_owned(),
             command.to_owned(),
@@ -23,6 +31,24 @@ async fn commands_reject_extra_arguments() {
         .await
         .unwrap_err();
         assert!(error.to_string().starts_with("usage:"));
+    }
+}
+
+#[tokio::test]
+async fn fingerprint_requires_exactly_one_portal_url() {
+    for arguments in [
+        vec!["nowhere", "fingerprint"],
+        vec![
+            "nowhere",
+            "fingerprint",
+            "portal://secret@localhost:2000",
+            "extra",
+        ],
+    ] {
+        let error = start(arguments.into_iter().map(str::to_owned).collect())
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "usage: nowhere fingerprint <portal-url>");
     }
 }
 
@@ -73,6 +99,8 @@ fn help_text_documents_usage_and_configuration_surface() {
         "nowhere tui",
         "nowhere probe <vector-url> <target>",
         "nowhere status",
+        "nowhere generate-key",
+        "nowhere fingerprint <portal-url>",
         "nowhere <portal-url>",
         "nowhere <vector-url>",
         "-h | --help",

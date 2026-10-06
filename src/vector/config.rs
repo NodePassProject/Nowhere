@@ -192,6 +192,14 @@ impl PortalClientConfig {
         Ok((config, credentials))
     }
 
+    pub(crate) fn from_fingerprint_url(url: &Url) -> Result<Self> {
+        if url.scheme() != "portal" || url.password().is_some() || url.fragment().is_some() {
+            bail!("fingerprint requires a Portal URL without a password or fragment");
+        }
+        let query = query_first(url, &["morph", "sni"])?;
+        Self::parse(url, &query, &DialPolicy::default(), "Portal endpoint")
+    }
+
     pub(crate) fn from_probe_url(url: &Url) -> Result<(Self, crate::protocol::Credentials)> {
         let query = vector_query(url)?;
         let config = Self::parse(url, &query, &DialPolicy::default(), "Vector endpoint")?;

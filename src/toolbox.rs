@@ -1,8 +1,9 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Toolbox utilities for probing and checking the status of Nowhere instances.
+//! Toolbox utilities for keys, certificates, connectivity, and local status.
 
+use std::fmt::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,6 +25,34 @@ use crate::vector::{PortalClient, PortalClientConfig};
 
 const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 const STATUS_CONCURRENCY: usize = 8;
+
+pub fn generate_key() -> Result<String> {
+    let mut key = [0u8; 32];
+    getrandom::fill(&mut key).context("failed to generate a random key")?;
+    let mut hex = String::with_capacity(key.len() * 2);
+    for byte in key {
+        write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    Ok(hex)
+}
+
+pub async fn fingerprint(url: Url) -> Result<()> {
+    let config = PortalClientConfig::from_fingerprint_url(&url).map_err(|_| {
+        anyhow::anyhow!("invalid Portal URL; expected a concrete host and valid TLS/Morph options")
+    })?;
+    if config.tcp_endpoint().is_none() {
+        bail!("fingerprint requires a TCP carrier in the Portal URL");
+    }
+    let fingerprint = crate::vector::fetch_certificate_fingerprint(&config)
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "failed to retrieve Portal TLS certificate; check the endpoint and Morph key"
+            )
+        })?;
+    println!("{fingerprint}");
+    Ok(())
+}
 
 pub(crate) struct ToolboxClient {
     config: PortalClientConfig,
