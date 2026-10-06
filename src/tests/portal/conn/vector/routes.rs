@@ -110,7 +110,8 @@ async fn mix_mix_retries_quic_after_tls_fails_before_commit() {
 
     let mut session_id = [0u8; crate::protocol::SESSION_ID_LEN];
     session_id[0] = 3;
-    let client = mix_test_client(portal_port, session_id);
+    let pin = server_certificate_pin(&portal.inner.tls_server_config);
+    let client = mix_test_client(portal_port, session_id, &pin);
 
     let mut tunnel = timeout(
         TEST_TIMEOUT,
@@ -141,7 +142,7 @@ async fn mix_mix_retries_quic_after_tls_fails_before_commit() {
     });
     let mut session_id = [0u8; crate::protocol::SESSION_ID_LEN];
     session_id[0] = 3;
-    let udp_client = mix_test_client(portal_port, session_id);
+    let udp_client = mix_test_client(portal_port, session_id, &pin);
     let mut udp_tunnel = timeout(
         TEST_TIMEOUT,
         udp_client.open_udp(&Target::ip(udp_target_address).unwrap(), 0),
@@ -197,7 +198,8 @@ async fn mix_mix_retries_tls_after_quic_fails_before_commit() {
         stream.write_all(b"pong").await.unwrap();
     });
 
-    let client = mix_test_client(portal_port, [0; crate::protocol::SESSION_ID_LEN]);
+    let pin = server_certificate_pin(&portal.inner.tls_server_config);
+    let client = mix_test_client(portal_port, [0; crate::protocol::SESSION_ID_LEN], &pin);
     let mut tunnel = timeout(
         TEST_TIMEOUT,
         client.open_tcp(&Target::ip(target_address).unwrap(), 0),

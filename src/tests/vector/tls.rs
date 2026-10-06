@@ -24,6 +24,7 @@ fn config(raw: &str) -> PortalClientConfig {
 async fn client_prefers_fixed_v2_alpn() {
     let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
     let certificate: CertificateDer<'static> = generated.cert.into();
+    let pin = certificate_sha256(&certificate);
     let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
         generated.signing_key.serialize_der(),
     ));
@@ -41,7 +42,7 @@ async fn client_prefers_fixed_v2_alpn() {
         let (stream, _) = listener.accept().await.unwrap();
         TlsAcceptor::from(Arc::new(server)).accept(stream).await
     });
-    let raw = format!("vector://secret@{endpoint}?alpn=private/2&socks=127.0.0.1:1080");
+    let raw = format!("vector://secret@{endpoint}?alpn=private/2&pin={pin}&socks=127.0.0.1:1080");
 
     let _ = ClientTls::new(&config(&raw))
         .unwrap()
@@ -56,7 +57,7 @@ async fn client_prefers_fixed_v2_alpn() {
 }
 
 #[test]
-fn missing_sni_uses_unverified_policy() {
+fn missing_sni_uses_the_endpoint_as_the_verified_server_name() {
     let tls = ClientTls::new(&config(
         "vector://secret@127.0.0.1:2000?socks=127.0.0.1:1080",
     ))
@@ -76,7 +77,7 @@ fn ipv6_authority_builds_an_ip_server_name() {
 }
 
 #[test]
-fn explicit_sni_enables_system_verification() {
+fn explicit_sni_overrides_the_verified_server_name() {
     let config = config("vector://secret@127.0.0.1:2000?sni=example.com&socks=127.0.0.1:1080");
     let tls = ClientTls::new(&config).unwrap();
     assert_eq!(config.sni.as_deref(), Some("example.com"));
@@ -87,6 +88,7 @@ fn explicit_sni_enables_system_verification() {
 enum TestPin {
     Omitted,
     Empty,
+    Disabled,
     Exact,
     Uppercase,
     Invalid,
@@ -117,6 +119,7 @@ async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<()> {
     let pin = match pin {
         TestPin::Omitted => None,
         TestPin::Empty => Some(String::new()),
+        TestPin::Disabled => Some("none".to_owned()),
         TestPin::Exact => Some(fingerprint),
         TestPin::Uppercase => Some(fingerprint.to_ascii_uppercase()),
         TestPin::Invalid => Some("not-a-fingerprint".to_owned()),
@@ -146,6 +149,7 @@ async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<()> {
 async fn tcp_server_without_nw2_is_rejected() {
     let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
     let certificate: CertificateDer<'static> = generated.cert.into();
+    let pin = certificate_sha256(&certificate);
     let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
         generated.signing_key.serialize_der(),
     ));
@@ -163,7 +167,7 @@ async fn tcp_server_without_nw2_is_rejected() {
         let (stream, _) = listener.accept().await.unwrap();
         let _ = TlsAcceptor::from(Arc::new(server)).accept(stream).await;
     });
-    let raw = format!("vector://secret@{endpoint}?socks=127.0.0.1:1080");
+    let raw = format!("vector://secret@{endpoint}?pin={pin}&socks=127.0.0.1:1080");
     assert!(
         ClientTls::new(&config(&raw))
             .unwrap()
@@ -177,9 +181,10 @@ async fn tcp_server_without_nw2_is_rejected() {
     );
 }
 
-async fn negotiate_quic(server_alpns: Vec<Vec<u8>>) -> Result<()> {
+async fn negotiate_quic(server_alpns: Vec<Vec<u8>>, pin: TestPin) -> Result<()> {
     let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
     let certificate: CertificateDer<'static> = generated.cert.into();
+    let fingerprint = certificate_sha256(&certificate);
     let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
         generated.signing_key.serialize_der(),
     ));
@@ -203,7 +208,15 @@ async fn negotiate_quic(server_alpns: Vec<Vec<u8>>) -> Result<()> {
         incoming.await
     });
 
-    let raw = format!("vector://secret@{address}?socks=127.0.0.1:1080");
+    let pin = match pin {
+        TestPin::Omitted => String::new(),
+        TestPin::Empty => "&pin=".to_owned(),
+        TestPin::Disabled => "&pin=none".to_owned(),
+        TestPin::Exact => format!("&pin={fingerprint}"),
+        TestPin::Uppercase => format!("&pin={}", fingerprint.to_ascii_uppercase()),
+        TestPin::Invalid => "&pin=wrong".to_owned(),
+    };
+    let raw = format!("vector://secret@{address}?socks=127.0.0.1:1080{pin}");
     let tls = ClientTls::new(&config(&raw))?;
     let mut client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap())?;
     client.set_default_client_config(tls.quic_client_config()?);
@@ -216,9 +229,19 @@ async fn negotiate_quic(server_alpns: Vec<Vec<u8>>) -> Result<()> {
 
 #[tokio::test]
 async fn quic_requires_nw2() {
-    negotiate_quic(vec![b"nw2".to_vec()]).await.unwrap();
-    assert!(negotiate_quic(vec![b"now/1".to_vec()]).await.is_err());
-    assert!(negotiate_quic(vec![b"private/2".to_vec()]).await.is_err());
+    negotiate_quic(vec![b"nw2".to_vec()], TestPin::Exact)
+        .await
+        .unwrap();
+    assert!(
+        negotiate_quic(vec![b"now/1".to_vec()], TestPin::Exact)
+            .await
+            .is_err()
+    );
+    assert!(
+        negotiate_quic(vec![b"private/2".to_vec()], TestPin::Exact)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -229,9 +252,27 @@ async fn exact_pin_overrides_sni_certificate_verification() {
 }
 
 #[tokio::test]
-async fn empty_or_omitted_pin_keeps_unverified_policy_without_sni() {
-    test_pinned_handshake(TestPin::Omitted, None).await.unwrap();
-    test_pinned_handshake(TestPin::Empty, None).await.unwrap();
+async fn missing_empty_or_none_options_never_disable_tcp_certificate_verification() {
+    for pin in [TestPin::Omitted, TestPin::Empty, TestPin::Disabled] {
+        for sni in [None, Some(""), Some("none"), Some("localhost")] {
+            let error = test_pinned_handshake(pin, sni).await.unwrap_err();
+            assert!(format!("{error:#}").contains("UnknownIssuer"), "{error:#}");
+        }
+    }
+    test_pinned_handshake(TestPin::Exact, None).await.unwrap();
+}
+
+#[tokio::test]
+async fn quic_requires_a_trusted_certificate_or_an_exact_pin() {
+    for pin in [
+        TestPin::Omitted,
+        TestPin::Empty,
+        TestPin::Disabled,
+        TestPin::Uppercase,
+        TestPin::Invalid,
+    ] {
+        assert!(negotiate_quic(vec![b"nw2".to_vec()], pin).await.is_err());
+    }
 }
 
 #[tokio::test]

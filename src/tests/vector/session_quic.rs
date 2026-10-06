@@ -138,7 +138,7 @@ async fn native_next_quic_uses_the_matching_dual_stack_source() {
         ("[::1]:0", "udp6", "::1"),
     ] {
         let server_url = Url::parse("portal://secret@localhost:2000").unwrap();
-        let (_, _, quic_server) = new_server_configs_with_reload_interval(
+        let (_, tls_server, quic_server) = new_server_configs_with_reload_interval(
             &server_url,
             Duration::from_secs(60),
             Logger::new(LogLevel::None, false),
@@ -175,7 +175,10 @@ async fn native_next_quic_uses_the_matching_dual_stack_source() {
         };
         let (config, credentials) = PortalClientConfig::from_upstream_authority(
             &format!("secret@localhost/{carrier}:{}", address.port()),
-            &HashMap::new(),
+            &HashMap::from([(
+                "pin".to_owned(),
+                crate::tls_test_support::server_certificate_pin(&tls_server),
+            )]),
             &policy,
         )
         .unwrap();

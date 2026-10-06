@@ -93,8 +93,9 @@ Client route options (Vector and Portal next):
   up=tcp|udp|mix      Upload carrier. Default: the only carrier, otherwise TCP.
   down=tcp|udp|mix    Download carrier. Default: the only carrier, otherwise TCP.
   mux=0|1             Enable TLS multiplexing when TCP is available. Default: 0.
-  sni=<name|none>     Verify the Portal certificate for a DNS name.
+  sni=<name|none>     Override the verified server name. Default: endpoint host.
   pin=<sha256|none>   Pin the Portal certificate SHA-256 fingerprint.
+                      Without pin, system CA and server-name verification are required.
 
 Morph:
   Both peers on each hop must use morph=1 and the same shared key. Morph masks

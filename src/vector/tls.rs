@@ -40,7 +40,7 @@ impl ClientTls {
         let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .context("vector::tls::ClientTls::new: failed to enable TLS 1.3")?;
-        let mut client = if let Some(pin) = &config.pin {
+        let client = if let Some(pin) = &config.pin {
             builder
                 .dangerous()
                 .with_custom_certificate_verifier(Arc::new(PinnedCertificateVerification {
@@ -48,7 +48,7 @@ impl ClientTls {
                     algorithms: provider.signature_verification_algorithms,
                 }))
                 .with_no_client_auth()
-        } else if config.sni.is_some() {
+        } else {
             let native = rustls_native_certs::load_native_certs();
             if !native.errors.is_empty() {
                 bail!(
@@ -66,16 +66,11 @@ impl ClientTls {
                 bail!("vector::tls::ClientTls::new: no system trust roots available");
             }
             builder.with_root_certificates(roots).with_no_client_auth()
-        } else {
-            builder
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {
-                    schemes: provider
-                        .signature_verification_algorithms
-                        .supported_schemes(),
-                }))
-                .with_no_client_auth()
         };
+        Self::with_config(config, client)
+    }
+
+    fn with_config(config: &PortalClientConfig, mut client: rustls::ClientConfig) -> Result<Self> {
         client.alpn_protocols = vec![ALPN.to_vec()];
         client.enable_early_data = false;
 
@@ -138,13 +133,15 @@ pub(crate) async fn fetch_certificate_fingerprint(config: &PortalClientConfig) -
     let endpoint = config
         .tcp_endpoint()
         .context("TCP carrier is not configured")?;
-    let mut unverified = config.clone();
-    unverified.sni = None;
-    unverified.pin = None;
-    let mut tls = ClientTls::new(&unverified)?;
-    if let Some(sni) = &config.sni {
-        tls.server_name = ServerName::try_from(sni.clone()).context("invalid TLS server name")?;
-    }
+    let provider = Arc::new(ring::default_provider());
+    let client = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(FingerprintCertificateInspection {
+            algorithms: provider.signature_verification_algorithms,
+        }))
+        .with_no_client_auth();
+    let tls = ClientTls::with_config(config, client)?;
     let (stream, _) = tls
         .connect_tcp(
             &config.remote.carrier_addr(endpoint),
@@ -232,17 +229,17 @@ impl ServerCertVerifier for PinnedCertificateVerification {
 }
 
 #[derive(Clone)]
-struct NoCertificateVerification {
-    schemes: Vec<SignatureScheme>,
+struct FingerprintCertificateInspection {
+    algorithms: WebPkiSupportedAlgorithms,
 }
 
-impl fmt::Debug for NoCertificateVerification {
+impl fmt::Debug for FingerprintCertificateInspection {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("NoCertificateVerification")
+        formatter.write_str("FingerprintCertificateInspection")
     }
 }
 
-impl ServerCertVerifier for NoCertificateVerification {
+impl ServerCertVerifier for FingerprintCertificateInspection {
     fn verify_server_cert(
         &self,
         _end_entity: &CertificateDer<'_>,
@@ -256,24 +253,24 @@ impl ServerCertVerifier for NoCertificateVerification {
 
     fn verify_tls12_signature(
         &self,
-        _message: &[u8],
-        _certificate: &CertificateDer<'_>,
-        _signature: &DigitallySignedStruct,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
     ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
+        verify_tls12_signature(message, certificate, signature, &self.algorithms)
     }
 
     fn verify_tls13_signature(
         &self,
-        _message: &[u8],
-        _certificate: &CertificateDer<'_>,
-        _signature: &DigitallySignedStruct,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
     ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
+        verify_tls13_signature(message, certificate, signature, &self.algorithms)
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.schemes.clone()
+        self.algorithms.supported_schemes()
     }
 }
 

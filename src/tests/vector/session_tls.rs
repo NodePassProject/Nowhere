@@ -346,7 +346,10 @@ async fn native_next_tls_uses_the_matching_dual_stack_source() {
         };
         let (config, credentials) = PortalClientConfig::from_upstream_authority(
             &format!("secret@localhost/{carrier}:{}", address.port()),
-            &HashMap::new(),
+            &HashMap::from([(
+                "pin".to_owned(),
+                crate::tls_test_support::server_certificate_pin(&tls_server),
+            )]),
             &policy,
         )
         .unwrap();

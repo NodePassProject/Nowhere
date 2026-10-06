@@ -21,6 +21,7 @@ use crate::common::{LogLevel, Logger};
 use crate::portal::Portal;
 use crate::protocol::{Carrier, Target};
 use crate::telemetry::{InstanceRole, TelemetryHub};
+use crate::tls_test_support::server_certificate_pin;
 use crate::transport::Stats;
 use crate::vector::{PortalClient, PortalClientConfig, Vector};
 
@@ -136,6 +137,7 @@ async fn start_runtime_with_morph(up: &str, down: &str, mux: u8, morph: bool) ->
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
+    let pin = server_certificate_pin(&portal.inner.tls_server_config);
     drop(udp_reservation);
     let endpoint = portal.listen_endpoints().unwrap().pop().unwrap();
     drop(tcp_reservation);
@@ -157,7 +159,7 @@ async fn start_runtime_with_morph(up: &str, down: &str, mux: u8, morph: bool) ->
     let (socks_port, socks_reservation) = reserve_tcp_port().await;
     let vector = Vector::new(
         Url::parse(&format!(
-            "vector://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?log=none&up={up}&down={down}&mux={mux}&morph={}&socks=127.0.0.1:{socks_port}",
+            "vector://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?log=none&up={up}&down={down}&mux={mux}&morph={}&pin={pin}&socks=127.0.0.1:{socks_port}",
             u8::from(morph)
         ))
         .unwrap(),
@@ -169,7 +171,7 @@ async fn start_runtime_with_morph(up: &str, down: &str, mux: u8, morph: bool) ->
     let socks = SocketAddr::from(([127, 0, 0, 1], socks_port));
     wait_for_socks(socks).await;
     TestRuntime {
-        toolbox_url: Url::parse(&format!("vector://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?up={up}&down={down}&mux={mux}&morph={}", u8::from(morph))).unwrap(),
+        toolbox_url: Url::parse(&format!("vector://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?up={up}&down={down}&mux={mux}&morph={}&pin={pin}", u8::from(morph))).unwrap(),
         shutdown,
         endpoint,
         portal_tasks: vec![quic_task, tcp_task],
@@ -253,6 +255,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
         logger(),
     )
     .unwrap();
+    let origin_pin = server_certificate_pin(&origin.inner.tls_server_config);
     drop(origin_udp_reservation);
     let origin_endpoint = origin.listen_endpoints().unwrap().pop().unwrap();
     drop(origin_tcp_reservation);
@@ -261,12 +264,13 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
     let (relay_port, relay_tcp_reservation, relay_udp_reservation) = reserve_mixed_port().await;
     let relay = Portal::new(
         Url::parse(&format!(
-            "portal://relay-secret@127.0.0.1:{relay_port}?log=none&next=origin-secret@127.0.0.1/tcp:{origin_tcp_port}/udp:{origin_udp_port}&up={up}&down={down}&mux=1"
+            "portal://relay-secret@127.0.0.1:{relay_port}?log=none&next=origin-secret@127.0.0.1/tcp:{origin_tcp_port}/udp:{origin_udp_port}&up={up}&down={down}&mux=1&pin={origin_pin}"
         ))
         .unwrap(),
         logger(),
     )
     .unwrap();
+    let relay_pin = server_certificate_pin(&relay.inner.tls_server_config);
     drop(relay_udp_reservation);
     let relay_endpoint = relay.listen_endpoints().unwrap().pop().unwrap();
     drop(relay_tcp_reservation);
@@ -296,7 +300,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
     let (socks_port, socks_reservation) = reserve_tcp_port().await;
     let vector = Vector::new(
         Url::parse(&format!(
-            "vector://relay-secret@127.0.0.1:{relay_port}?log=none&mux=1&socks=127.0.0.1:{socks_port}"
+            "vector://relay-secret@127.0.0.1:{relay_port}?log=none&mux=1&pin={relay_pin}&socks=127.0.0.1:{socks_port}"
         ))
         .unwrap(),
         logger(),
@@ -366,10 +370,12 @@ async fn read_ipv4_reply_code(stream: &mut TcpStream) -> u8 {
 fn mix_test_client(
     portal_port: u16,
     session_id: [u8; crate::protocol::SESSION_ID_LEN],
+    pin: &str,
 ) -> Arc<PortalClient> {
     let query = HashMap::from([
         ("up".to_owned(), "mix".to_owned()),
         ("down".to_owned(), "mix".to_owned()),
+        ("pin".to_owned(), pin.to_owned()),
     ]);
     let (config, credentials) = PortalClientConfig::from_upstream_authority(
         &format!("secret@127.0.0.1:{portal_port}"),
