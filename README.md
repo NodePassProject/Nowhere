@@ -56,9 +56,12 @@ Listen on TLS/TCP and QUIC/UDP at all interfaces on port `2000`:
 
 Connect to Portal and expose SOCKS5 on `127.0.0.1:1080`:
 
+For the generated Portal certificate, replace `<sha256>` with the fingerprint
+printed on the Portal host at startup:
+
 ```bash
 ./target/release/nowhere \
-  "vector://change-me@portal.example:2000?up=tcp&down=tcp&socks=127.0.0.1:1080"
+  "vector://change-me@portal.example:2000?up=tcp&down=tcp&pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 ### 4. Inspect
@@ -202,12 +205,12 @@ Third-party clients use the same [telemetry contract](docs/telemetry.md).
 
 ## Public deployment
 
-The local examples disable certificate verification by omitting `sni`. Public
-deployments should use a trusted certificate and verified server name:
+Vector verifies system CA trust and the endpoint host by default. Public
+deployments can use a CA-issued certificate without a pin:
 
 ```bash
 nowhere "portal://change-me@:2000?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem"
-nowhere "vector://change-me@portal.example:2000?sni=portal.example&socks=127.0.0.1:1080"
+nowhere "vector://change-me@portal.example:2000?socks=127.0.0.1:1080"
 ```
 
 ## Documentation

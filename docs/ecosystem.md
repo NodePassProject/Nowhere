@@ -145,10 +145,10 @@ percent-encode the entire inner URL again.
 
 The CLI accepts `portal://` and `vector://`. Vector additionally requires
 `socks=` for its local listener; CLI URLs do not accept display-name fragments.
-The `sni` default differs: Vector defaults to no certificate verification,
-while Anywhere uses the endpoint host as its server name. See
-[Security](security.md) for
-Vector's verification policy.
+Vector uses the endpoint host as its verified server name by default and
+requires system CA trust unless an exact certificate pin is configured. `sni`
+can override the server name. See [Security](security.md) for Vector's
+verification policy.
 
 Use [Configuration](configuration.md) for the full CLI grammar, listener
 options, chaining, and environment variables.

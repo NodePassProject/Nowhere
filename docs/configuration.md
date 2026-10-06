@@ -111,7 +111,7 @@ sockets instead of relying on an operating-system dual-stack default.
 | `next` | `shared-key@host:port` or explicit carrier endpoint | disabled |
 | `up`, `down` | native next-hop policy: `tcp`, `udp`, or `mix` | only carrier, otherwise `tcp` |
 | `mux` | native next-hop TLS: `0` dedicated lanes, `1` Mux when TCP is possible | `0` |
-| `sni` | native next-hop verified DNS name, or `none` | `none` |
+| `sni` | native next-hop DNS name override, or `none` to use the endpoint host | endpoint host |
 | `pin` | native next-hop certificate SHA-256 pin, or `none` | `none` |
 | `log` | `none`, `debug`, `info`, `warn`, `error` | `info` |
 
@@ -191,7 +191,7 @@ traffic. The transport default does not enable Mux; omitted `mux` remains `0`.
 |---|---|---|
 | `up`, `down` | `tcp`, `udp`, or `mix` | only carrier, otherwise `tcp` |
 | `mux` | `0` dedicated TLS lanes, `1` TLS Mux | `0` |
-| `sni` | verified DNS name, or `none` | `none` |
+| `sni` | verified DNS name override, or `none` to use the endpoint host | endpoint host |
 | `pin` | certificate SHA-256 pin, or `none` | `none` |
 | `rate`, `etar` | Mbps, `0` disables limit | `0` |
 | `morph` | `0` bare TLS/QUIC wire, `1` keyed wire transform | `0` |
@@ -199,6 +199,11 @@ traffic. The transport default does not enable Mux; omitted `mux` remains `0`.
 | `log` | logging threshold | `info` |
 
 ## Native next endpoint
+
+Vector and native `next` require system CA and server-name validation unless
+an explicit certificate `pin` is configured. Empty or `none` values for `sni`
+or `pin` do not disable validation. A self-signed Portal requires its exact
+certificate fingerprint in `pin=`. See [Security](security.md).
 
 The `next` value omits a scheme but otherwise uses the Vector endpoint grammar:
 

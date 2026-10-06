@@ -45,6 +45,8 @@ nowhere probe "vector://secret@portal.example:2000?up=tcp&down=tcp" "example.com
 ```
 
 The Vector URL may omit `socks` because no local listener is started. The
+command requires the same system CA or exact certificate-pin verification as
+Vector. Add `pin=<sha256>` when probing a self-signed Portal. The
 command uses the configured TLS/QUIC, authentication, Mux, Morph and route
 policy, waits for the existing Flow setup result, and then closes the Flow. It
 does not send application payload, relay standard input or output, open UDP,

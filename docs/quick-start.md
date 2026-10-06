@@ -60,22 +60,28 @@ operating system does not support one address family.
 
 ## 2. Start Vector
 
+Portal's default generated certificate is self-signed. Replace `<sha256>` in
+the examples below with the certificate fingerprint printed on the Portal
+host at startup. The pin changes whenever a generated certificate is replaced.
+A CA-issued Portal certificate can use the default system-root and endpoint-name
+verification without a pin. See [Security](security.md).
+
 Dedicated TLS lanes in both directions use the compact endpoint defaults:
 
 ```text
-nowhere "vector://secret@127.0.0.1:2000?socks=127.0.0.1:1080"
+nowhere "vector://secret@127.0.0.1:2000?pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 QUIC in both directions:
 
 ```text
-nowhere "vector://secret@127.0.0.1:2000?up=udp&down=udp&socks=127.0.0.1:1080"
+nowhere "vector://secret@127.0.0.1:2000?up=udp&down=udp&pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 When Portal uses independent ports, Vector declares the same endpoint:
 
 ```text
-nowhere "vector://secret@127.0.0.1/tcp:2006/udp:2017?up=tcp&down=udp&socks=127.0.0.1:1080"
+nowhere "vector://secret@127.0.0.1/tcp:2006/udp:2017?up=tcp&down=udp&pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 The carrier path describes what can be dialed. `up` and `down` choose from
@@ -84,8 +90,8 @@ endpoints default both directions to TCP with Mux disabled. A single-carrier
 endpoint needs no explicit direction policy:
 
 ```text
-nowhere "vector://secret@127.0.0.1/tcp4:2006?socks=127.0.0.1:1080"
-nowhere "vector://secret@[::1]/udp6:2017?socks=127.0.0.1:1080"
+nowhere "vector://secret@127.0.0.1/tcp4:2006?pin=<sha256>&socks=127.0.0.1:1080"
+nowhere "vector://secret@[::1]/udp6:2017?pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 The first command defaults both directions to TCP; the second defaults both to
@@ -109,7 +115,7 @@ route per flow and can use the other once if primary preparation fails.
 Stateless per-flow selection across full-duplex TLS and QUIC uses:
 
 ```text
-nowhere "vector://secret@127.0.0.1:2000?up=mix&down=mix&socks=127.0.0.1:1080"
+nowhere "vector://secret@127.0.0.1:2000?up=mix&down=mix&pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 `mix/mix` chooses `tcp/tcp` or `udp/udp` once per flow. A single mixed
@@ -121,7 +127,7 @@ TLS Mux is enabled on Vector. Portal recognizes the marked carrier
 automatically:
 
 ```text
-nowhere "vector://secret@127.0.0.1:2000?up=tcp&down=tcp&mux=1&socks=127.0.0.1:1080"
+nowhere "vector://secret@127.0.0.1:2000?up=tcp&down=tcp&mux=1&pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 Both peers use the fixed `nw2` ALPN. The ALPN is not configurable.

@@ -54,9 +54,9 @@ GHCR publishes `ghcr.io/nodepassproject/nowhere` for exactly two platforms:
 `linux/amd64` and `linux/arm64`. Each repository version tag publishes the
 matching container tag and refreshes `latest`.
 
-The runtime image uses `scratch`. It contains the statically linked executable,
-a CA bundle for `sni` certificate verification, and no shell, package manager,
-or dynamic libraries.
+The runtime image uses `scratch`. It contains the statically linked executable
+and a CA bundle for default client certificate verification, with no shell,
+package manager, or dynamic libraries.
 
 Start a Portal with its generated certificate:
 
@@ -96,9 +96,9 @@ docker run -d --rm --name nowhere-portal \
 ```
 
 `crt` is the full certificate chain and `key` is its private key. A Vector
-enables verification with `sni=relay.example`; the image CA bundle trusts
-public CAs. For a private CA, mount its root certificate and set
-`SSL_CERT_FILE` to the mounted path.
+verifies the endpoint host by default; `sni=relay.example` can override that name.
+The image CA bundle trusts public CAs. For a private CA, mount its root
+certificate and set `SSL_CERT_FILE` to the mounted path.
 
 The TUI runs inside the same container as the relay:
 

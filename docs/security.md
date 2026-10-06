@@ -18,9 +18,25 @@ prevents a valid TLS/TCP AuthFrame from being reused as QUIC authentication,
 and `session_id` gives all authenticated carriers from one client a shared
 pairing scope.
 
-TLS is version 1.3. Deployments may use a certificate pin, normal system-root
-verification with SNI, or the explicitly configured unverified certificate
-mode used by generated local certificates.
+TLS is version 1.3. Vector, `probe`, and native Portal `next` verify the peer
+certificate against system CA roots by default, using the endpoint host as the
+verified DNS name or IP address. `sni=` overrides that name. Omitting `sni`,
+using `sni=none`, or leaving it empty still requires certificate verification.
+Missing, empty, or `none` pins also retain system-root verification. Unavailable
+or invalid system roots fail client initialization; clients never fall back to
+accepting an untrusted certificate.
+
+An explicit `pin=<sha256>` instead requires the exact leaf-certificate SHA-256
+fingerprint and a valid TLS handshake signature. Pinning takes precedence over
+CA and server-name validation, allowing a generated self-signed Portal
+certificate to be used securely. Obtain the expected fingerprint through a
+trusted channel, such as the Portal host's certificate log. A generated
+certificate changes when Portal restarts, so its configured pin must be updated.
+
+`nowhere fingerprint <portal-url>` reads a certificate without CA or pin
+validation for inspection. This command sends no Nowhere authentication or Flow
+data and does not establish the certificate's trusted identity. It cannot
+disable verification for Vector, `probe`, or native `next`.
 
 ## Morph boundary
 
