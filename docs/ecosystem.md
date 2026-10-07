@@ -82,7 +82,7 @@ nowhere://KEY@HOST/udp:UDP_PORT[?QUERY][#NAME]
 
 `KEY` is the shared Portal key, percent-encoded as URL userinfo; it is not
 Base64. Encode reserved characters such as `@`, `:`, `/`, `?`, `#`, and `%`.
-The client parser accepts 1–255 decoded UTF-8 bytes. Portal requires exactly 64 lowercase hex characters; replace `<generated-key>`
+The client parser accepts 1–255 decoded UTF-8 bytes. Portal requires 32–64 lowercase hex characters; replace `<generated-key>`
 in the examples with `nowhere generate-key` output. These text bytes are used
 verbatim for key derivation, without hex decoding. Use a concrete hostname or IP
 address and ports from `1` to `65535`; bracket IPv6 literals, as in

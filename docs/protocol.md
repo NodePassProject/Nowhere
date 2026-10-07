@@ -99,8 +99,8 @@ rustls or Quinn. There is no magic, version, negotiation, fallback, framing
 protocol, TLS parser, or QUIC parser.
 
 The URL-percent-decoded shared-key text bytes are the HKDF input. Generated
-keys use all 64 ASCII hex characters directly; they are not hex-decoded into
-32 bytes:
+keys use all 32 ASCII hex characters directly; they are not hex-decoded into
+16 bytes:
 
 ```text
 morph_root = HKDF-Extract-SHA256(
@@ -277,10 +277,10 @@ AuthFrame - 32 bytes
 ```
 
 The shared key is never transmitted. The derivation accepts 1–255
-URL-percent-decoded UTF-8 text bytes. Portal admits only 64 lowercase hex
-characters and uses those 64 ASCII bytes directly without hex decoding.
+URL-percent-decoded UTF-8 text bytes. Portal admits 32–64 lowercase hex
+characters and uses all ASCII key-text bytes directly without hex decoding.
 Client parsers accept 1–255 decoded bytes; Portal applies the stricter
-64-character admission rule.
+32–64-character admission rule.
 Authentication uses these fixed derivations:
 
 ```text

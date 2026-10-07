@@ -23,15 +23,17 @@ observer and does not start, stop, or reconfigure either process.
 
 ## 1. Start Portal
 
-Generate a cryptographically random 256-bit shared key:
+Generate a cryptographically random 128-bit shared key:
 
 ```text
 nowhere generate-key
 ```
 
-Replace `<generated-key>` in all examples below with the same 64-character
-lowercase hex output. Keep it private. Portal refuses to start with any
-other decoded key format, including short passwords or uppercase hex.
+Replace `<generated-key>` in all examples below with the same 32-character
+lowercase hex output. Keep it private. Portal requires 32–64 lowercase
+hex characters after URL percent decoding, rejecting short passwords and
+uppercase hex. See [Shared keys](configuration.md#shared-keys) for the complete
+key requirements.
 
 ```text
 nowhere "portal://<generated-key>@:2000?log=info"

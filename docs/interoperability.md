@@ -22,13 +22,13 @@ frame layouts; peers and every native Portal hop use the same contract.
 
 ## Key and security policy
 
-Portal requires listener and enabled `next` keys to match `[0-9a-f]{64}`
+Portal requires listener and enabled `next` keys to match `[0-9a-f]{32,64}`
 after URL percent decoding. Generate a fresh key with `nowhere generate-key`
 and configure all peers on that hop with its exact output. Each native hop
 should have an independently generated key. Authentication and Morph use the
-64 ASCII text bytes, without hex decoding. Vector and toolbox client parsers
-accept 1–255 decoded key bytes; Portal admission requires the 64-character
-format.
+complete ASCII text bytes, without hex decoding. Vector and toolbox client
+parsers accept 1–255 decoded key bytes; Portal admission requires 32–64
+lowercase hex characters, including odd lengths.
 
 System CA and server-name verification are the default for native Nowhere
 clients. Self-signed Portals require an exact certificate pin obtained through

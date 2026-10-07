@@ -44,7 +44,7 @@ Configuration integrations should preserve these invariants:
 
 - encode the shared key as URL username data and never as password userinfo;
 - use `nowhere generate-key` output for Portal listener and `next` keys;
-  pass its 64 lowercase hex characters unchanged to authentication and Morph;
+  pass its 32 lowercase hex characters unchanged to authentication and Morph;
 - keep one shared host for both carriers;
 - use either an authority port or carrier path, never both;
 - emit each transport at most once and order canonical output as TCP then UDP;

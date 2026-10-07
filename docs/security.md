@@ -2,12 +2,12 @@
 
 ## Authentication
 
-Portal enforces a 64-character lowercase hexadecimal shared key on both
+Portal enforces a 32–64-character lowercase hexadecimal shared key on both
 its listener and enabled native `next` hop. Use `nowhere generate-key`, which
-encodes 32 operating-system random bytes and provides 256 bits of random
+encodes 16 operating-system random bytes and provides 128 bits of random
 entropy. A matching format alone does not prove entropy or generator provenance.
-All peers on each hop use the same key text. The 64 text bytes are the
-authentication and Morph derivation input; they are not hex-decoded to 32 bytes.
+All peers on each hop use the same key text. The complete text bytes are the
+authentication and Morph derivation input, without hex decoding.
 See [Configuration](configuration.md#shared-keys).
 
 The shared key is never sent on the wire. A derived HMAC key authenticates a

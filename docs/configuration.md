@@ -62,22 +62,24 @@ TUI use this normalized endpoint and omit the shared key.
 ## Shared keys
 
 Generate keys with `nowhere generate-key`. Portal requires its listener
-key and each enabled `next` key to match `[0-9a-f]{64}` after URL percent
+key and each enabled `next` key to match `[0-9a-f]{32,64}` after URL percent
 decoding. Missing keys, uppercase letters, non-hex characters, whitespace,
 and other lengths fail startup before certificate loading, DNS resolution, or
 listening. There is no bypass. The TLS `key=` parameter is a PEM private-key
 path and is unrelated to this shared-key rule.
 
-The generator draws 32 random bytes from the operating system and prints them
-as 64 lowercase hex characters, providing 256 bits of random entropy. Format
+The generator draws 16 random bytes from the operating system and prints them
+as 32 lowercase hex characters, providing 128 bits of random entropy. Format
 validation cannot establish generation provenance or entropy; generate a fresh
 key rather than constructing a matching string. Keys are neither trimmed nor
 case-normalized.
 
-Authentication and Morph derive from the 64 ASCII text bytes after percent
+Authentication and Morph derive from all ASCII key-text bytes after percent
 decoding, **without hex decoding**. Vector, `probe`, and `fingerprint` accept
-1–255 decoded key bytes. A connection to Portal requires the exact generated
+1–255 decoded key bytes. A connection to Portal requires the exact key
 text configured on that hop. `<generated-key>` in examples means the actual generator output.
+
+Lengths from 32 to 64 are inclusive; odd lengths are accepted.
 
 ## Portal URL
 

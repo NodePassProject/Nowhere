@@ -14,16 +14,16 @@ Run `nowhere` without a URL and select:
 
 ## One-shot toolbox
 
-Use `generate-key` to print a cryptographically random 256-bit shared key:
+Use `generate-key` to print a cryptographically random 128-bit shared key:
 
 ```text
 nowhere generate-key
 ```
 
-The output is one line of 64 lowercase hex characters encoding 32 random bytes
+The output is one line of 32 lowercase hex characters encoding 16 random bytes
 from the operating system. Replace `<generated-key>` in the examples with this
-output. Portal requires this format for both its listener and enabled `next`
-key; use independently generated keys for different hops.
+output. Portal accepts 32–64 lowercase hex characters for its listener and
+enabled `next` key; use independently generated keys for different hops.
 
 Use `fingerprint` to read a Portal's TLS leaf certificate SHA-256 fingerprint:
 
