@@ -161,7 +161,7 @@ fn help_text_documents_usage_and_configuration_surface() {
         "etar=<mbps>",
         "NOW_MORPH_TCP_PRELUDE",
         "NOW_TRANSPORT_MEMORY_PROFILE",
-        "low7 (default) or full8",
+        "full8 (default) or low7",
         "https://github.com/NodePassProject/Nowhere/tree/main/docs",
     ] {
         assert!(

@@ -17,7 +17,7 @@ use super::{MorphKeys, NONCE_LEN, TCP_PRELUDE_LEN, exhausted};
 const TCP_STREAM_LIMIT: u64 = (1u64 << 38) - 64;
 const TCP_PRELUDE_ENV: &str = "NOW_MORPH_TCP_PRELUDE";
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TcpPreludePolicy {
     Low7,
     Full8,
@@ -25,10 +25,14 @@ enum TcpPreludePolicy {
 
 impl TcpPreludePolicy {
     fn from_env() -> io::Result<Self> {
-        match std::env::var(TCP_PRELUDE_ENV) {
+        Self::parse(std::env::var(TCP_PRELUDE_ENV))
+    }
+
+    fn parse(value: Result<String, std::env::VarError>) -> io::Result<Self> {
+        match value {
             Ok(value) if value == "low7" => Ok(Self::Low7),
             Ok(value) if value == "full8" => Ok(Self::Full8),
-            Err(std::env::VarError::NotPresent) => Ok(Self::Low7),
+            Err(std::env::VarError::NotPresent) => Ok(Self::Full8),
             Ok(_) | Err(std::env::VarError::NotUnicode(_)) => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("{TCP_PRELUDE_ENV} must be low7 or full8"),
@@ -39,15 +43,19 @@ impl TcpPreludePolicy {
     fn generate(self) -> io::Result<[u8; TCP_PRELUDE_LEN]> {
         let mut prelude = [0u8; TCP_PRELUDE_LEN];
         getrandom::fill(&mut prelude).map_err(io::Error::other)?;
+        self.apply(&mut prelude);
+        Ok(prelude)
+    }
+
+    fn apply(self, prelude: &mut [u8; TCP_PRELUDE_LEN]) {
         match self {
             Self::Low7 => {
-                for byte in &mut prelude {
+                for byte in prelude {
                     *byte &= 0x7f;
                 }
             }
             Self::Full8 => {}
         }
-        Ok(prelude)
     }
 }
 

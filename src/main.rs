@@ -106,7 +106,7 @@ Morph:
   it applies to both the listener and the native next hop.
 
 Environment:
-  NOW_MORPH_TCP_PRELUDE          Client TCP Morph prelude: low7 (default) or full8.
+  NOW_MORPH_TCP_PRELUDE          Client TCP Morph prelude: full8 (default) or low7.
   NOW_TRANSPORT_MEMORY_PROFILE   memory, balanced, or throughput. Default: throughput.
 
 Documentation:
