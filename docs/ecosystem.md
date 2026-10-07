@@ -82,7 +82,9 @@ nowhere://KEY@HOST/udp:UDP_PORT[?QUERY][#NAME]
 
 `KEY` is the shared Portal key, percent-encoded as URL userinfo; it is not
 Base64. Encode reserved characters such as `@`, `:`, `/`, `?`, `#`, and `%`.
-The decoded key must contain 1–255 UTF-8 bytes. Use a concrete hostname or IP
+The client parser accepts 1–255 decoded UTF-8 bytes. Portal requires exactly 64 lowercase hex characters; replace `<generated-key>`
+in the examples with `nowhere generate-key` output. These text bytes are used
+verbatim for key derivation, without hex decoding. Use a concrete hostname or IP
 address and ports from `1` to `65535`; bracket IPv6 literals, as in
 `[2001:db8::1]:2000`. The optional `NAME` is a percent-encoded display name.
 
@@ -117,25 +119,25 @@ setting and is not included in share links.
 **TLS over TCP with multiplexing**
 
 ```text
-nowhere://change-me@relay.example:2000?up=tcp&down=tcp&mux=1#My%20Portal
+nowhere://<generated-key>@relay.example:2000?up=tcp&down=tcp&mux=1#My%20Portal
 ```
 
 **QUIC over UDP with Morph** — the Portal must also set `morph=1`.
 
 ```text
-nowhere://change-me@relay.example:2000?up=udp&down=udp&morph=1#QUIC%20Portal
+nowhere://<generated-key>@relay.example:2000?up=udp&down=udp&morph=1#QUIC%20Portal
 ```
 
 **Separate ports and split directions** — upload over TLS, download over QUIC.
 
 ```text
-nowhere://change-me@relay.example/tcp:2006/udp:2017?up=tcp&down=udp&sni=relay.example#Split%20Portal
+nowhere://<generated-key>@relay.example/tcp:2006/udp:2017?up=tcp&down=udp&sni=relay.example#Split%20Portal
 ```
 
 Paste a link into Anywhere, or use its deep link to open the import screen:
 
 ```text
-anywhere://add-proxy?link=nowhere://change-me@relay.example:2000?up=tcp&down=tcp&mux=1#My%20Portal
+anywhere://add-proxy?link=nowhere://<generated-key>@relay.example:2000?up=tcp&down=tcp&mux=1#My%20Portal
 ```
 
 The `add-proxy` wrapper takes everything after `?link=` verbatim; do not

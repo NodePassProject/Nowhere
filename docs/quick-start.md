@@ -23,13 +23,23 @@ observer and does not start, stop, or reconfigure either process.
 
 ## 1. Start Portal
 
+Generate a cryptographically random 256-bit shared key:
+
 ```text
-nowhere "portal://secret@:2000?log=info"
+nowhere generate-key
+```
+
+Replace `<generated-key>` in all examples below with the same 64-character
+lowercase hex output. Keep it private. Portal refuses to start with any
+other decoded key format, including short passwords or uppercase hex.
+
+```text
+nowhere "portal://<generated-key>@:2000?log=info"
 ```
 
 The compact endpoint listens for TLS/TCP and QUIC on the same numeric port.
-Use `portal://secret@*/tcp4:2006` for a TCP-only IPv4 listener, or
-`portal://secret@*/tcp:2006/udp:2017` to use separate ports.
+Use `portal://<generated-key>@*/tcp4:2006` for a TCP-only IPv4 listener, or
+`portal://<generated-key>@*/tcp:2006/udp:2017` to use separate ports.
 
 On a host with IPv4 and IPv6 available, choose a listener form from the service
 edge you want to expose:
@@ -49,7 +59,7 @@ only selected interfaces. Hostnames are resolved once during startup.
 For independent carrier ports, start Portal with:
 
 ```text
-nowhere "portal://secret@*/tcp:2006/udp:2017?log=info"
+nowhere "portal://<generated-key>@*/tcp:2006/udp:2017?log=info"
 ```
 
 Portal prints one listening line for each bound TCP or UDP address. The TUI
@@ -64,24 +74,26 @@ Portal's default generated certificate is self-signed. Replace `<sha256>` in
 the examples below with the certificate fingerprint printed on the Portal
 host at startup. The pin changes whenever a generated certificate is replaced.
 A CA-issued Portal certificate can use the default system-root and endpoint-name
-verification without a pin. See [Security](security.md).
+verification without a pin. A remote `fingerprint` result alone does not prove
+the certificate's identity; compare it with the Portal host's fingerprint through
+a trusted channel. See [Security](security.md).
 
 Dedicated TLS lanes in both directions use the compact endpoint defaults:
 
 ```text
-nowhere "vector://secret@127.0.0.1:2000?pin=<sha256>&socks=127.0.0.1:1080"
+nowhere "vector://<generated-key>@127.0.0.1:2000?pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 QUIC in both directions:
 
 ```text
-nowhere "vector://secret@127.0.0.1:2000?up=udp&down=udp&pin=<sha256>&socks=127.0.0.1:1080"
+nowhere "vector://<generated-key>@127.0.0.1:2000?up=udp&down=udp&pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 When Portal uses independent ports, Vector declares the same endpoint:
 
 ```text
-nowhere "vector://secret@127.0.0.1/tcp:2006/udp:2017?up=tcp&down=udp&pin=<sha256>&socks=127.0.0.1:1080"
+nowhere "vector://<generated-key>@127.0.0.1/tcp:2006/udp:2017?up=tcp&down=udp&pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 The carrier path describes what can be dialed. `up` and `down` choose from
@@ -90,8 +102,8 @@ endpoints default both directions to TCP with Mux disabled. A single-carrier
 endpoint needs no explicit direction policy:
 
 ```text
-nowhere "vector://secret@127.0.0.1/tcp4:2006?pin=<sha256>&socks=127.0.0.1:1080"
-nowhere "vector://secret@[::1]/udp6:2017?pin=<sha256>&socks=127.0.0.1:1080"
+nowhere "vector://<generated-key>@127.0.0.1/tcp4:2006?pin=<sha256>&socks=127.0.0.1:1080"
+nowhere "vector://<generated-key>@[::1]/udp6:2017?pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 The first command defaults both directions to TCP; the second defaults both to
@@ -115,7 +127,7 @@ route per flow and can use the other once if primary preparation fails.
 Stateless per-flow selection across full-duplex TLS and QUIC uses:
 
 ```text
-nowhere "vector://secret@127.0.0.1:2000?up=mix&down=mix&pin=<sha256>&socks=127.0.0.1:1080"
+nowhere "vector://<generated-key>@127.0.0.1:2000?up=mix&down=mix&pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 `mix/mix` chooses `tcp/tcp` or `udp/udp` once per flow. A single mixed
@@ -127,7 +139,7 @@ TLS Mux is enabled on Vector. Portal recognizes the marked carrier
 automatically:
 
 ```text
-nowhere "vector://secret@127.0.0.1:2000?up=tcp&down=tcp&mux=1&pin=<sha256>&socks=127.0.0.1:1080"
+nowhere "vector://<generated-key>@127.0.0.1:2000?up=tcp&down=tcp&mux=1&pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
 Both peers use the fixed `nw2` ALPN. The ALPN is not configurable.

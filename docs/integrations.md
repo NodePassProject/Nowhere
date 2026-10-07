@@ -43,6 +43,8 @@ DNS and literal addresses to IPv4 or IPv6.
 Configuration integrations should preserve these invariants:
 
 - encode the shared key as URL username data and never as password userinfo;
+- use `nowhere generate-key` output for Portal listener and `next` keys;
+  pass its 64 lowercase hex characters unchanged to authentication and Morph;
 - keep one shared host for both carriers;
 - use either an authority port or carrier path, never both;
 - emit each transport at most once and order canonical output as TCP then UDP;
@@ -53,8 +55,8 @@ Configuration integrations should preserve these invariants:
 - emit `morph=1` only when both peers on that hop implement the Morph wire
   transform; omission and `morph=0` are equivalent.
 
-Portal accepts `portal://key@:2000` as the compact wildcard alias. Explicit
-Portal listeners use `portal://key@*/tcp:2006/udp:2017`. Vector and native
+Portal accepts `portal://<generated-key>@:2000` as the compact wildcard alias. Explicit
+Portal listeners use `portal://<generated-key>@*/tcp:2006/udp:2017`. Vector and native
 `next` endpoints require an IP literal or hostname. Implementations that show
 or log effective configuration omit credentials and retain the normalized
 carrier path.
@@ -95,8 +97,8 @@ replays a request after any FlowHeader or Target bytes may have been accepted.
 
 ## Chained Portal
 
-`next=shared-key@host:port` or an explicit endpoint such as
-`next=shared-key@host/tcp:2006/udp:2017` creates the same client engine used
+`next=<generated-key>@host:port` or an explicit endpoint such as
+`next=<generated-key>@host/tcp:2006/udp:2017` creates the same client engine used
 by Vector, including `up/down=mix` and pre-commit fallback. `mux=0|1` selects
 dedicated or Mux TLS when TCP can be selected and defaults to `0`; it has no
 effect without `next` and canonicalizes to `0` for `udp/udp`. Authentication,

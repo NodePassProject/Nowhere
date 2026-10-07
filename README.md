@@ -44,27 +44,40 @@ Use a stable Rust toolchain on a supported target, or download a
 cargo build --release --locked
 ```
 
-### 2. Start Portal
+### 2. Generate a key
+
+Generate a shared key for `<generated-key>` in both Portal and Vector URLs:
+
+```bash
+./target/release/nowhere generate-key
+```
+
+### 3. Start Portal
 
 Listen on TLS/TCP and QUIC/UDP at all interfaces on port `2000`:
 
 ```bash
-./target/release/nowhere "portal://change-me@*:2000"
+./target/release/nowhere "portal://<generated-key>@*:2000"
 ```
 
-### 3. Start Vector
+### 4. Get the certificate fingerprint
+
+Verify the output against Portal's startup log, then use it for `pin=<sha256>`:
+
+```bash
+./target/release/nowhere fingerprint "nowhere://<generated-key>@portal.example:2000"
+```
+
+### 5. Start Vector
 
 Connect to Portal and expose SOCKS5 on `127.0.0.1:1080`:
 
-For the generated Portal certificate, replace `<sha256>` with the fingerprint
-printed on the Portal host at startup:
-
 ```bash
 ./target/release/nowhere \
-  "vector://change-me@portal.example:2000?up=tcp&down=tcp&pin=<sha256>&socks=127.0.0.1:1080"
+  "vector://<generated-key>@portal.example:2000?up=tcp&down=tcp&pin=<sha256>&socks=127.0.0.1:1080"
 ```
 
-### 4. Inspect
+### 6. Inspect
 
 Open the local TUI from another terminal:
 
@@ -79,13 +92,13 @@ Open the local TUI from another terminal:
 <td width="50%" valign="top">
 <sub>CLIENT</sub><br><br>
 <strong><a href="https://github.com/NodePassProject/Anywhere">Anywhere</a></strong><br>
-Native Swift client with independent TCP/UDP carriers, TLS multiplexing, and Morph.<br><br>
+Native Swift client for TCP/UDP, Mux, and Morph.<br><br>
 <a href="https://apps.apple.com/us/app/id6758235178">App Store</a>
 </td>
 <td width="50%" valign="top">
 <sub>DEPLOY</sub><br><br>
 <strong><a href="https://github.com/NodePassProject/nowhere-sh">nowhere-sh</a></strong><br>
-Interactive Linux VPS deployment script for installation, upgrades, links, QR codes.<br><br>
+Interactive Linux deployment and share links.<br><br>
 <a href="https://github.com/NodePassProject/nowhere-sh#quick-start">Quick start</a>
 </td>
 </tr>
@@ -93,13 +106,13 @@ Interactive Linux VPS deployment script for installation, upgrades, links, QR co
 <td width="50%" valign="top">
 <sub>CONTROL</sub><br><br>
 <strong><a href="https://github.com/NodePassProject/OpenCtrl">OpenCtrl</a></strong><br>
-Supervises Nowhere processes and exposes their telemetry through REST and SSE.<br><br>
+Process control and telemetry over REST/SSE.<br><br>
 <a href="https://github.com/NodePassProject/OpenCtrl/blob/main/docs/master.md">API reference</a>
 </td>
 <td width="50%" valign="top">
 <sub>OPERATE</sub><br><br>
 <strong><a href="https://github.com/NodePassProject/NowhereDash">NowhereDash</a></strong><br>
-Web dashboard managed through OpenCtrl, with live telemetry and protected subscriptions.<br><br>
+Web dashboard for telemetry and subscriptions.<br><br>
 <a href="https://github.com/NodePassProject/NowhereDash#quick-start">Quick start</a>
 </td>
 </tr>
@@ -157,6 +170,8 @@ policy independently on each hop.
 
 ## Data path
 
+The `nw2` wire contract is fixed. Product releases follow the [protocol compatibility policy](docs/protocol.md#protocol-status-and-compatibility).
+
 ```text
 Carrier bootstrap                 Logical flow
 
@@ -183,11 +198,13 @@ UDP  each datagram      [ nonce 12B ][ ChaCha20-XOR(QUIC datagram) ]
 
 ### Native chaining
 
-A Portal can open the next Nowhere hop directly:
+A Portal can open the next Nowhere hop directly. Generate independent keys for
+the relay and origin, replace `<relay-key>` and `<origin-key>`, and configure
+each peer with its hop's key:
 
 ```bash
 nowhere \
-  "portal://relay-key@:2000?next=origin-key@origin.example:2000&up=udp&down=udp"
+  "portal://<relay-key>@:2000?next=<origin-key>@origin.example:2000&up=udp&down=udp"
 ```
 
 `next` is lazy, mutually exclusive with outbound `socks`, and bounded to seven
@@ -209,8 +226,8 @@ Vector verifies system CA trust and the endpoint host by default. Public
 deployments can use a CA-issued certificate without a pin:
 
 ```bash
-nowhere "portal://change-me@:2000?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem"
-nowhere "vector://change-me@portal.example:2000?socks=127.0.0.1:1080"
+nowhere "portal://<generated-key>@:2000?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem"
+nowhere "vector://<generated-key>@portal.example:2000?socks=127.0.0.1:1080"
 ```
 
 ## Documentation

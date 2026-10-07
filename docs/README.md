@@ -78,8 +78,8 @@ share `HOST`, while their ports and address families remain independent.
 | Vector | IP literal or hostname | Dials only the declared remote carriers |
 | Portal `next` | IP literal or hostname | Uses the same client engine as Vector |
 
-`portal://key@:2000` is the compact alias for
-`portal://key@*:2000`. Vector and `next` reject `*`. A Portal resolves listener
+`portal://<generated-key>@:2000` is the compact alias for
+`portal://<generated-key>@*:2000`. Vector and `next` reject `*`. A Portal resolves listener
 hostnames once at startup and binds every matching address; clients resolve and
 filter each carrier by its declared family. Configuration errors stop startup
 before service traffic is accepted. The full syntax and error rules are in

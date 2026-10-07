@@ -59,14 +59,34 @@ compact form when both carriers are unrestricted and use the same port;
 otherwise it prints the explicit path. Effective configuration, logs, and the
 TUI use this normalized endpoint and omit the shared key.
 
+## Shared keys
+
+Generate keys with `nowhere generate-key`. Portal requires its listener
+key and each enabled `next` key to match `[0-9a-f]{64}` after URL percent
+decoding. Missing keys, uppercase letters, non-hex characters, whitespace,
+and other lengths fail startup before certificate loading, DNS resolution, or
+listening. There is no bypass. The TLS `key=` parameter is a PEM private-key
+path and is unrelated to this shared-key rule.
+
+The generator draws 32 random bytes from the operating system and prints them
+as 64 lowercase hex characters, providing 256 bits of random entropy. Format
+validation cannot establish generation provenance or entropy; generate a fresh
+key rather than constructing a matching string. Keys are neither trimmed nor
+case-normalized.
+
+Authentication and Morph derive from the 64 ASCII text bytes after percent
+decoding, **without hex decoding**. Vector, `probe`, and `fingerprint` accept
+1–255 decoded key bytes. A connection to Portal requires the exact generated
+text configured on that hop. `<generated-key>` in examples means the actual generator output.
+
 ## Portal URL
 
 ```text
-portal://shared-key@host:port?tls=1&log=info
-portal://shared-key@*:2000?tls=1&log=info
-portal://shared-key@*/tcp:2006/udp:2017?tls=1&log=info
-portal://shared-key@host/tcp4:2006/udp6:2017?tls=1&log=info
-portal://shared-key@*:2000?tls=1&morph=1&log=info
+portal://<generated-key>@host:port?tls=1&log=info
+portal://<generated-key>@*:2000?tls=1&log=info
+portal://<generated-key>@*/tcp:2006/udp:2017?tls=1&log=info
+portal://<generated-key>@host/tcp4:2006/udp6:2017?tls=1&log=info
+portal://<generated-key>@*:2000?tls=1&morph=1&log=info
 ```
 
 The compact `host:port` form enables TLS/TCP and QUIC/UDP on the same port.
@@ -108,7 +128,7 @@ sockets instead of relying on an operating-system dual-stack default.
 | `dial6` | `auto` or local IPv6; mutually exclusive with `dial` | `auto` |
 | `morph` | `0` bare TLS/QUIC wire, `1` keyed wire transform | `0` |
 | `socks` | outbound SOCKS5 configuration | disabled |
-| `next` | `shared-key@host:port` or explicit carrier endpoint | disabled |
+| `next` | `<generated-key>@host:port` or explicit carrier endpoint | disabled |
 | `up`, `down` | native next-hop policy: `tcp`, `udp`, or `mix` | only carrier, otherwise `tcp` |
 | `mux` | native next-hop TLS: `0` dedicated lanes, `1` Mux when TCP is possible | `0` |
 | `sni` | native next-hop DNS name override, or `none` to use the endpoint host | endpoint host |
@@ -127,16 +147,16 @@ Outbound source selection uses one of two mutually exclusive modes:
 | `dial4=192.0.2.10&dial6=2001:db8::10` | `192.0.2.10` | `2001:db8::10` |
 
 Any occurrence of `dial`, including `dial=auto`, conflicts with `dial4` or
-`dial6`. Both new parameters accept lowercase `auto`; omitting either means
+`dial6`. Both parameters accept lowercase `auto`; omitting either means
 automatic source selection for that family. Recognized duplicate keys keep
-only their first value. Effective configuration preserves the old `dial=...`
-form for legacy mode and always shows both `dial4=...` and `dial6=...` in the
-new mode, including when both are automatic.
+only their first value. Effective configuration prints `dial=...` for `dial`
+mode and both `dial4=...` and `dial6=...` for dual-stack mode, including when
+both are automatic.
 
 Source addresses must be bare IP literals after the normal query decoding.
 Empty values, hostnames, ports, brackets, zone IDs, and wrong-family literals
 are invalid. `dial6` also rejects IPv4-mapped IPv6 literals. `0.0.0.0` and `::`
-remain valid wildcard bind addresses, matching legacy `dial` behavior; with
+are valid wildcard bind addresses, matching `dial` behavior; with
 `dial4` or `dial6` they do not disable the other family.
 
 The policy applies to direct TCP/UDP targets, local SOCKS5 control and UDP
@@ -146,19 +166,19 @@ The policy does not constrain the SOCKS5 server's connection to the final
 target. Inbound listener families do not constrain outbound families.
 
 Startup validates syntax only. Source availability is checked when a socket
-is bound. A failed bind follows the existing candidate retry loop, allowing
+is bound. A failed bind follows the candidate retry loop, allowing
 another family to succeed, but never silently replaces a configured source
-with automatic binding. DNS order, sequential attempts, and existing timeout
-boundaries are preserved. UDP connect success does not establish remote
-reachability. No Happy Eyeballs or reachability probes are added.
+with automatic binding. Dialing follows DNS order, sequential attempts, and
+configured timeout boundaries. UDP connect success does not establish remote
+reachability.
 
-Legacy configurations retain their behavior. `dial4` and `dial6` require a
-binary that supports these parameters: older binaries ignore unknown query
-keys and therefore do not enforce the requested source binding.
+Portal applies `dial`, `dial4`, and `dial6` to its outbound connections.
+Standalone Vector, `probe`, and `fingerprint` also ignore these Portal-only
+source parameters and use system-selected source addresses.
 
 When `next` is enabled, `up`, `down`, `mux`, `sni`, and `pin` configure that
-upstream hop. Protocol version is negotiated independently with the next
-Portal. These upstream options are ignored when `next` is absent or `none`.
+upstream hop. TLS/QUIC handshakes and authentication run independently on each
+hop. These upstream options are ignored when `next` is absent or `none`.
 `socks` and `next` are mutually exclusive outbound paths.
 
 `morph=1` controls both the Portal listener and its native `next` client. The
@@ -168,11 +188,11 @@ them from the key inside `next`. The nested value never carries an inner query.
 ## Vector URL
 
 ```text
-vector://shared-key@host:port?up=tcp&down=tcp&socks=127.0.0.1:1080
-vector://shared-key@host/tcp:2006?socks=127.0.0.1:1080
-vector://shared-key@host/udp6:2017?socks=127.0.0.1:1080
-vector://shared-key@host/tcp:2006/udp:2017?up=tcp&down=udp&socks=127.0.0.1:1080
-vector://shared-key@host:2000?morph=1&socks=127.0.0.1:1080
+vector://<generated-key>@host:port?up=tcp&down=tcp&socks=127.0.0.1:1080
+vector://<generated-key>@host/tcp:2006?socks=127.0.0.1:1080
+vector://<generated-key>@host/udp6:2017?socks=127.0.0.1:1080
+vector://<generated-key>@host/tcp:2006/udp:2017?up=tcp&down=udp&socks=127.0.0.1:1080
+vector://<generated-key>@host:2000?morph=1&socks=127.0.0.1:1080
 ```
 
 Vector uses the TCP carrier port only for TLS and the UDP carrier port only for
@@ -208,8 +228,8 @@ certificate fingerprint in `pin=`. See [Security](security.md).
 The `next` value omits a scheme but otherwise uses the Vector endpoint grammar:
 
 ```text
-portal://relay-key@*/tcp4:2006?next=origin-key@origin.example/udp6:2017
-portal://relay-key@:2000?next=origin-key@origin.example/tcp:2006/udp:2017&up=tcp&down=udp
+portal://<relay-key>@*/tcp4:2006?next=<origin-key>@origin.example/udp6:2017
+portal://<relay-key>@:2000?next=<origin-key>@origin.example/tcp:2006/udp:2017&up=tcp&down=udp
 ```
 
 The local Portal listener and upstream endpoint are independent. The first
@@ -219,15 +239,17 @@ over IPv6. A carrier or family chosen locally does not constrain the next hop.
 `next` must contain exactly one encoded shared key, `@`, and one endpoint. Its
 host must be concrete; `*` is invalid. It has no inner query or fragment.
 `up`, `down`, `mux`, `sni`, `pin`, and `morph` remain query parameters of the outer
-Portal URL. Reserved bytes in the nested key are percent-encoded once and are
-decoded once when the upstream credentials are built.
+Portal URL. The nested key follows the same strict format as the listener key.
+Percent escapes in the nested key are decoded once when upstream credentials
+are built. Generate a separate key for every hop and configure both peers with
+that hop's exact key.
 
 The `dial` IP from the outer Portal URL also constrains native upstream
 connections. The selected endpoint family and the local `dial` family must
 both match a resolved upstream address. No connection crosses an explicit
 family boundary to recover from a failure. In dual-stack source mode,
 `dial4` and `dial6` only bind matching candidates; an unused family binding is
-allowed (for example, `next=key@host/tcp4:2000&dial6=::1`).
+allowed (for example, `next=<generated-key>@host/tcp4:2000&dial6=::1`).
 
 ## Option scope
 
@@ -320,7 +342,7 @@ present.
   segments, trailing slashes, unknown or duplicate carriers, and zero ports are
   invalid.
 - Portal allows `*` as the wildcard listen host. The compact
-  `portal://key@:port` form is equivalent to `*`; explicit
+  `portal://<generated-key>@:port` form is equivalent to `*`; explicit
   carrier paths require a host. Vector and `next` reject `*`.
 - IP literals must agree with an explicit `4` or `6` carrier suffix. Hostnames
   are filtered to the selected address family.
@@ -356,7 +378,7 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `NOW_MORPH_TCP_PRELUDE` | `low7` | Client TCP Morph prelude policy: `low7` (7-bit Random) or `full8` (8-bit Random) |
+| `NOW_MORPH_TCP_PRELUDE` | `full8` | Client TCP Morph prelude policy: `low7` (7-bit Random) or `full8` (8-bit Random) |
 | `NOW_TRANSPORT_MEMORY_PROFILE` | `throughput` | QUIC and TLS Mux profile: `memory`, `balanced`, or `throughput` |
 | `NOW_QUIC_UDP_QUEUE_BYTES` | `4 MiB` | QUIC datagram and reassembly byte budget |
 | `NOW_FLOW_PAIR_TIMEOUT` | `15s` | Portal split-flow pairing deadline |
@@ -382,15 +404,14 @@ window. Each flow has at most one DATA frame queued or being written, so a bulk
 writer cannot fill the shared queue. Receive queues are bounded by byte credit
 without blocking unrelated flows on per-flow frame counts. The application
 shares at most eight carriers across both directions and retires
-fully idle shards after 30 seconds. The former TCP, UDP, SOCKS association, and
-pending split-pair application quotas are absent. Independent resource admission
+fully idle shards after 30 seconds. Resource admission
 allows up to 1,024 accepted SOCKS clients and 1,024 active SOCKS UDP targets per
 Vector. Portal pairing admits up to 4,096 active or pending claims per
 authenticated session and 65,536 total. QUIC stream credit
 grows with live and pending QUIC
 flows, reserving setup headroom of at least 64 streams or 25% of that count and
 stopping at the per-session claim budget.
-This avoids the former application flow quotas and excessive eager stream allocation.
+Stream credit tracks demand without excessive eager allocation.
 Byte budgets and setup, pairing, and idle deadlines apply; per-flow
 Mux metadata and Vector SOCKS target tasks have the resource ceilings described
 above. These do not impose an aggregate limit on Portal sessions or target sockets.

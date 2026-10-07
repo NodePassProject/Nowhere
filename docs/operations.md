@@ -21,19 +21,21 @@ nowhere generate-key
 ```
 
 The output is one line of 64 lowercase hex characters encoding 32 random bytes
-from the operating system.
+from the operating system. Replace `<generated-key>` in the examples with this
+output. Portal requires this format for both its listener and enabled `next`
+key; use independently generated keys for different hops.
 
 Use `fingerprint` to read a Portal's TLS leaf certificate SHA-256 fingerprint:
 
 ```text
-nowhere fingerprint "nowhere://secret@portal.example:2000#My%20Portal"
-nowhere fingerprint "nowhere://secret@portal.example/tcp:2006/udp:2017?morph=1"
+nowhere fingerprint "nowhere://<generated-key>@portal.example:2000#My%20Portal"
+nowhere fingerprint "nowhere://<generated-key>@portal.example/tcp:2006/udp:2017?morph=1"
 ```
 
 The output is one line of 64 lowercase hex characters, suitable for `pin=`.
 The command accepts a `nowhere://` share link with a shared key, a concrete host,
 and a TCP carrier. Share-link carrier paths use `tcp` and `udp`; address-family
-suffixes are not supported. It uses the existing TLS handshake timeout and
+suffixes are not supported. It uses the configured TLS handshake timeout and
 supports `morph=1` with the Portal's shared key. `sni=` selects the requested
 TLS server name. It retrieves the certificate without
 CA or pin validation, sends no Nowhere authentication or Flow data, and exits
@@ -48,17 +50,17 @@ values. Common transport causes such as connection refusal are included.
 Use `probe` to open one real TCP Flow through the normal Portal client path:
 
 ```text
-nowhere probe "vector://secret@portal.example:2000?up=tcp&down=tcp" "example.com:443"
+nowhere probe "vector://<generated-key>@portal.example:2000?up=tcp&down=tcp" "example.com:443"
 ```
 
 The Vector URL may omit `socks` because no local listener is started. The
 command requires the same system CA or exact certificate-pin verification as
 Vector. Add `pin=<sha256>` when probing a self-signed Portal. The
 command uses the configured TLS/QUIC, authentication, Mux, Morph and route
-policy, waits for the existing Flow setup result, and then closes the Flow. It
+policy, waits for the Flow setup result, and then closes the Flow. It
 does not send application payload, relay standard input or output, open UDP,
 repeat the attempt, or benchmark the path. An `OK` result confirms the
-end-to-end Portal-to-target setup; failures report the existing setup result or
+end-to-end Portal-to-target setup; failures report the setup result or
 the failed stage, such as `DIAL_FAILED` or `TRANSPORT_FAILED`.
 
 Use `status` for one read-only snapshot of every discoverable local instance:
@@ -119,8 +121,7 @@ the other family.
 
 Payload memory is controlled by the selected 4/8, 8/16, or 16/32 MiB
 per-stream/per-Mux receive windows, bounded reusable relay-buffer caches, and
-QUIC UDP queue/reassembly limits. The former logical TCP, UDP, SOCKS, and
-pending-pair application quotas are absent. Implementation safeguards admit at
+QUIC UDP queue/reassembly limits. Implementation safeguards admit at
 most 4,096 active streams per Mux carrier, 1,024 accepted SOCKS clients per
 Vector, and 1,024 active SOCKS UDP targets per Vector. Portal pairing admits at
 most 4,096 active or pending claims per authenticated session and 65,536 total.
@@ -151,8 +152,7 @@ reseeded before stream exhaustion.
 ### TLS Shard placement
 
 An originating client shares one full-duplex TLS carrier pool across directions.
-There is no legacy logical-flow quota; each Mux carrier has an independent
-4,096-stream resource ceiling.
+Each Mux carrier has an independent 4,096-stream resource ceiling.
 
 ```text
 new flow --> idle carrier? --> reuse

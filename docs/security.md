@@ -2,6 +2,14 @@
 
 ## Authentication
 
+Portal enforces a 64-character lowercase hexadecimal shared key on both
+its listener and enabled native `next` hop. Use `nowhere generate-key`, which
+encodes 32 operating-system random bytes and provides 256 bits of random
+entropy. A matching format alone does not prove entropy or generator provenance.
+All peers on each hop use the same key text. The 64 text bytes are the
+authentication and Morph derivation input; they are not hex-decoded to 32 bytes.
+See [Configuration](configuration.md#shared-keys).
+
 The shared key is never sent on the wire. A derived HMAC key authenticates a
 frame bound to the TLS exporter, carrier type, and random session ID. Replaying
 the frame on another connection fails.
@@ -62,8 +70,8 @@ or timing, imitate HTTPS, or provide session security. TLS/QUIC and AuthFrame
 remain mandatory. Random nonces can collide, UDP maintains no replay state,
 and TCP does not remember previously used client nonces. Shared keys therefore
 need adequate entropy; HKDF does not make a guessable key expensive to search.
-The default `low7` policy fills the prelude with random bytes whose high bits
-are clear; `full8` uses unrestricted random bytes. The TCP prelude is only
+The default `full8` policy fills the prelude with unrestricted random bytes.
+Explicit `low7` clears each byte's high bit. The TCP prelude is only
 first-flight byte shaping. It provides no
 authentication, integrity, replay defense, camouflage guarantee, or censorship
 resistance.
@@ -79,9 +87,9 @@ endpoint exposes TLS/TCP and QUIC/UDP on the same port. An explicit path exposes
 only its declared carriers, ports, and address families:
 
 ```text
-portal://key@*/tcp4:2006
-portal://key@192.0.2.10/tcp:2006/udp:2017
-portal://key@[2001:db8::10]/udp6:2017
+portal://<generated-key>@*/tcp4:2006
+portal://<generated-key>@192.0.2.10/tcp:2006/udp:2017
+portal://<generated-key>@[2001:db8::10]/udp6:2017
 ```
 
 `*` and the compact empty host bind wildcard interfaces. Use a concrete local
@@ -133,8 +141,7 @@ incoming deliveries, and terminal deliveries each have a separate 4,096-entry
 ceiling, so OPEN/RESET churn cannot grow either delivery queue without bound.
 Queue overflow closes the carrier without blocking its reader. One
 authenticated inbound Mux carrier is subject to the same fully idle timeout.
-The former authenticated-session logical-flow quotas are absent. Independent
-resource admission caps Mux streams, accepted SOCKS clients, active SOCKS UDP
+Resource admission caps Mux streams, accepted SOCKS clients, active SOCKS UDP
 targets, and Portal flow claims. Each authenticated Portal session admits 4,096
 active or pending claims, with 65,536 across the pairing registry; byte windows
 do not bound those resources.
@@ -145,9 +152,9 @@ OPEN/FIN/RESET/WINDOW frames cannot turn those slots into
 retained application payload. These are credit ceilings rather than eagerly
 allocated payload buffers.
 
-TCP, UoT, and QUIC flows all follow the same policy: byte budgets, lifecycle
-timeouts, and resource admission apply without restoring legacy application quotas. QUIC expands
-stream credit with actual demand and clamps it to the session claim budget.
+TCP, UoT, and QUIC flows are governed by byte budgets, lifecycle timeouts, and
+resource admission. QUIC expands stream credit with actual demand and clamps
+it to the session claim budget.
 Operators control aggregate exposure through key distribution, host resource
 limits, and network-level admission policy.
 

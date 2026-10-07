@@ -2,6 +2,11 @@
 
 ## Peer contract
 
+The `nw2` contract is fixed under the
+[protocol compatibility policy](protocol.md#protocol-status-and-compatibility).
+Product versions evolve independently. Incompatible changes require a distinct
+protocol identifier and explicit out-of-band selection for pre-ALPN Morph.
+
 Every TLS/TCP and QUIC/UDP carrier uses TLS 1.3 and the ALPN `nw2`. The client
 offers `nw2`, and the server accepts a carrier only when TLS selects it. The
 authentication derivation, flow headers, setup results, and Mux frames follow
@@ -15,6 +20,21 @@ V2 uses 7-byte Mux headers and 4-byte QUIC UDP base headers (12 bytes for
 fragments), with a shared 30-bit flow ID range. The `nw2` protocol fixes these
 frame layouts; peers and every native Portal hop use the same contract.
 
+## Key and security policy
+
+Portal requires listener and enabled `next` keys to match `[0-9a-f]{64}`
+after URL percent decoding. Generate a fresh key with `nowhere generate-key`
+and configure all peers on that hop with its exact output. Each native hop
+should have an independently generated key. Authentication and Morph use the
+64 ASCII text bytes, without hex decoding. Vector and toolbox client parsers
+accept 1–255 decoded key bytes; Portal admission requires the 64-character
+format.
+
+System CA and server-name verification are the default for native Nowhere
+clients. Self-signed Portals require an exact certificate pin obtained through
+a trusted channel. Remote `fingerprint` inspection alone does not establish
+trust. These configuration policies tighten security without changing frames.
+
 ## Endpoint contract
 
 Portal listeners, Vector remotes, and Portal `next` endpoints share two forms:
@@ -26,7 +46,7 @@ HOST/CARRIER:PORT[/CARRIER:PORT]
 
 The compact form declares TLS/TCP and QUIC/UDP on one numeric port. The explicit
 form declares only the listed carriers and may select separate ports or address
-families. An empty Portal host, as in `portal://key@:2000`, selects the wildcard
+families. An empty Portal host, as in `portal://<generated-key>@:2000`, selects the wildcard
 listener. Vector and `next` endpoints require a dialable host.
 
 Endpoint syntax selects local sockets and is not transmitted on the wire. The
@@ -43,9 +63,9 @@ receiver consumes the prelude without interpreting it, so the `low7` and
 HKDF labels, counter origin, byte limits, and wire layout are normative in
 [Protocol](protocol.md).
 
-The Morph wire contract is incompatible with Nowhere 2.0.x. Upgrade both peers
-on every Morph-enabled hop together. Connections with `morph=0` retain their
-existing wire contract.
+The Morph wire contract is incompatible with Nowhere 2.0.x. Both peers on each
+Morph-enabled hop must implement the same transform. With `morph=0`, the hop
+uses bare TLS/QUIC and has no Morph bootstrap.
 
 Implementations must preserve TCP stream offsets across partial I/O and treat
 each GSO/GRO segment as a separate UDP datagram. QUIC sees the decoded packet
@@ -67,8 +87,8 @@ TLS listener.
 The Mux pool is full duplex and shared by both logical directions. It opens
 carriers lazily, reuses idle carriers, selects the least occupied carrier at
 capacity, and contains at most eight connecting or established carriers per
-session. A fully idle carrier closes after 30 seconds. There is no legacy
-application stream quota; each carrier has a 4,096-stream resource ceiling.
+session. A fully idle carrier closes after 30 seconds. Each carrier has a
+4,096-stream resource ceiling.
 
 ## Route contract
 

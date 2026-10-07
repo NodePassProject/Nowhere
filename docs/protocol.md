@@ -5,6 +5,43 @@ are unsigned and use network byte order. Byte offsets start at zero. Reserved
 bits MUST be zero, and decoders reject unknown values unless this document says
 otherwise.
 
+## Protocol status and compatibility
+
+The `nw2` wire contract is **fixed**. This specification is the authoritative
+peer contract. Product release numbers and wire protocol identifiers are
+independent.
+
+The fixed contract covers TLS 1.3 and ALPN selection, shared-key text input and
+authentication derivations, field layouts and meanings, frame ordering,
+reserved-value handling, interoperability requirements, and the current Morph
+bootstrap, cipher parameters, and direction-specific derivation labels.
+Implementations MUST preserve these requirements when using this contract.
+An incompatible protocol change MUST use a distinct protocol identifier;
+reserved values MUST NOT be repurposed within `nw2`. Morph runs before ALPN is
+available, so an incompatible Morph transform MUST also have an explicit
+out-of-band selection mechanism. A new ALPN alone cannot select that transform.
+The protocol has no version byte, capability exchange, or downgrade mechanism.
+
+Implementation policies described below are informative: scheduling, carrier
+pool placement and size, queue and resource ceilings, timeouts, and the default
+prelude sender policy may evolve while preserving the peer contract. Wire
+encoding limits, advertised credit, flow and carrier failure semantics, and
+other requirements for interoperability remain normative. Implementations
+MUST honor advertised credit even when their local limits differ.
+
+Portal's generated-key format and client certificate trust rules are local
+security policies. Both `low7` and `full8` preludes are valid because their
+contents are opaque to the receiver. The current Morph
+contract is incompatible with Nowhere 2.0.x; a shared `nw2` ALPN alone does not
+establish compatibility with every historical release.
+
+Uppercase requirement keywords, including MUST, MUST NOT, SHOULD, SHOULD NOT,
+MAY, and OPTIONAL, carry the meanings defined by
+[BCP 14 (RFC 2119 and RFC 8174)](https://www.rfc-editor.org/info/bcp14/).
+Lowercase usage has its ordinary meaning. This compatibility policy follows
+the interoperability considerations in
+[RFC 6709](https://www.rfc-editor.org/rfc/rfc6709.html).
+
 ## Contents
 
 1. [Carrier model](#1-carrier-model)
@@ -61,7 +98,9 @@ or QUIC/UDP. It changes the socket wire image and is removed before bytes reach
 rustls or Quinn. There is no magic, version, negotiation, fallback, framing
 protocol, TLS parser, or QUIC parser.
 
-The decoded shared-key bytes are the HKDF input:
+The URL-percent-decoded shared-key text bytes are the HKDF input. Generated
+keys use all 64 ASCII hex characters directly; they are not hex-decoded into
+32 bytes:
 
 ```text
 morph_root = HKDF-Extract-SHA256(
@@ -95,8 +134,9 @@ The prelude is opaque protocol data. The server consumes it without validating
 or decoding its contents; it carries no keying or authentication data. The
 `low7` (7-bit Random) sender policy generates operating-system random bytes and
 clears each byte's high bit. `full8` (8-bit Random) leaves all eight random bits
-unchanged. The server sends no Morph prefix. Each
-direction has an independent stream offset. TLS bytes retain their length and
+unchanged. The default sender policy is `full8`; receivers accept either
+policy. The server sends no Morph prefix. Each direction has an independent
+stream offset. TLS bytes retain their length and
 the client-to-server connection bootstrap adds exactly 76 bytes. A direction
 stops before counter exhaustion, after at most `2^38 - 64` transformed bytes,
 and never wraps or rekeys.
@@ -236,8 +276,12 @@ AuthFrame - 32 bytes
          +---------------------------------------+---------------+
 ```
 
-The shared key is 1–255 decoded bytes and is never transmitted. Authentication
-uses these fixed derivations:
+The shared key is never transmitted. The derivation accepts 1–255
+URL-percent-decoded UTF-8 text bytes. Portal admits only 64 lowercase hex
+characters and uses those 64 ASCII bytes directly without hex decoding.
+Client parsers accept 1–255 decoded bytes; Portal applies the stricter
+64-character admission rule.
+Authentication uses these fixed derivations:
 
 ```text
 salt      = SHA256("nowhere/nw2/auth-root")
@@ -340,15 +384,28 @@ until written and share the bounded flow-state budget; exhaustion of that budget
 is a carrier error. The shared reader never waits for a flow's receive queue or
 for its RESET to be written.
 
+Mux has fixed initial receive windows of 4 MiB per stream and 8 MiB per
+connection, with maximum total credit of 16 MiB per stream and 32 MiB per
+connection. These initial values and credit bounds are part of the fixed
+contract. OPEN advertises the opener's stream extension; the receiver
+returns its stream extension with WINDOW. Connection extensions also use
+WINDOW. Senders MUST honor the resulting advertised credit.
+
+### Mux implementation policies
+
+The resource ceilings, pool scheduling, and idle timeout in this subsection
+describe the current implementation; they are not fixed protocol constants.
+They remain subject to the normative credit and failure rules above.
+
 The runtime preserves the first terminal reason when close paths race. Local
 shutdown, idle retirement, peer EOF, reader failure, writer failure, and a peer
 protocol violation are distinct diagnostic categories. They do not change the
 wire contract or permit recovery of logical streams after their carrier closes.
 
-Mux uses an initial 4 MiB stream window and 8 MiB connection window. Each side
-sends one WINDOW to extend its connection window. OPEN advertises the opener's
-stream extension; the receiver returns its stream extension with WINDOW.
-The selected transport profile sets final windows to 4/8, 8/16, or 16/32 MiB.
+Each side sends WINDOW to extend its connection window when its selected
+profile exceeds the fixed initial window.
+The selected transport profile sets final stream/connection windows to 4/8,
+8/16, or 16/32 MiB; these final sizes are implementation policies.
 Each carrier retains at most 4,096 active and locally closed flow states as an
 implementation resource ceiling, independent of application flow policy. A
 client that fills this budget stops admitting flows to that carrier, drains its
@@ -624,8 +681,9 @@ window of a flow. `frag_ix` is zero-based and smaller than `frag_count`.
 `frag_count` is `2..255`. `total_len` is the nonzero original packet length and
 is at most 65535. All fragments for a packet must carry consistent metadata.
 
-Reassembly is bounded to 64 active packet slots per authenticated QUIC
-connection, a shared byte budget, and a 10-second fragment TTL. Conflicting
+The current implementation bounds reassembly to 64 active packet slots per
+authenticated QUIC connection, a shared byte budget, and a 10-second fragment
+TTL. Slot counts, byte budgets, and TTL are local resource policies. Conflicting
 duplicates or metadata drop the packet. Unknown flows, pre-authentication
 DATAGRAMs, and payload received before READY are discarded rather than queued.
 
@@ -645,8 +703,11 @@ ATTACH.
 
 ## 11. Runtime limits and failure scope
 
-The former application-level TCP, UDP, and pending-pair quotas are absent.
-Independent implementation safeguards admit at most 4,096 active streams per
+The numeric resource ceilings, queue budgets, and timeouts in this section
+are implementation safeguards. They may change within the fixed protocol.
+The flow ID encoding and carrier failure boundaries remain normative.
+
+Implementation safeguards admit at most 4,096 active streams per
 Mux carrier, 1,024 accepted SOCKS clients per Vector, and 1,024 active SOCKS UDP
 targets per Vector. Portal admits at most 4,096 active or pending claims per
 authenticated session and 65,536 claims across its pairing registry.

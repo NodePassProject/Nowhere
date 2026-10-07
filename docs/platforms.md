@@ -65,7 +65,7 @@ docker run -d --rm --name nowhere-portal \
   -p 2000:2000/tcp \
   -p 2000:2000/udp \
   ghcr.io/nodepassproject/nowhere:latest \
-  "portal://change-me@:2000"
+  "portal://<generated-key>@:2000"
 ```
 
 Publish separate carrier ports when the endpoint uses an explicit path:
@@ -75,7 +75,7 @@ docker run -d --rm --name nowhere-portal \
   -p 2006:2006/tcp \
   -p 2017:2017/udp \
   ghcr.io/nodepassproject/nowhere:latest \
-  "portal://change-me@*/tcp:2006/udp:2017"
+  "portal://<generated-key>@*/tcp:2006/udp:2017"
 ```
 
 Docker publication is transport-specific. Publishing `2006/udp` does not
@@ -92,7 +92,7 @@ docker run -d --rm --name nowhere-portal \
   -v /path/fullchain.pem:/cert.pem:ro \
   -v /path/private-key.pem:/key.pem:ro \
   ghcr.io/nodepassproject/nowhere:latest \
-  "portal://change-me@:2000?tls=2&crt=/cert.pem&key=/key.pem"
+  "portal://<generated-key>@:2000?tls=2&crt=/cert.pem&key=/key.pem"
 ```
 
 `crt` is the full certificate chain and `key` is its private key. A Vector
@@ -122,7 +122,7 @@ docker run -d --rm --name nowhere-portal \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777 \
   -p 2000:2000/tcp -p 2000:2000/udp \
   ghcr.io/nodepassproject/nowhere:latest \
-  "portal://change-me@:2000"
+  "portal://<generated-key>@:2000"
 docker exec --user 10001:10001 -it nowhere-portal /nowhere tui
 ```
 
@@ -140,7 +140,7 @@ spec:
   containers:
     - name: nowhere
       image: ghcr.io/nodepassproject/nowhere:latest
-      args: ["portal://change-me@:2000"]
+      args: ["portal://<generated-key>@:2000"]
       securityContext:
         readOnlyRootFilesystem: true
         allowPrivilegeEscalation: false
@@ -166,16 +166,18 @@ safe discovery cleanup or destruction of the temporary mount.
 ## Command lines
 
 Bourne-compatible shells, PowerShell, and Windows Command Prompt accept the
-documented double-quoted URLs:
+documented double-quoted URLs. Replace `<generated-key>` with `nowhere
+generate-key` output. For self-signed Portals, add a certificate pin obtained
+through a trusted channel:
 
 ```text
-nowhere "vector://secret@portal.example:2000?up=tcp&down=udp&socks=127.0.0.1:1080"
+nowhere "vector://<generated-key>@portal.example:2000?up=tcp&down=udp&socks=127.0.0.1:1080"
 ```
 
 In Windows Command Prompt, use the `.exe` name:
 
 ```text
-nowhere.exe "vector://secret@portal.example:2000?up=tcp&down=udp&socks=127.0.0.1:1080"
+nowhere.exe "vector://<generated-key>@portal.example:2000?up=tcp&down=udp&socks=127.0.0.1:1080"
 ```
 
 Certificate and key values accept native filesystem paths. Relative paths are

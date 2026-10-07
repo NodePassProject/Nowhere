@@ -116,7 +116,7 @@ targets and are replaced with `<redacted>`. Raw paths and session identifiers
 are not serialized. Hello metadata includes
 validated instance endpoints and an allowlisted effective configuration summary:
 listen/Portal/SOCKS endpoints, transports, TLS mode, multiplexing, Morph, rate
-limits, legacy dial address or both dial4/dial6 source selections, SNI and pin
+limits, the `dial` address or `dial4`/`dial6` source selections, SNI and pin
 presence. Chained Portal options use `next.`
 prefixes. Keys, SOCKS credentials, certificate paths and raw configuration URLs
 are excluded. Authorized collectors can therefore see configured service
