@@ -37,7 +37,7 @@ impl FlowIdAllocator {
         for _ in 0..=active.len() {
             let id = self
                 .next
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
                     Some(if id >= max_id { 1 } else { id + 1 })
                 })
                 .unwrap_or_else(|id| id);
