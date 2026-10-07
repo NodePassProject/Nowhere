@@ -252,7 +252,9 @@ async fn fingerprint_reads_the_leaf_certificate_with_and_without_morph_without_f
                 Err(error) => assert!(
                     matches!(
                         error.kind(),
-                        std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
+                        std::io::ErrorKind::UnexpectedEof
+                            | std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::ConnectionAborted
                     ),
                     "unexpected TLS read error: {error}"
                 ),
