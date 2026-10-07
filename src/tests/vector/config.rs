@@ -322,14 +322,15 @@ fn upstream_morph_derives_from_the_nested_shared_key() {
 fn upstream_authority_decodes_the_shared_key_exactly_once() {
     let query = HashMap::new();
     let error = PortalClientConfig::from_upstream_authority(
-        "%2530123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example/udp:2080",
+        "%2530123456789abcdef0123456789abcdef@origin.example/udp:2080",
         &query,
         &"auto".into(),
-    ).unwrap_err();
+    )
+    .unwrap_err();
     assert!(
         error
             .to_string()
-            .contains("64 lowercase hexadecimal characters")
+            .contains("32–64 lowercase hexadecimal characters")
     );
 }
 

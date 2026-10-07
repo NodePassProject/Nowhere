@@ -654,21 +654,34 @@ fn dual_stack_sources_are_validated_and_rendered_for_every_outbound_path() {
 
 #[test]
 fn generated_and_percent_encoded_portal_keys_preserve_text_derivation() {
-    let key = crate::toolbox::generate_key().unwrap();
-    let encoded: String = key.bytes().map(|byte| format!("%{byte:02X}")).collect();
-    for value in [&key, &encoded] {
-        let portal = Portal::new(
-            Url::parse(&format!("portal://{value}@127.0.0.1:2000?morph=1&next={value}@origin.example:2080&pin={}&log=none", "0".repeat(64))).unwrap(),
-            test_logger(),
-        ).unwrap();
-        assert_eq!(
-            portal.inner.credentials,
-            Credentials::from_shared_key(key.as_bytes()).unwrap()
-        );
-        assert_eq!(
-            portal.inner.morph_keys.as_ref().unwrap().udp_keys(),
-            MorphKeys::derive(key.as_bytes()).udp_keys()
-        );
+    let mut keys = vec![crate::toolbox::generate_key().unwrap()];
+    keys.extend(
+        [32, 33, 35, 63, 64]
+            .into_iter()
+            .map(|length| "a".repeat(length)),
+    );
+    for key in keys {
+        let encoded: String = key.bytes().map(|byte| format!("%{byte:02X}")).collect();
+        for value in [&key, &encoded] {
+            for morph in [0, 1] {
+                let portal = Portal::new(
+                    Url::parse(&format!("portal://{value}@127.0.0.1:2000?morph={morph}&next={value}@origin.example:2080&pin={}&log=none", "0".repeat(64))).unwrap(),
+                    test_logger(),
+                ).unwrap();
+                assert_eq!(
+                    portal.inner.credentials,
+                    Credentials::from_shared_key(key.as_bytes()).unwrap()
+                );
+                if morph == 1 {
+                    assert_eq!(
+                        portal.inner.morph_keys.as_ref().unwrap().udp_keys(),
+                        MorphKeys::derive(key.as_bytes()).udp_keys()
+                    );
+                } else {
+                    assert!(portal.inner.morph_keys.is_none());
+                }
+            }
+        }
     }
 }
 
@@ -678,14 +691,14 @@ fn invalid_listener_and_next_keys_fail_before_tls_dns_or_listening() {
     let invalid = [
         String::new(),
         "secret".to_owned(),
-        "a".repeat(63),
+        "a".repeat(31),
         "a".repeat(65),
         "A".repeat(64),
         format!("A{}", "a".repeat(63)),
         "g".repeat(64),
         format!("%20{}", "a".repeat(63)),
         format!("{}%20", "a".repeat(63)),
-        format!("%2530{}", "a".repeat(63)),
+        format!("%2530{}", "a".repeat(31)),
         "bad%GG".to_owned(),
         "bad%".to_owned(),
         "bad%1".to_owned(),

@@ -27,7 +27,7 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 const STATUS_CONCURRENCY: usize = 8;
 
 pub fn generate_key() -> Result<String> {
-    let mut key = [0u8; 32];
+    let mut key = [0u8; 16];
     getrandom::fill(&mut key).context("failed to generate a random key")?;
     let mut hex = String::with_capacity(key.len() * 2);
     for byte in key {

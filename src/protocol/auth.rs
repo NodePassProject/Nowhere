@@ -40,13 +40,13 @@ impl Credentials {
     pub(crate) fn for_portal(parsed_url: &Url, context: &str) -> Result<Self> {
         let shared_key = Self::decode_shared_key(parsed_url)
             .map_err(|error| anyhow::anyhow!("{context}: {error}; use nowhere generate-key"))?;
-        if shared_key.len() != 64
+        if !(32..=64).contains(&shared_key.len())
             || !shared_key
                 .iter()
                 .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
         {
             bail!(
-                "{context}: shared key must be 64 lowercase hexadecimal characters; use nowhere generate-key"
+                "{context}: shared key must be 32–64 lowercase hexadecimal characters; use nowhere generate-key"
             );
         }
         Self::from_shared_key(&shared_key)

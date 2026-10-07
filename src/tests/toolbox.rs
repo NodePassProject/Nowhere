@@ -10,11 +10,11 @@ use url::Url;
 use super::*;
 
 #[test]
-fn generated_keys_are_256_bit_lowercase_hex() {
+fn generated_keys_are_128_bit_lowercase_hex() {
     let first = generate_key().unwrap();
     let second = generate_key().unwrap();
     for key in [&first, &second] {
-        assert_eq!(key.len(), 64);
+        assert_eq!(key.len(), 32);
         assert!(
             key.bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))

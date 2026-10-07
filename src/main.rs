@@ -33,7 +33,7 @@ Usage:
   nowhere tui                          Open the local telemetry TUI
   nowhere <portal-url>                 Run a Portal relay
   nowhere <vector-url>                 Run a Vector SOCKS5 client
-  nowhere generate-key                 Generate a random 256-bit key as hex
+  nowhere generate-key                 Generate a random 128-bit key as hex
   nowhere fingerprint <nowhere-url>    Read the TLS certificate SHA-256 fingerprint
   nowhere probe <vector-url> <target>  Test one real TCP Flow
   nowhere status                       Read one local telemetry snapshot
@@ -42,7 +42,7 @@ Usage:
 
 Commands:
   tui           Interactive read-only multi-instance telemetry.
-  generate-key  Print 32 random bytes as 64 lowercase hex characters.
+  generate-key  Print 16 random bytes as 32 lowercase hex characters.
   fingerprint   Print the leaf certificate SHA-256 over TCP; supports Morph.
   probe         End-to-end TCP Flow setup; sends no application payload.
   status        Read-only local instance telemetry; exits after one snapshot.
@@ -78,7 +78,7 @@ Common options:
   log=<level>         none, debug, info, warn, or error. Default: info.
 
 Portal options:
-  Listener and next shared keys must be 64 lowercase hex characters from generate-key.
+  Listener and next shared keys must be 32–64 lowercase hex characters.
   tls=1|2             Generated certificate or supplied PEM files. Default: 1.
   crt=<path>          PEM certificate chain for tls=2.
   key=<path>          PEM private key for tls=2.
