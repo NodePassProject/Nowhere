@@ -11,7 +11,7 @@ async fn single_carrier_defaults_relay_tcp4_to_udp6() {
     let origin_port = origin_reservation.local_addr().unwrap().port();
     let origin = Portal::new(
         Url::parse(&format!(
-            "portal://origin-secret@[::1]/udp6:{origin_port}?log=none"
+            "portal://23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@[::1]/udp6:{origin_port}?log=none"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -24,7 +24,7 @@ async fn single_carrier_defaults_relay_tcp4_to_udp6() {
 
     let (relay_port, reservation) = reserve_tcp_port().await;
     let relay = Portal::new(
-        Url::parse(&format!("portal://relay-secret@127.0.0.1/tcp4:{relay_port}?next=origin-secret@[::1]/udp6:{origin_port}&pin={origin_pin}&log=none")).unwrap(),
+        Url::parse(&format!("portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1/tcp4:{relay_port}?next=23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@[::1]/udp6:{origin_port}&pin={origin_pin}&log=none")).unwrap(),
         Logger::new(LogLevel::None, false),
     ).unwrap();
     let relay_pin = server_certificate_pin(&relay.inner.tls_server_config);
@@ -48,7 +48,7 @@ async fn single_carrier_defaults_relay_tcp4_to_udp6() {
     ];
     let (socks_port, reservation) = reserve_tcp_port().await;
     let vector = Vector::new(
-        Url::parse(&format!("vector://relay-secret@127.0.0.1/tcp4:{relay_port}?socks=127.0.0.1:{socks_port}&pin={relay_pin}&log=none")).unwrap(),
+        Url::parse(&format!("vector://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1/tcp4:{relay_port}?socks=127.0.0.1:{socks_port}&pin={relay_pin}&log=none")).unwrap(),
         Logger::new(LogLevel::None, false),
     ).unwrap();
     drop(reservation);

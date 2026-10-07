@@ -37,6 +37,21 @@ pub struct Credentials {
 }
 
 impl Credentials {
+    pub(crate) fn for_portal(parsed_url: &Url, context: &str) -> Result<Self> {
+        let shared_key = Self::decode_shared_key(parsed_url)
+            .map_err(|error| anyhow::anyhow!("{context}: {error}; use nowhere generate-key"))?;
+        if shared_key.len() != 64
+            || !shared_key
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        {
+            bail!(
+                "{context}: shared key must be 64 lowercase hexadecimal characters; use nowhere generate-key"
+            );
+        }
+        Self::from_shared_key(&shared_key)
+    }
+
     pub fn new(parsed_url: &Url) -> Result<Self> {
         if parsed_url.password().is_some() {
             bail!("password credentials are not supported; put the shared key before '@'");

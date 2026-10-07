@@ -24,7 +24,7 @@ use super::listener::configure_transport;
 use super::{NetworkMode, Portal, PortalInner, UdpFlowLimits, admission, outbound::PortalOutbound};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
-    "tls", "crt", "key", "rate", "etar", "dial", "dial4", "dial6", "morph", "socks", "next", "log",
+    "tls", "crt", "key", "rate", "etar", "dial", "dial4", "dial6", "morph", "socks", "log",
 ];
 const PORTAL_UPSTREAM_PARAMETERS: &[&str] = &["up", "down", "mux", "sni", "pin"];
 
@@ -65,7 +65,12 @@ impl Portal {
         if listen_host == Some("") {
             service_endpoint.host = "*".to_owned();
         }
-        let credentials = Credentials::new(&parsed_url)?;
+        let credentials = Credentials::for_portal(&parsed_url, "Portal listener")?;
+        query.extend(query_first(&parsed_url, &["next"]).map_err(|error| {
+            anyhow::anyhow!(
+                "Portal next endpoint: invalid key or endpoint encoding: {error}; use nowhere generate-key"
+            )
+        })?);
         let morph = query.get("morph").is_some_and(|value| value == "1");
         let morph_keys = morph
             .then(|| MorphKeys::from_url(&parsed_url))

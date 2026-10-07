@@ -130,7 +130,7 @@ async fn start_runtime_with_morph(up: &str, down: &str, mux: u8, morph: bool) ->
     let (udp_port, udp_reservation) = reserve_udp_port_except(tcp_port).await;
     let portal = Portal::new(
         Url::parse(&format!(
-            "portal://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?log=none&morph={}",
+            "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?log=none&morph={}",
             u8::from(morph)
         ))
         .unwrap(),
@@ -159,7 +159,7 @@ async fn start_runtime_with_morph(up: &str, down: &str, mux: u8, morph: bool) ->
     let (socks_port, socks_reservation) = reserve_tcp_port().await;
     let vector = Vector::new(
         Url::parse(&format!(
-            "vector://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?log=none&up={up}&down={down}&mux={mux}&morph={}&pin={pin}&socks=127.0.0.1:{socks_port}",
+            "vector://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?log=none&up={up}&down={down}&mux={mux}&morph={}&pin={pin}&socks=127.0.0.1:{socks_port}",
             u8::from(morph)
         ))
         .unwrap(),
@@ -171,7 +171,7 @@ async fn start_runtime_with_morph(up: &str, down: &str, mux: u8, morph: bool) ->
     let socks = SocketAddr::from(([127, 0, 0, 1], socks_port));
     wait_for_socks(socks).await;
     TestRuntime {
-        toolbox_url: Url::parse(&format!("vector://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?up={up}&down={down}&mux={mux}&morph={}&pin={pin}", u8::from(morph))).unwrap(),
+        toolbox_url: Url::parse(&format!("vector://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?up={up}&down={down}&mux={mux}&morph={}&pin={pin}", u8::from(morph))).unwrap(),
         shutdown,
         endpoint,
         portal_tasks: vec![quic_task, tcp_task],
@@ -249,7 +249,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
     let (origin_udp_port, origin_udp_reservation) = reserve_udp_port_except(origin_tcp_port).await;
     let origin = Portal::new(
         Url::parse(&format!(
-            "portal://origin-secret@127.0.0.1/tcp:{origin_tcp_port}/udp:{origin_udp_port}?log=none"
+            "portal://23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@127.0.0.1/tcp:{origin_tcp_port}/udp:{origin_udp_port}?log=none"
         ))
         .unwrap(),
         logger(),
@@ -264,7 +264,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
     let (relay_port, relay_tcp_reservation, relay_udp_reservation) = reserve_mixed_port().await;
     let relay = Portal::new(
         Url::parse(&format!(
-            "portal://relay-secret@127.0.0.1:{relay_port}?log=none&next=origin-secret@127.0.0.1/tcp:{origin_tcp_port}/udp:{origin_udp_port}&up={up}&down={down}&mux=1&pin={origin_pin}"
+            "portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:{relay_port}?log=none&next=23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@127.0.0.1/tcp:{origin_tcp_port}/udp:{origin_udp_port}&up={up}&down={down}&mux=1&pin={origin_pin}"
         ))
         .unwrap(),
         logger(),
@@ -300,7 +300,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
     let (socks_port, socks_reservation) = reserve_tcp_port().await;
     let vector = Vector::new(
         Url::parse(&format!(
-            "vector://relay-secret@127.0.0.1:{relay_port}?log=none&mux=1&pin={relay_pin}&socks=127.0.0.1:{socks_port}"
+            "vector://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:{relay_port}?log=none&mux=1&pin={relay_pin}&socks=127.0.0.1:{socks_port}"
         ))
         .unwrap(),
         logger(),
@@ -378,7 +378,7 @@ fn mix_test_client(
         ("pin".to_owned(), pin.to_owned()),
     ]);
     let (config, credentials) = PortalClientConfig::from_upstream_authority(
-        &format!("secret@127.0.0.1:{portal_port}"),
+        &format!("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:{portal_port}"),
         &query,
         &"auto".into(),
     )

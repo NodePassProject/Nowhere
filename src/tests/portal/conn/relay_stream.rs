@@ -33,7 +33,7 @@ async fn tls_response_tail(morph: bool, upstream: bool) {
             .with_root_certificates(roots)
             .with_no_client_auth();
         let (client_io, server_io) = tokio::io::duplex(4096);
-        let keys = morph.then(|| MorphKeys::derive(b"secret"));
+        let keys = morph.then(|| MorphKeys::derive(b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
         let (client_io, server_io) = tokio::join!(
             MorphTcpStream::connect(client_io, keys.clone()),
             MorphTcpStream::accept(server_io, keys),
@@ -49,7 +49,7 @@ async fn tls_response_tail(morph: bool, upstream: bool) {
         let mut client = client.unwrap();
         let (_server_read, server_write) = tokio::io::split(server.unwrap());
         let portal = Portal::new(
-            url::Url::parse("portal://secret@127.0.0.1:2000").unwrap(),
+            url::Url::parse("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000").unwrap(),
             Logger::new(LogLevel::None, false),
         )
         .unwrap();

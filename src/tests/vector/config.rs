@@ -276,20 +276,26 @@ fn normalizes_ipv6_portal_authority() {
 }
 
 #[test]
-fn upstream_authority_decodes_reserved_key_bytes_and_ipv6() {
+fn upstream_authority_decodes_percent_encoded_hex_and_ipv6() {
     let query = HashMap::from([
         ("up".to_owned(), "tcp".to_owned()),
         ("down".to_owned(), "tcp".to_owned()),
     ]);
-    let (config, credentials) =
-        PortalClientConfig::from_upstream_authority("part%40key@[::1]:2080", &query, &"::2".into())
-            .unwrap();
+    let (config, credentials) = PortalClientConfig::from_upstream_authority(
+        "%30123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@[::1]:2080",
+        &query,
+        &"::2".into(),
+    )
+    .unwrap();
 
     assert_eq!(config.endpoint(), "[::1]:2080");
     assert_eq!(config.dial_policy.to_string(), "dial=::2");
     assert_eq!(
         credentials,
-        crate::protocol::Credentials::from_shared_key(b"part@key").unwrap()
+        crate::protocol::Credentials::from_shared_key(
+            b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        )
+        .unwrap()
     );
 }
 
@@ -297,29 +303,33 @@ fn upstream_authority_decodes_reserved_key_bytes_and_ipv6() {
 fn upstream_morph_derives_from_the_nested_shared_key() {
     let query = HashMap::from([("morph".to_owned(), "1".to_owned())]);
     let (config, _) = PortalClientConfig::from_upstream_authority(
-        "upstream-key@origin.example:2080",
+        "23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@origin.example:2080",
         &query,
         &"auto".into(),
     )
     .unwrap();
     let actual = config.morph_keys.unwrap().udp_keys();
 
-    assert_eq!(actual, MorphKeys::derive(b"upstream-key").udp_keys());
+    assert_eq!(
+        actual,
+        MorphKeys::derive(b"23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01")
+            .udp_keys()
+    );
     assert_ne!(actual, MorphKeys::derive(b"outer-key").udp_keys());
 }
 
 #[test]
 fn upstream_authority_decodes_the_shared_key_exactly_once() {
     let query = HashMap::new();
-    let (_, credentials) = PortalClientConfig::from_upstream_authority(
-        "part%2540key@origin.example/udp:2080",
+    let error = PortalClientConfig::from_upstream_authority(
+        "%2530123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example/udp:2080",
         &query,
         &"auto".into(),
-    )
-    .unwrap();
-    assert_eq!(
-        credentials,
-        crate::protocol::Credentials::from_shared_key(b"part%40key").unwrap()
+    ).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("64 lowercase hexadecimal characters")
     );
 }
 
@@ -327,7 +337,7 @@ fn upstream_authority_decodes_the_shared_key_exactly_once() {
 fn upstream_authority_accepts_explicit_carriers() {
     let query = HashMap::new();
     let (config, _) = PortalClientConfig::from_upstream_authority(
-        "secret@origin.example/tcp6:2006",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example/tcp6:2006",
         &query,
         &"auto".into(),
     )
@@ -343,7 +353,7 @@ fn upstream_authority_requires_unambiguous_key_endpoint_separator() {
     for authority in [
         "missing-separator.example:2080",
         "part@key@origin.example:2080",
-        "secret@origin.example",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example",
         "@origin.example:2080",
     ] {
         assert!(
@@ -357,28 +367,40 @@ fn upstream_authority_requires_unambiguous_key_endpoint_separator() {
 fn upstream_authority_rejects_every_invalid_endpoint_shape() {
     let query = HashMap::new();
     for (authority, expected) in [
-        ("secret@*:2000", "wildcard host is only valid"),
         (
-            "secret@origin.example:2000/tcp:2006",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@*:2000",
+            "wildcard host is only valid",
+        ),
+        (
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example:2000/tcp:2006",
             "choose either HOST:PORT",
         ),
-        ("secret@origin.example/tcp:2006/", "trailing slash"),
         (
-            "secret@origin.example/tcp:2006/tcp6:2006",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example/tcp:2006/",
+            "trailing slash",
+        ),
+        (
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example/tcp:2006/tcp6:2006",
             "TCP carrier is declared more than once",
         ),
-        ("secret@origin.example/udp:0", "1..=65535"),
-        ("secret@origin.example/sctp:2000", "unknown carrier"),
         (
-            "secret@192.0.2.1/udp6:2017",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example/udp:0",
+            "1..=65535",
+        ),
+        (
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example/sctp:2000",
+            "unknown carrier",
+        ),
+        (
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@192.0.2.1/udp6:2017",
             "address family does not match",
         ),
         (
-            "secret@origin.example/tcp:2006?inner=1",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example/tcp:2006?inner=1",
             "expected shared-key and one endpoint",
         ),
         (
-            "secret@origin.example/tcp:2006#fragment",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example/tcp:2006#fragment",
             "expected shared-key and one endpoint",
         ),
         ("bad%GG@origin.example/tcp:2006", "malformed percent escape"),
@@ -388,7 +410,7 @@ fn upstream_authority_rejects_every_invalid_endpoint_shape() {
             .to_string();
         assert!(error.contains(expected), "{authority} returned {error:?}");
         assert!(
-            !error.contains("secret@"),
+            !error.contains("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@"),
             "error leaked the next shared key"
         );
     }
@@ -396,7 +418,7 @@ fn upstream_authority_rejects_every_invalid_endpoint_shape() {
 
 #[test]
 fn standalone_vector_ignores_portal_source_parameters() {
-    let config = VectorConfig::from_url(&Url::parse("vector://secret@localhost:2000?socks=127.0.0.1:1080&dial=127.0.0.1&dial4=bad&dial6=bad").unwrap()).unwrap();
+    let config = VectorConfig::from_url(&Url::parse("vector://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@localhost:2000?socks=127.0.0.1:1080&dial=127.0.0.1&dial4=bad&dial6=bad").unwrap()).unwrap();
     assert_eq!(
         config.portal_client_config().dial_policy.to_string(),
         "dial=auto"

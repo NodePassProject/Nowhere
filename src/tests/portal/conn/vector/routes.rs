@@ -82,7 +82,7 @@ async fn mix_mix_retries_quic_after_tls_fails_before_commit() {
     let (portal_port, tcp_reservation, udp_reservation) = reserve_mixed_port().await;
     let portal = Portal::new(
         Url::parse(&format!(
-            "portal://secret@127.0.0.1:{portal_port}?log=none&net=udp"
+            "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:{portal_port}?log=none&net=udp"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -172,7 +172,7 @@ async fn mix_mix_retries_tls_after_quic_fails_before_commit() {
     let (portal_port, tcp_reservation, udp_reservation) = reserve_mixed_port().await;
     let portal = Portal::new(
         Url::parse(&format!(
-            "portal://secret@127.0.0.1:{portal_port}?log=none&net=tcp"
+            "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:{portal_port}?log=none&net=tcp"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),

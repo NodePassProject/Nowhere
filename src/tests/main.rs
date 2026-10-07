@@ -248,7 +248,7 @@ fn parse_command_url_keeps_normal_hosts() {
 
 #[tokio::test]
 async fn invalid_configuration_urls_fail_before_service_startup_with_safe_errors() {
-    const SECRET: &str = "do-not-print-this-secret";
+    const SECRET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     for (raw, expected) in [
         ("not-a-url".to_owned(), "invalid configuration URL"),
         (
@@ -330,16 +330,20 @@ async fn invalid_configuration_urls_fail_before_service_startup_with_safe_errors
         ),
         (
             format!(
-                "portal://outer@*:2000?next={SECRET}@origin.example/tcp:2006/../udp:2017&log=none"
+                "portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@*:2000?next={SECRET}@origin.example/tcp:2006/../udp:2017&log=none"
             ),
             "must not contain '.' or '..' segments",
         ),
         (
-            format!("portal://outer@*:2000?next={SECRET}@*/tcp:2006&log=none"),
+            format!(
+                "portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@*:2000?next={SECRET}@*/tcp:2006&log=none"
+            ),
             "wildcard host is only valid for Portal listeners",
         ),
         (
-            format!("portal://outer@*:2000?next={SECRET}@origin.example/tcp:2006?inner=1&log=none"),
+            format!(
+                "portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@*:2000?next={SECRET}@origin.example/tcp:2006?inner=1&log=none"
+            ),
             "expected shared-key and one endpoint",
         ),
     ] {
@@ -356,5 +360,39 @@ async fn invalid_configuration_urls_fail_before_service_startup_with_safe_errors
             "response exposed internal names: {message:?}"
         );
         assert!(!message.contains(SECRET), "response leaked the shared key");
+    }
+}
+
+#[tokio::test]
+async fn portal_key_rejections_identify_the_endpoint_without_starting_a_service() {
+    const VALID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const INVALID: &str = "do-not-print-this-secret";
+    for morph in [0, 1] {
+        for (raw, context) in [
+            (
+                format!("portal://{INVALID}@unresolvable.invalid:2000?log=none&morph={morph}"),
+                "Portal listener",
+            ),
+            (
+                format!(
+                    "portal://{VALID}@unresolvable.invalid:2000?next={INVALID}@origin.invalid:2080&log=none&morph={morph}"
+                ),
+                "Portal next endpoint",
+            ),
+        ] {
+            let error = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                start(vec!["nowhere".to_owned(), raw.clone()]),
+            )
+            .await
+            .expect("invalid key attempted service startup")
+            .unwrap_err();
+            let message = format_start_error(&error);
+            assert!(message.contains(context), "{message}");
+            assert!(message.contains("nowhere generate-key"), "{message}");
+            assert!(!message.contains(INVALID));
+            assert!(!message.contains(VALID));
+            assert!(!message.contains(&raw));
+        }
     }
 }

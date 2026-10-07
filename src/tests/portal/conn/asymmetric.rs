@@ -53,7 +53,7 @@ async fn start_mixed() -> (
     let (port, tcp_reservation, udp_reservation) = reserve_mixed_port().await;
     let portal = Portal::new_with_listen_host(
         Url::parse(&format!(
-            "portal://secret@localhost:{port}?log=none&net=mix"
+            "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@localhost:{port}?log=none&net=mix"
         ))
         .unwrap(),
         Some(""),

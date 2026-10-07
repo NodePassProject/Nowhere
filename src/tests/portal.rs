@@ -15,7 +15,7 @@ fn test_logger() -> Logger {
 #[test]
 fn empty_host_listens_on_both_wildcard_families() {
     let portal = Portal::new_with_listen_host(
-        Url::parse("portal://secret@localhost:2000?dial=127.0.0.1").unwrap(),
+        Url::parse("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@localhost:2000?dial=127.0.0.1").unwrap(),
         Some(""),
         test_logger(),
     )
@@ -44,12 +44,12 @@ fn empty_host_listens_on_both_wildcard_families() {
 #[test]
 fn explicit_wildcard_host_selects_one_address_family() {
     let ipv4 = Portal::new(
-        Url::parse("portal://secret@0.0.0.0:2000?dial=auto").unwrap(),
+        Url::parse("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@0.0.0.0:2000?dial=auto").unwrap(),
         test_logger(),
     )
     .unwrap();
     let ipv6 = Portal::new(
-        Url::parse("portal://secret@[::]:2000?dial=::1").unwrap(),
+        Url::parse("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@[::]:2000?dial=::1").unwrap(),
         test_logger(),
     )
     .unwrap();
@@ -72,7 +72,7 @@ fn explicit_wildcard_host_selects_one_address_family() {
 #[test]
 fn explicit_carriers_have_independent_ports_and_families() {
     let portal = Portal::new(
-        Url::parse("portal://secret@*/tcp4:2006/udp6:2017").unwrap(),
+        Url::parse("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@*/tcp4:2006/udp6:2017").unwrap(),
         test_logger(),
     )
     .unwrap();
@@ -92,10 +92,22 @@ fn explicit_carriers_have_independent_ports_and_families() {
 #[test]
 fn carrier_paths_select_network_mode_and_net_is_ignored() {
     let cases = [
-        ("portal://secret@127.0.0.1:2000", NetworkMode::Mix),
-        ("portal://secret@127.0.0.1:2000?net=tcp", NetworkMode::Mix),
-        ("portal://secret@127.0.0.1/tcp:2006", NetworkMode::Tcp),
-        ("portal://secret@127.0.0.1/udp:2017", NetworkMode::Udp),
+        (
+            "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000",
+            NetworkMode::Mix,
+        ),
+        (
+            "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?net=tcp",
+            NetworkMode::Mix,
+        ),
+        (
+            "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1/tcp:2006",
+            NetworkMode::Tcp,
+        ),
+        (
+            "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1/udp:2017",
+            NetworkMode::Udp,
+        ),
     ];
 
     for (raw, expected) in cases {
@@ -107,7 +119,7 @@ fn carrier_paths_select_network_mode_and_net_is_ignored() {
 #[test]
 fn net_is_an_ignored_unknown_parameter() {
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2000?net=auto").unwrap(),
+        Url::parse("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?net=auto").unwrap(),
         test_logger(),
     )
     .unwrap();
@@ -119,7 +131,7 @@ fn net_is_an_ignored_unknown_parameter() {
 #[test]
 fn socks_configuration_is_validated_and_redacted_in_effective_url() {
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2000?log=none&socks=user:p%40ss@proxy.test:1080")
+        Url::parse("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?log=none&socks=user:p%40ss@proxy.test:1080")
             .unwrap(),
         test_logger(),
     )
@@ -130,7 +142,7 @@ fn socks_configuration_is_validated_and_redacted_in_effective_url() {
     assert!(!effective.contains("p@ss"));
 
     let duplicate = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2000?socks=proxy.test:1080&socks=other.test:1080")
+        Url::parse("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?socks=proxy.test:1080&socks=other.test:1080")
             .unwrap(),
         test_logger(),
     )
@@ -141,7 +153,7 @@ fn socks_configuration_is_validated_and_redacted_in_effective_url() {
 #[test]
 fn native_next_defaults_to_tcp_without_mux_and_redacts_the_shared_key() {
     let portal = Portal::new(
-        Url::parse("portal://relay-key@127.0.0.1:2000?next=upstream%40key@relay.example:2080")
+        Url::parse("portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:2000?next=%323456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@relay.example:2080")
             .unwrap(),
         test_logger(),
     )
@@ -154,7 +166,9 @@ fn native_next_defaults_to_tcp_without_mux_and_redacts_the_shared_key() {
     );
     let effective = portal.effective_url();
     assert!(effective.contains("next=relay.example:2080"));
-    assert!(!effective.contains("upstream"));
+    assert!(
+        !effective.contains("23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01")
+    );
     assert_eq!(portal.inner.outbound.ping_ms(), 0);
 }
 
@@ -170,7 +184,7 @@ fn native_next_omitted_directions_keep_independent_tcp_defaults_and_explicit_mux
         ] {
             for (mux_query, mux) in [("", 0), ("&mux=1", 1)] {
                 let raw = format!(
-                    "portal://relay-key@*/udp4:2017?next=upstream-key@{endpoint}{query}{mux_query}"
+                    "portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@*/udp4:2017?next=23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@{endpoint}{query}{mux_query}"
                 );
                 let portal = Portal::new(Url::parse(&raw).unwrap(), test_logger()).unwrap();
                 assert_eq!(portal.inner.network_mode, NetworkMode::Udp);
@@ -195,7 +209,7 @@ fn native_next_omitted_directions_keep_independent_tcp_defaults_and_explicit_mux
 #[test]
 fn native_next_uses_shared_endpoint_grammar_and_single_carrier_defaults() {
     let portal = Portal::new(
-        Url::parse("portal://relay-key@*/tcp4:2006?next=upstream-key@relay.example/udp6:2017")
+        Url::parse("portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@*/tcp4:2006?next=23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@relay.example/udp6:2017")
             .unwrap(),
         test_logger(),
     )
@@ -216,7 +230,7 @@ fn native_next_uses_shared_endpoint_grammar_and_single_carrier_defaults() {
 fn native_next_reuses_transport_identity_and_source_binding() {
     let portal = Portal::new(
         Url::parse(
-            "portal://relay-key@127.0.0.1:2000?dial=127.0.0.2&alpn=private/2&next=secret@[::1]:2080&up=tcp&down=tcp&mux=1&sni=origin.example&pin=abc",
+            "portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:2000?dial=127.0.0.2&alpn=private/2&next=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@[::1]:2080&up=tcp&down=tcp&mux=1&sni=origin.example&pin=abc",
         )
         .unwrap(),
         test_logger(),
@@ -242,7 +256,7 @@ fn native_next_reuses_transport_identity_and_source_binding() {
 fn native_next_and_socks_are_mutually_exclusive() {
     let result = Portal::new(
         Url::parse(
-            "portal://relay-key@127.0.0.1:2000?next=secret@origin.example:2080&socks=127.0.0.1:1080",
+            "portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:2000?next=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example:2080&socks=127.0.0.1:1080",
         )
         .unwrap(),
         test_logger(),
@@ -250,7 +264,7 @@ fn native_next_and_socks_are_mutually_exclusive() {
     assert!(result.is_err());
 
     let disabled_socks = Portal::new(
-        Url::parse("portal://relay-key@127.0.0.1:2000?next=secret@origin.example:2080&socks=none")
+        Url::parse("portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:2000?next=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example:2080&socks=none")
             .unwrap(),
         test_logger(),
     );
@@ -265,7 +279,7 @@ fn disabled_next_ignores_all_native_upstream_options() {
         "next=none&up=%GG&mux=%GG&pin=%FF",
     ] {
         let portal = Portal::new(
-            Url::parse(&format!("portal://relay-key@127.0.0.1:2000?{suffix}")).unwrap(),
+            Url::parse(&format!("portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:2000?{suffix}")).unwrap(),
             test_logger(),
         )
         .unwrap();
@@ -287,7 +301,7 @@ fn enabled_next_validates_only_effective_upstream_options() {
     ] {
         let result = Portal::new(
             Url::parse(&format!(
-                "portal://relay-key@127.0.0.1:2000?next=secret@origin.example:2080&{suffix}"
+                "portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:2000?next=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example:2080&{suffix}"
             ))
             .unwrap(),
             test_logger(),
@@ -308,7 +322,7 @@ fn native_next_accepts_mix_and_normalizes_pure_udp_mux() {
     ] {
         let portal = Portal::new(
             Url::parse(&format!(
-                "portal://relay-key@127.0.0.1:2000?next=secret@origin.example:2080&up={up}&down={down}&mux=1"
+                "portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:2000?next=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@origin.example:2080&up={up}&down={down}&mux=1"
             ))
             .unwrap(),
             test_logger(),
@@ -330,7 +344,7 @@ fn native_next_accepts_mix_and_normalizes_pure_udp_mux() {
 fn next_uses_first_duplicate_and_rejects_empty_value() {
     let portal = Portal::new(
         Url::parse(
-            "portal://relay-key@127.0.0.1:2000?next=first@one.example:2080&next=second@two.example:2081",
+            "portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:2000?next=456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123@one.example:2080&next=ignored-invalid-key@two.example:2081",
         )
         .unwrap(),
         test_logger(),
@@ -340,7 +354,7 @@ fn next_uses_first_duplicate_and_rejects_empty_value() {
 
     assert!(
         Portal::new(
-            Url::parse("portal://relay-key@127.0.0.1:2000?next=").unwrap(),
+            Url::parse("portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:2000?next=").unwrap(),
             test_logger(),
         )
         .is_err()
@@ -350,7 +364,7 @@ fn next_uses_first_duplicate_and_rejects_empty_value() {
 #[test]
 fn direct_portal_reports_exact_zero_ping() {
     let portal = Portal::new(
-        Url::parse("portal://relay-key@127.0.0.1:2000").unwrap(),
+        Url::parse("portal://123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0@127.0.0.1:2000").unwrap(),
         test_logger(),
     )
     .unwrap();
@@ -361,7 +375,7 @@ fn direct_portal_reports_exact_zero_ping() {
 fn all_network_modes_reject_tls_zero() {
     for mode in ["mix", "tcp", "udp"] {
         let portal = Portal::new(
-            Url::parse(&format!("portal://secret@127.0.0.1:2000?tls=0&net={mode}")).unwrap(),
+            Url::parse(&format!("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?tls=0&net={mode}")).unwrap(),
             test_logger(),
         );
         assert!(portal.is_err());
@@ -377,10 +391,10 @@ async fn network_mode_binds_only_selected_transports() {
         drop(reservation);
         let portal = Portal::new(
             Url::parse(&if path.is_empty() {
-                format!("portal://secret@127.0.0.1:{port}")
+                format!("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:{port}")
             } else {
                 format!(
-                    "portal://secret@127.0.0.1{}",
+                    "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1{}",
                     path.replace("PORT", &port.to_string())
                 )
             })
@@ -399,18 +413,18 @@ async fn network_mode_binds_only_selected_transports() {
 #[test]
 fn portal_url_contract_rejects_invalid_structure_and_selected_values() {
     for raw in [
-        "vector://secret@127.0.0.1:2000",
+        "vector://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000",
         "portal://secret:password@127.0.0.1:2000",
-        "portal://secret@127.0.0.1:2000/tcp:2006",
-        "portal://secret@127.0.0.1/not-a-carrier:2000",
-        "portal://secret@127.0.0.1:2000#fragment",
-        "portal://secret@127.0.0.1:2000?socks=",
-        "portal://secret@127.0.0.1:2000?rate=-1",
-        "portal://secret@127.0.0.1:2000?dial=not-an-ip",
-        "portal://secret@127.0.0.1:2000?morph=",
-        "portal://secret@127.0.0.1:2000?morph=2",
-        "portal://secret@127.0.0.1:0",
-        "portal://secret@127.0.0.1",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000/tcp:2006",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1/not-a-carrier:2000",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000#fragment",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?socks=",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?rate=-1",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?dial=not-an-ip",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?morph=",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?morph=2",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:0",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1",
     ] {
         assert!(
             Portal::new(Url::parse(raw).unwrap(), test_logger()).is_err(),
@@ -423,7 +437,7 @@ fn portal_url_contract_rejects_invalid_structure_and_selected_values() {
 fn outer_morph_controls_local_and_next_carriers() {
     let portal = Portal::new(
         Url::parse(
-            "portal://local-key@127.0.0.1:2000?morph=1&next=upstream-key@origin.example:2080",
+            "portal://3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012@127.0.0.1:2000?morph=1&next=23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@origin.example:2080",
         )
         .unwrap(),
         test_logger(),
@@ -441,7 +455,7 @@ fn outer_morph_controls_local_and_next_carriers() {
 fn portal_ignores_unknown_parameters_and_keeps_first_duplicate() {
     let portal = Portal::new(
         Url::parse(
-            "portal://secret@127.0.0.1:2000?unknown=value&spec=ignored&alpn=private/2&mux=2&pool=8&net=tcp&net=udp&rate=1&rate=2",
+            "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?unknown=value&spec=ignored&alpn=private/2&mux=2&pool=8&net=tcp&net=udp&rate=1&rate=2",
         )
         .unwrap(),
         test_logger(),
@@ -461,7 +475,7 @@ fn portal_mux_is_ignored_without_next() {
     for value in ["", "0", "1", "2", "true"] {
         let portal = Portal::new(
             Url::parse(&format!(
-                "portal://secret@127.0.0.1:2000?alpn=private/2&mux={value}"
+                "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?alpn=private/2&mux={value}"
             ))
             .unwrap(),
             test_logger(),
@@ -475,11 +489,11 @@ fn portal_mux_is_ignored_without_next() {
 #[test]
 fn certificate_parameters_are_tied_to_ca_trusted_mode() {
     for raw in [
-        "portal://secret@127.0.0.1:2000?crt=cert.pem",
-        "portal://secret@127.0.0.1:2000?key=key.pem",
-        "portal://secret@127.0.0.1:2000?crt=cert.pem&key=key.pem",
-        "portal://secret@127.0.0.1:2000?tls=2&crt=cert.pem",
-        "portal://secret@127.0.0.1:2000?tls=2&key=key.pem",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?crt=cert.pem",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?key=key.pem",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?crt=cert.pem&key=key.pem",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?tls=2&crt=cert.pem",
+        "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?tls=2&key=key.pem",
     ] {
         assert!(Portal::new(Url::parse(raw).unwrap(), test_logger()).is_err());
     }
@@ -491,7 +505,7 @@ async fn listener_bind_failure_moves_lifecycle_to_stopped() {
     let port = blocker.local_addr().unwrap().port();
     let portal = Portal::new(
         Url::parse(&format!(
-            "portal://secret@127.0.0.1:{port}?net=tcp&log=none"
+            "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:{port}?net=tcp&log=none"
         ))
         .unwrap(),
         test_logger(),
@@ -506,7 +520,7 @@ async fn listener_bind_failure_moves_lifecycle_to_stopped() {
 #[test]
 fn telemetry_metadata_retains_portal_and_upstream_configuration_without_credentials() {
     let portal = Portal::new(
-        Url::parse("portal://shared-secret@0.0.0.0:2077?tls=1&rate=50&etar=80&morph=1&next=upstream-secret@relay.example:3077&up=udp&down=tcp&mux=1&sni=relay.example").unwrap(),
+        Url::parse("portal://3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012@0.0.0.0:2077?tls=1&rate=50&etar=80&morph=1&next=23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@relay.example:3077&up=udp&down=tcp&mux=1&sni=relay.example").unwrap(),
         test_logger(),
     ).unwrap();
     let descriptor = portal.inner.telemetry.descriptor();
@@ -536,7 +550,12 @@ fn telemetry_metadata_retains_portal_and_upstream_configuration_without_credenti
         );
     }
     let encoded = serde_json::to_string(descriptor).unwrap();
-    for secret in ["shared-secret", "upstream-secret", "user", "password"] {
+    for secret in [
+        "3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012",
+        "23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01",
+        "user",
+        "password",
+    ] {
         assert!(!encoded.contains(secret));
     }
 }
@@ -544,7 +563,7 @@ fn telemetry_metadata_retains_portal_and_upstream_configuration_without_credenti
 #[test]
 fn telemetry_metadata_retains_portal_socks_endpoint_without_credentials() {
     let portal = Portal::new(
-        Url::parse("portal://shared-secret@0.0.0.0:2077?socks=user:password@127.0.0.1:1080")
+        Url::parse("portal://3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012@0.0.0.0:2077?socks=user:password@127.0.0.1:1080")
             .unwrap(),
         test_logger(),
     )
@@ -558,7 +577,11 @@ fn telemetry_metadata_retains_portal_socks_endpoint_without_credentials() {
             .contains("socks=127.0.0.1:1080")
     );
     let encoded = serde_json::to_string(portal.inner.telemetry.descriptor()).unwrap();
-    for secret in ["shared-secret", "user", "password"] {
+    for secret in [
+        "3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012",
+        "user",
+        "password",
+    ] {
         assert!(!encoded.contains(secret));
     }
 }
@@ -577,11 +600,11 @@ fn dual_stack_sources_are_validated_and_rendered_for_every_outbound_path() {
         for route in [
             "",
             "&socks=localhost:1080",
-            "&next=upstream@localhost/tcp4:2080",
-            "&next=upstream@localhost/udp6:2080",
+            "&next=23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@localhost/tcp4:2080",
+            "&next=23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01@localhost/udp6:2080",
         ] {
             let portal = Portal::new(
-                Url::parse(&format!("portal://secret@127.0.0.1:2000?{query}{route}")).unwrap(),
+                Url::parse(&format!("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?{query}{route}")).unwrap(),
                 test_logger(),
             )
             .unwrap();
@@ -597,7 +620,10 @@ fn dual_stack_sources_are_validated_and_rendered_for_every_outbound_path() {
                     .config_summary
                     .contains(summary)
             );
-            assert!(!output.contains("secret"));
+            assert!(
+                !output
+                    .contains("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+            );
         }
     }
     for query in [
@@ -609,7 +635,7 @@ fn dual_stack_sources_are_validated_and_rendered_for_every_outbound_path() {
     ] {
         assert!(
             Portal::new(
-                Url::parse(&format!("portal://secret@127.0.0.1:2000?{query}")).unwrap(),
+                Url::parse(&format!("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?{query}")).unwrap(),
                 test_logger()
             )
             .is_err(),
@@ -618,10 +644,88 @@ fn dual_stack_sources_are_validated_and_rendered_for_every_outbound_path() {
     }
     assert!(
         Portal::new(
-            Url::parse("portal://secret@127.0.0.1:2000?dial4=192.0.2.254&dial6=2001:db8::1")
+            Url::parse("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?dial4=192.0.2.254&dial6=2001:db8::1")
                 .unwrap(),
             test_logger()
         )
         .is_ok()
     );
+}
+
+#[test]
+fn generated_and_percent_encoded_portal_keys_preserve_text_derivation() {
+    let key = crate::toolbox::generate_key().unwrap();
+    let encoded: String = key.bytes().map(|byte| format!("%{byte:02X}")).collect();
+    for value in [&key, &encoded] {
+        let portal = Portal::new(
+            Url::parse(&format!("portal://{value}@127.0.0.1:2000?morph=1&next={value}@origin.example:2080&pin={}&log=none", "0".repeat(64))).unwrap(),
+            test_logger(),
+        ).unwrap();
+        assert_eq!(
+            portal.inner.credentials,
+            Credentials::from_shared_key(key.as_bytes()).unwrap()
+        );
+        assert_eq!(
+            portal.inner.morph_keys.as_ref().unwrap().udp_keys(),
+            MorphKeys::derive(key.as_bytes()).udp_keys()
+        );
+    }
+}
+
+#[test]
+fn invalid_listener_and_next_keys_fail_before_tls_dns_or_listening() {
+    let valid = "0123456789abcdef".repeat(4);
+    let invalid = [
+        String::new(),
+        "secret".to_owned(),
+        "a".repeat(63),
+        "a".repeat(65),
+        "A".repeat(64),
+        format!("A{}", "a".repeat(63)),
+        "g".repeat(64),
+        format!("%20{}", "a".repeat(63)),
+        format!("{}%20", "a".repeat(63)),
+        format!("%2530{}", "a".repeat(63)),
+        "bad%GG".to_owned(),
+        "bad%".to_owned(),
+        "bad%1".to_owned(),
+        "%FF".to_owned(),
+    ];
+    for key in invalid {
+        for morph in [0, 1] {
+            for next in [false, true] {
+                let (listener_key, upstream) = if next {
+                    (
+                        valid.as_str(),
+                        format!("&next={key}@unresolvable.invalid:2080"),
+                    )
+                } else {
+                    (key.as_str(), String::new())
+                };
+                let raw = format!(
+                    "portal://{listener_key}@unresolvable.invalid:2000?tls=2&crt=missing-certificate.pem&key=missing-private-key.pem&morph={morph}{upstream}"
+                );
+                let error = Portal::new(Url::parse(&raw).unwrap(), test_logger())
+                    .err()
+                    .unwrap();
+                let message = format!("{error:#}");
+                assert!(
+                    message.contains(if next {
+                        "Portal next endpoint"
+                    } else {
+                        "Portal listener"
+                    }),
+                    "{message}"
+                );
+                assert!(message.contains("nowhere generate-key"), "{message}");
+                assert!(!message.contains(&raw));
+                assert!(!message.contains("unresolvable.invalid"));
+                assert!(!message.contains("missing-certificate.pem"));
+                assert!(!message.contains("missing-private-key.pem"));
+                if !key.is_empty() {
+                    assert!(!message.contains(&key), "{message}");
+                }
+            }
+        }
+    }
 }

@@ -21,7 +21,7 @@ impl Drop for DropMarker {
 
 fn manager(shutdown: CancellationToken) -> Arc<QuicManager> {
     let url =
-        Url::parse("vector://secret@127.0.0.1/udp:9?up=udp&down=udp&socks=127.0.0.1:1080").unwrap();
+        Url::parse("vector://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1/udp:9?up=udp&down=udp&socks=127.0.0.1:1080").unwrap();
     let config = VectorConfig::from_url(&url).unwrap();
     let portal = config.portal_client_config();
     let credentials = Credentials::new(&url).unwrap();
@@ -137,7 +137,7 @@ async fn native_next_quic_uses_the_matching_dual_stack_source() {
         ("127.0.0.1:0", "udp4", "127.0.0.1"),
         ("[::1]:0", "udp6", "::1"),
     ] {
-        let server_url = Url::parse("portal://secret@localhost:2000").unwrap();
+        let server_url = Url::parse("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@localhost:2000").unwrap();
         let (_, tls_server, quic_server) = new_server_configs_with_reload_interval(
             &server_url,
             Duration::from_secs(60),
@@ -174,7 +174,7 @@ async fn native_next_quic_uses_the_matching_dual_stack_source() {
             ),
         };
         let (config, credentials) = PortalClientConfig::from_upstream_authority(
-            &format!("secret@localhost/{carrier}:{}", address.port()),
+            &format!("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@localhost/{carrier}:{}", address.port()),
             &HashMap::from([(
                 "pin".to_owned(),
                 crate::tls_test_support::server_certificate_pin(&tls_server),

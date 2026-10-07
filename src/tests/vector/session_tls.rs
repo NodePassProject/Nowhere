@@ -21,7 +21,7 @@ impl Drop for DropMarker {
 }
 
 fn manager() -> Arc<TlsManager> {
-    let url = Url::parse("vector://secret@127.0.0.1:2000?mux=1&socks=127.0.0.1:1080").unwrap();
+    let url = Url::parse("vector://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:2000?mux=1&socks=127.0.0.1:1080").unwrap();
     let config = VectorConfig::from_url(&url).unwrap();
     let portal = config.portal_client_config();
     let credentials = Credentials::new(&url).unwrap();
@@ -317,7 +317,7 @@ async fn native_next_tls_uses_the_matching_dual_stack_source() {
             Err(error) => panic!("bind failed: {error}"),
         };
         let address = listener.local_addr().unwrap();
-        let server_url = Url::parse("portal://secret@localhost:2000").unwrap();
+        let server_url = Url::parse("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@localhost:2000").unwrap();
         let (_, tls_server, _) = new_server_configs_with_reload_interval(
             &server_url,
             Duration::from_secs(60),
@@ -345,7 +345,7 @@ async fn native_next_tls_uses_the_matching_dual_stack_source() {
             ),
         };
         let (config, credentials) = PortalClientConfig::from_upstream_authority(
-            &format!("secret@localhost/{carrier}:{}", address.port()),
+            &format!("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@localhost/{carrier}:{}", address.port()),
             &HashMap::from([(
                 "pin".to_owned(),
                 crate::tls_test_support::server_certificate_pin(&tls_server),

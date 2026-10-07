@@ -146,7 +146,7 @@ pub(super) async fn connect_test_quic() -> (
     CancellationToken,
     tokio::task::JoinHandle<()>,
 ) {
-    connect_test_quic_with_url("portal://secret@127.0.0.1:0?log=none&net=udp").await
+    connect_test_quic_with_url("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1:0?log=none&net=udp").await
 }
 
 pub(super) async fn connect_test_quic_with_url(

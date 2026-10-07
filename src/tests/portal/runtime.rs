@@ -13,7 +13,7 @@ async fn dns_listener_binds_every_unique_resolved_address() {
     let reservation = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = reservation.local_addr().unwrap().port();
     let portal = super::Portal::new(
-        url::Url::parse(&format!("portal://secret@localhost/tcp:{port}")).unwrap(),
+        url::Url::parse(&format!("portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@localhost/tcp:{port}")).unwrap(),
         crate::common::Logger::new(crate::common::LogLevel::None, false),
     )
     .unwrap();
@@ -41,7 +41,7 @@ async fn tcp_startup_failure_releases_already_opened_quic_socket() {
     let address = reservation.local_addr().unwrap();
     let portal = super::Portal::new(
         url::Url::parse(&format!(
-            "portal://secret@127.0.0.1/tcp4:{tcp_port}/udp4:{}",
+            "portal://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef@127.0.0.1/tcp4:{tcp_port}/udp4:{}",
             address.port()
         ))
         .unwrap(),

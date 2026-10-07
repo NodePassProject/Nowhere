@@ -62,13 +62,13 @@ Endpoint syntax:
   *                           Portal wildcard; clients require a concrete host.
 
 Examples:
-  nowhere \"portal://secret@*:2000\"
-  nowhere \"portal://secret@*/tcp:2006/udp:2017?morph=1\"
-  nowhere \"vector://secret@relay.example:2000?socks=127.0.0.1:1080\"
-  nowhere \"vector://secret@relay.example/tcp:2006/udp:2017?up=udp&down=tcp&morph=1&socks=:1080\"
-  nowhere probe \"vector://secret@relay.example:2000\" \"example.com:443\"
+  nowhere \"portal://<generated-key>@*:2000\"
+  nowhere \"portal://<generated-key>@*/tcp:2006/udp:2017?morph=1\"
+  nowhere \"vector://<generated-key>@relay.example:2000?socks=127.0.0.1:1080\"
+  nowhere \"vector://<generated-key>@relay.example/tcp:2006/udp:2017?up=udp&down=tcp&morph=1&socks=:1080\"
+  nowhere probe \"vector://<generated-key>@relay.example:2000\" \"example.com:443\"
   nowhere generate-key
-  nowhere fingerprint \"nowhere://secret@relay.example:2000#My%20Portal\"
+  nowhere fingerprint \"nowhere://<generated-key>@relay.example:2000#My%20Portal\"
   nowhere status
 
 Common options:
@@ -78,6 +78,7 @@ Common options:
   log=<level>         none, debug, info, warn, or error. Default: info.
 
 Portal options:
+  Listener and next shared keys must be 64 lowercase hex characters from generate-key.
   tls=1|2             Generated certificate or supplied PEM files. Default: 1.
   crt=<path>          PEM certificate chain for tls=2.
   key=<path>          PEM private key for tls=2.

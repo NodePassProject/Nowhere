@@ -187,7 +187,7 @@ impl PortalClientConfig {
                 "Portal next endpoint: expected shared-key and one endpoint without a query or fragment"
             );
         }
-        let credentials = crate::protocol::Credentials::new(&url)?;
+        let credentials = crate::protocol::Credentials::for_portal(&url, "Portal next endpoint")?;
         let config = Self::parse(&url, query, dial_policy, "Portal next endpoint")?;
         Ok((config, credentials))
     }
