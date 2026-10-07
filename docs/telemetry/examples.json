@@ -8,7 +8,7 @@
           "id": "0123456789abcdef0123456789abcdef",
           "role": "portal",
           "pid": 42,
-          "version": "2.1.2",
+          "version": "2.2.0",
           "endpoint": "*:2077",
           "config_summary": "listen=*:2077 tls=1 rate=0 etar=0 dial=auto morph=0 socks=none next=none",
           "telemetry_interval_ms": 1000
