@@ -251,7 +251,7 @@ local UDP queue budget. Invalid values fail startup with the variable name.
 |---|---|---|
 | `NOW_TCP_DATA_BUF_SIZE` | `32768` | TCP copy buffer bytes |
 | `NOW_TCP_DIAL_TIMEOUT`, `NOW_UDP_DIAL_TIMEOUT` | `15s` | Target dial limits |
-| `NOW_HANDSHAKE_TIMEOUT` | `5s` | Transport/authentication limit |
+| `NOW_HANDSHAKE_TIMEOUT` | Shared Key-derived `3s`–`30s` | Transport/authentication limit |
 | `NOW_FLOW_SETUP_TIMEOUT` | `20s` | Complete Flow setup operation deadline |
 | `NOW_TCP_READ_TIMEOUT` | `30s` | TCP half-close completion limit |
 | `NOW_UDP_IDLE_TIMEOUT` | `120s` | UDP Flow/QUIC idle limit |
@@ -266,11 +266,34 @@ local UDP queue budget. Invalid values fail startup with the variable name.
 
 ### Timeout semantics
 
+When `NOW_HANDSHAKE_TIMEOUT` is unset, each instance derives its default once
+from the URL-decoded, validated Shared Key bytes:
+
+```text
+digest = HMAC-SHA256(key = SharedKey, data = "nowhere/handshake-timeout")
+value = BE64(digest[0..8])
+timeout = (3000 + 100 * (value % 271)) ms
+```
+
+The key is used as ASCII bytes, without hexadecimal decoding. The label is the
+exact ASCII string shown, with no suffix or NUL. The 271 possible values span
+3.0–30.0 seconds in 100ms steps. For example, Shared Key
+`0123456789abcdef0123456789abcdef` produces `9100ms`. The same key produces the
+same default in Portal, Vector, Egress, Probe and certificate fingerprint queries,
+regardless of TLS/QUIC or Morph. Instances with different keys are independent.
+
+An explicit value takes precedence, must meet the duration validation above, and
+may be outside the derived range. Services save the effective value at startup
+and include it in their starting INFO log. Connections, reconnects and Flows reuse
+that value. Vector's SOCKS5 handshake and TLS UDP tunnel close also use the
+instance value. Flow setup has a separate 20s default deadline, which can expire
+before a longer handshake budget.
+
 - **Operation Deadline:** one budget for an operation, without restarting it at
   each stage. Vector TCP and UDP setup share `NOW_FLOW_SETUP_TIMEOUT` from the
   start of setup through READY, including DNS, connection acquisition, initial
   TLS/QUIC handshakes, reuse/lock and Stream-credit waits, AuthFrame and request
-  writes, and result reads. Existing shorter handshake stage limits still apply.
+  writes, and result reads. Handshake stage limits also apply within that budget.
   Portal-to-Egress setup keeps one budget for selection, claim, request and
   result. Probe uses the same Vector setup operation; cleanup has its own budget.
   QUIC Egress registration uses one `NOW_HANDSHAKE_TIMEOUT` after transport
@@ -278,17 +301,15 @@ local UDP queue budget. Invalid values fail startup with the variable name.
   `NOW_TCP_READ_TIMEOUT` is a completion deadline for the remaining TCP direction
   after the other direction finishes normally (Half-Close). Traffic does not
   restart it; it is not a timeout on every TCP read.
-- **Idle Timeout:** `NOW_UDP_IDLE_TIMEOUT` retains the existing UDP Flow activity
-  and QUIC transport idle rules. It does not cap the total lifetime of an active
+- **Idle Timeout:** `NOW_UDP_IDLE_TIMEOUT` controls UDP Flow activity and QUIC
+  transport idle timeouts. It does not cap the total lifetime of an active
   Flow. Fully open TCP Flows have no read-idle timeout.
 - **Fixed TTL:** unused TLS Egress standby connections expire after a fixed
   `120s`, independently at Portal and Egress. Activity does not renew this TTL;
   claimed connections leave standby and follow normal Flow lifetime rules.
-  UDP fragment reassembly retains its fixed `10s` expiry.
+  UDP fragment reassembly expires after `10s`.
 
-Certificate reload, service cooldown and shutdown retain their existing
-scheduling, backoff and drain behavior. Setup deadlines end at READY; they do
-not limit established Flow lifetimes.
+Setup deadlines end at READY; they do not limit established Flow lifetimes.
 
 ### QUIC window profiles
 

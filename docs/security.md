@@ -43,8 +43,9 @@ transport and role, including on resumed TLS connections. The
 
 ### Shared Key authority
 
-Portal, Vector and Egress require exactly 32 lowercase hexadecimal text
-characters. Shared Key is percent-decoded once and used as text bytes.
+Portal, Vector, Egress, Probe and fingerprint inspection require exactly 32
+lowercase hexadecimal text characters. Shared Key is percent-decoded once and
+used as text bytes.
 `nowhere generate-key` encodes 16 cryptographically random bytes as text,
 providing 128 bits of entropy. The accepted format alone does not guarantee
 entropy; key derivation does not increase it.
@@ -89,7 +90,9 @@ Portal reads ClientHello through rustls Acceptor without sending parser alerts.
 Before acceptance, incomplete or rejected input, including a peer's write-side
 FIN, is held silently until the authentication deadline. The absolute deadline
 starts when TCP accept completes and covers Prelude, Nonce, ClientHello, TLS
-and AuthFrame together. `NOW_HANDSHAKE_TIMEOUT` controls it (default `5s`).
+and AuthFrame together. `NOW_HANDSHAKE_TIMEOUT` controls it; its unset default is
+derived once from the Shared Key in the range 3–30s. See
+[timeout semantics](configuration.md#timeout-semantics).
 Shutdown may end the connection earlier. Resets and unrecoverable I/O failures
 detected while reading may also end it before input is rejected.
 
@@ -155,14 +158,14 @@ input and the stage it reaches:
 | Rejected Morph TCP bootstrap or ClientHello | No parser response before the original deadline; socket closure remains observable |
 | Accepted Morph TCP ClientHello with committed replay state | TLS responses and later alerts are possible before AuthFrame succeeds |
 | Unsupported-version Morph UDP long header | Silently discarded before Quinn; no Version Negotiation response |
-| Captured valid QUIC Initial | Can still trigger Retry and address validation |
+| Captured valid QUIC Initial | Can trigger Retry and address validation |
 | Standard TLS or native QUIC | Uses the transport's normal response behavior |
 
 RST, deadlines, business connection limits and operating-system resource
 exhaustion remain observable. These protections do not eliminate all
 active-probing or traffic-analysis fingerprints. Morph UDP version filtering
 does not authenticate datagrams or provide replay protection. TLS and AuthFrame
-still have to succeed before target access.
+must succeed before target access.
 
 The Prelude Tag authenticates bootstrap metadata, not the encrypted TLS stream.
 An observer who knows a captured ClientHello field's position and value can
@@ -184,7 +187,7 @@ these limits before accepting a role:
 | Authentication processing | 256 total; 32 per IPv4 source or IPv6 /64, shared by TCP and QUIC |
 | QUIC Stream credit | One client bidirectional Stream; no unidirectional Streams |
 | QUIC connection receive window | 64 KiB |
-| Handshake and authentication | `NOW_HANDSHAKE_TIMEOUT`, default `5s` |
+| Handshake and authentication | `NOW_HANDSHAKE_TIMEOUT`, Shared Key-derived default `3s`–`30s` |
 
 Morph TCP connections waiting for authentication processing are bounded by the
 operating system's file descriptor limit, not a separate application quota.

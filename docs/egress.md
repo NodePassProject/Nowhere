@@ -2,8 +2,8 @@
 
 Egress is a Nowhere-specific extension to [Nowhere Protocol (NW3)](protocol.md),
 not part of NW3 Core. A Portal with `out=egress` shares one logical output among
-all Egress connections authenticated with its Shared Key. Vector uses the
-unchanged Core protocol and does not know about Egress registration.
+all Egress connections authenticated with its Shared Key. Vector uses the Core
+protocol and does not know about Egress registration.
 
 ## Contents
 
@@ -52,7 +52,7 @@ nowhere "egress://KEY@relay.example/tcp:2000?pin=TRUSTED_SHA256"
 nowhere "egress://KEY@relay.example/udp:2001?pin=TRUSTED_SHA256"
 ```
 
-Each Egress URL selects one carrier. `HOST:PORT` retains its QUIC default.
+Each Egress URL selects one carrier. `HOST:PORT` selects QUIC by default.
 Portal's `out=egress` conflicts with explicit `dial`, `dial4` and `dial6`;
 Egress applies those options only to targets. Certificate trust, address family,
 Morph and other options are described in [Configuration](configuration.md).
@@ -92,18 +92,17 @@ Egress → Portal: SetupResult
 Egress ↔ Portal: Payload after READY
 ```
 
-For QUIC, registration remains on client bidirectional Stream 0 and the reply is
+For QUIC, registration uses client bidirectional Stream 0 and the reply is
 followed by FIN. The AuthFrame is followed by FIN, with no Flow bytes on that
 Stream. Portal then initiates each business bidirectional Stream, starting with
 Stream 1. Client-initiated Egress business Streams are role-direction violations.
 Unauthenticated DATAGRAMs and DATAGRAMs received while awaiting registration are
-discarded. QUIC business framing is unchanged. Existing QUIC Egress peers remain compatible;
-TLS Egress registration requires an updated Portal.
+discarded.
 
 Portal caps the aggregate number of pending TLS registrations with
 `NOW_PORTAL_TLS_IDLE_MAX` (default 128, range 1–1023). Connections
 being accepted count toward that cap. Full capacity returns BUSY. All accepted
-connections also hold the existing shared connection permit until they close;
+connections also hold a shared connection permit until they close;
 claiming a TLS connection releases only its pending-registration allowance.
 
 ## Business flows
@@ -144,9 +143,8 @@ any setup or forwarding failure ends that Flow: Portal does not retry another
 Egress, change carrier, fall back locally or migrate active traffic.
 
 For either carrier, `FlowStart + Target`, `SetupResult`, TCP half-close and UDP
-semantics follow Core. TLS carries UDP using the existing stream framing; QUIC
-uses business Streams and DATAGRAMs. No mux or additional control protocol is
-introduced. Invalid requests and resource/dial failures affect the selected Flow.
+semantics follow Core. TLS carries UDP using Core stream framing; QUIC uses
+business Streams and DATAGRAMs. There is no mux or additional control protocol. Invalid requests and resource/dial failures affect the selected Flow.
 
 ## UDP identity and bridging
 
@@ -166,7 +164,7 @@ A registration owns its connection and cancellation state. TLS standby is
 claimed at most once; QUIC registration cleanup removes only the actual
 connection's queue entry. Each Flow owns its selected handles and cannot be
 recovered by a later registration. Portal shutdown cancels waiters and closes
-owned resources. QUIC retains its existing keepalive and idle lifecycle.
+owned resources. QUIC uses keepalive and idle timeouts.
 
 After a claim, the connection's carrier determines its ownership:
 
@@ -221,7 +219,7 @@ pool returns to the seed without a separate maintenance protocol.
 
 TLS Egress uses the same authenticated TCP Prelude, replay protection and
 continuous TCP Morph transform as TLS Vector connections. QUIC Egress uses the
-existing UDP Morph transform; directional keys follow transport roles even
+UDP Morph transform; directional keys follow transport roles even
 though Portal initiates business Streams. Peers must agree on Shared Key and
 Morph enablement out of band.
 

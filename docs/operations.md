@@ -43,6 +43,10 @@ Perform one real TCP Flow setup using Vector's configured transport:
 nowhere probe "vector://KEY@relay.example:2000?pin=TRUSTED_SHA256" "example.com:443"
 ```
 
+Probe and fingerprint inspection require the same 32 lowercase hexadecimal
+Shared Key characters as services, checked after URL decoding and before
+connecting.
+
 `in` is optional for probe. READY verifies the selected Portal output; probe
 sends no target payload. Output failures return the fixed SetupResult described
 in the [wire specification](protocol.md).
