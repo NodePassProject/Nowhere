@@ -149,7 +149,11 @@ fn handshake_timeout_is_saved_per_vector_and_inherited_by_probe_and_fingerprint(
         ("0123456789abcdef0123456789abcdef", 9100),
         ("fedcba9876543210fedcba9876543210", 24700),
     ] {
-        let expected = Duration::from_millis(milliseconds);
+        let expected = if std::env::var_os("NOW_TEST_HANDSHAKE_OVERRIDE").is_some() {
+            Duration::from_secs(45)
+        } else {
+            Duration::from_millis(milliseconds)
+        };
         for carrier in ["tcp", "udp"] {
             for morph in [0, 1] {
                 let url = Url::parse(&format!(

@@ -99,7 +99,12 @@ fn handshake_timeout_is_saved_per_portal_key_across_carriers_and_morph() {
                     Logger,
                 )
                 .unwrap();
-                instances.push((portal, std::time::Duration::from_millis(milliseconds)));
+                let expected = if std::env::var_os("NOW_TEST_HANDSHAKE_OVERRIDE").is_some() {
+                    std::time::Duration::from_secs(45)
+                } else {
+                    std::time::Duration::from_millis(milliseconds)
+                };
+                instances.push((portal, expected));
             }
         }
     }

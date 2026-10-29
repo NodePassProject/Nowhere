@@ -55,11 +55,9 @@ impl Portal {
                 .logger
                 .error(format_args!("local ipc unavailable: {error:#}")),
         }
-        forward.logger.info(format_args!(
-            "portal starting: {}, handshake_timeout={}",
-            self.inner.effective,
-            humantime::format_duration(self.inner.runtime.handshake_timeout)
-        ));
+        forward
+            .logger
+            .info(format_args!("portal starting: {}", self.inner.effective));
         let failure = tokio::select! {
             signal = signals.recv() => signal.err(),
             exit = listeners.join_next() => Some(match exit {

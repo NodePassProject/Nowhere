@@ -283,11 +283,10 @@ same default in Portal, Vector, Egress, Probe and certificate fingerprint querie
 regardless of TLS/QUIC or Morph. Instances with different keys are independent.
 
 An explicit value takes precedence, must meet the duration validation above, and
-may be outside the derived range. Services save the effective value at startup
-and include it in their starting INFO log. Connections, reconnects and Flows reuse
-that value. Vector's SOCKS5 handshake and TLS UDP tunnel close also use the
-instance value. Flow setup has a separate 20s default deadline, which can expire
-before a longer handshake budget.
+may be outside the derived range. Services save the effective value at startup.
+Connections, reconnects and Flows reuse that value. Vector's SOCKS5 handshake
+and TLS UDP tunnel close also use the instance value. Flow setup has a separate
+20s default deadline, which can expire before a longer handshake budget.
 
 - **Operation Deadline:** one budget for an operation, without restarting it at
   each stage. Vector TCP and UDP setup share `NOW_FLOW_SETUP_TIMEOUT` from the

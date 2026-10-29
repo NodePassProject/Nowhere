@@ -278,85 +278,23 @@ fn handshake_timeout_uses_decoded_ascii_and_explicit_values_take_precedence() {
 }
 
 #[test]
-fn handshake_timeout_startup_logs_show_defaults_and_overrides_for_each_role() {
-    for role in ["portal", "vector", "egress"] {
-        for (explicit, expected) in [(None, "9s 100ms"), (Some("45s"), "45s")] {
-            assert_handshake_startup_log(role, explicit, expected);
-        }
+fn explicit_handshake_timeout_overrides_each_service_instance() {
+    for test in [
+        "portal::setup::tests::handshake_timeout_is_saved_per_portal_key_across_carriers_and_morph",
+        "egress::setup::tests::handshake_timeout_is_shared_by_egress_connection_and_forwarding_per_instance",
+        "vector::config::tests::handshake_timeout_is_saved_per_vector_and_inherited_by_probe_and_fingerprint",
+    ] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture"])
+            .env("NOW_HANDSHAKE_TIMEOUT", "45s")
+            .env("NOW_TEST_HANDSHAKE_OVERRIDE", "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("running 1 test"),
+            "{test}: {stdout} {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
-}
-
-fn assert_handshake_startup_log(role: &str, explicit: Option<&str>, expected: &str) {
-    const KEY: &str = "0123456789abcdef0123456789abcdef";
-    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = reservation.local_addr().unwrap().port();
-    drop(reservation);
-    let url = format!(
-        "{role}://{KEY}@127.0.0.1/tcp:{port}?morph=0&in=127.0.0.1:{port}&pin={}",
-        "0".repeat(64)
-    );
-    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-    command
-        .args([
-            "--exact",
-            "common::config::tests::handshake_timeout_startup_log_child",
-            "--nocapture",
-        ])
-        .env("NOW_TEST_HANDSHAKE_URL", url)
-        .env_remove("NOW_HANDSHAKE_TIMEOUT");
-    if let Some(raw) = explicit {
-        command.env("NOW_HANDSHAKE_TIMEOUT", raw);
-    }
-    let output = command.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "{role}: {stdout}\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let line = stdout
-        .lines()
-        .find(|line| line.contains(&format!("{role} starting:")))
-        .expect("missing startup INFO log");
-    assert!(
-        line.ends_with(&format!("handshake_timeout={expected}")),
-        "{line}"
-    );
-    assert!(!line.contains(KEY), "startup log leaked the shared key");
-}
-
-#[tokio::test]
-async fn handshake_timeout_startup_log_child() {
-    let Ok(raw) = std::env::var("NOW_TEST_HANDSHAKE_URL") else {
-        return;
-    };
-    let url = Url::parse(&raw).unwrap();
-    let result = match url.scheme() {
-        "portal" => {
-            tokio::time::timeout(
-                Duration::from_millis(100),
-                crate::Portal::new(url, crate::Logger).unwrap().run(),
-            )
-            .await
-        }
-        "vector" => {
-            tokio::time::timeout(
-                Duration::from_millis(100),
-                crate::Vector::new(url, crate::Logger).unwrap().run(),
-            )
-            .await
-        }
-        "egress" => {
-            tokio::time::timeout(
-                Duration::from_millis(100),
-                crate::Egress::new(url, crate::Logger).unwrap().run(),
-            )
-            .await
-        }
-        _ => panic!("invalid role"),
-    };
-    assert!(
-        result.is_err(),
-        "service exited before the observation window"
-    );
 }

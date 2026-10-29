@@ -103,7 +103,12 @@ fn handshake_timeout_is_shared_by_egress_connection_and_forwarding_per_instance(
                     Logger,
                 )
                 .unwrap();
-                instances.push((egress, std::time::Duration::from_millis(milliseconds)));
+                let expected = if std::env::var_os("NOW_TEST_HANDSHAKE_OVERRIDE").is_some() {
+                    std::time::Duration::from_secs(45)
+                } else {
+                    std::time::Duration::from_millis(milliseconds)
+                };
+                instances.push((egress, expected));
             }
         }
     }
