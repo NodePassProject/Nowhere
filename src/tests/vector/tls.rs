@@ -364,3 +364,62 @@ async fn cloned_tls_clients_send_one_identity_and_distinct_counters_after_failur
     assert_eq!(tokens[1].counter, 2);
     assert_eq!(tls.prelude.allocated_for_test(), 2);
 }
+
+#[tokio::test]
+async fn cloned_tls_clients_keep_the_instance_handshake_budget() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    for morph in [0, 1] {
+        let mut config = config(&format!(
+            "vector://0123456789abcdef0123456789abcdef@{address}?in=127.0.0.1:1080&morph={morph}&pin={}",
+            "0".repeat(64)
+        ));
+        config.handshake_timeout = Duration::from_millis(50);
+        let tls = ClientTls::new(&config).unwrap();
+        config.handshake_timeout = Duration::from_secs(45);
+        let clone = tls.clone();
+        for client in [&tls, &clone] {
+            assert_eq!(client.handshake_timeout, Duration::from_millis(50));
+            let started = tokio::time::Instant::now();
+            let error = tokio::time::timeout(
+                Duration::from_secs(1),
+                client.connect_tcp(
+                    &address.to_string(),
+                    &config.dial_policy,
+                    crate::common::AddressFamily::Any,
+                ),
+            )
+            .await
+            .expect("TLS ignored its saved stage budget")
+            .unwrap_err();
+            assert!(format!("{error:#}").contains("TLS handshake timeout"));
+            assert!(started.elapsed() >= Duration::from_millis(50));
+        }
+    }
+}
+
+#[tokio::test]
+async fn quic_connect_uses_the_instance_handshake_budget() {
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    for morph in [0, 1] {
+        let (mut config, _) = PortalClientConfig::from_probe_url(
+            &url::Url::parse(&format!(
+                "vector://0123456789abcdef0123456789abcdef@127.0.0.1/udp:{}?morph={morph}&pin={}",
+                socket.local_addr().unwrap().port(),
+                "0".repeat(64)
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        config.handshake_timeout = Duration::from_millis(50);
+        let tls = ClientTls::new(&config).unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            crate::vector::client::connect_quic(&config, &tls),
+        )
+        .await
+        .expect("QUIC ignored its saved stage budget")
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("QUIC handshake timeout"));
+    }
+}

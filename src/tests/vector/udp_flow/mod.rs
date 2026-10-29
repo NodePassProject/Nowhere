@@ -20,6 +20,7 @@ async fn stream_tunnel_reuses_receive_buffer_and_accounts_only_completed_packets
         TcpTunnelGuard { _flow: None },
         stats.clone(),
         true,
+        std::time::Duration::from_secs(1),
     );
     let mut buffer = Vec::with_capacity(64);
     let pointer = buffer.as_ptr();
@@ -59,10 +60,55 @@ async fn dropping_a_stream_tunnel_cancels_it_and_releases_the_active_count() {
         TcpTunnelGuard { _flow: None },
         stats.clone(),
         true,
+        std::time::Duration::from_secs(1),
     );
     let cancellation = tunnel.cancellation();
     assert_eq!(stats.udp_active.load(Ordering::Relaxed), 1);
     drop(tunnel);
     assert!(cancellation.is_cancelled());
     assert_eq!(stats.udp_active.load(Ordering::Relaxed), 0);
+}
+
+struct PendingShutdown;
+
+impl tokio::io::AsyncWrite for PendingShutdown {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Ready(Ok(bytes.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Pending
+    }
+}
+
+#[tokio::test]
+async fn stream_close_uses_its_saved_handshake_timeout() {
+    let mut tunnel = UdpTunnel::stream(
+        Box::pin(tokio::io::empty()),
+        Box::pin(PendingShutdown),
+        TcpTunnelGuard { _flow: None },
+        Arc::new(Stats::default()),
+        false,
+        Duration::from_millis(50),
+    );
+    let started = tokio::time::Instant::now();
+    tokio::time::timeout(Duration::from_secs(1), tunnel.close())
+        .await
+        .expect("UDP close ignored its saved budget");
+    assert!(started.elapsed() >= Duration::from_millis(50));
+    assert!(tunnel.cancellation().is_cancelled());
 }

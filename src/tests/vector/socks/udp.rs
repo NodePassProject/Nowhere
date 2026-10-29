@@ -145,6 +145,7 @@ async fn relay_finish(blocked_send: bool, cancel_carrier: bool) {
         crate::vector::flow::TcpTunnelGuard { _flow: None },
         vector.inner.stats.clone(),
         true,
+        vector.inner.config.handshake_timeout,
     );
     let cancel = tunnel.cancellation();
     let (sender, receiver) = mpsc::channel(1);

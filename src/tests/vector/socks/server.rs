@@ -157,3 +157,33 @@ async fn invalid_tcp_target_does_not_publish_access() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn socks_handshake_uses_the_vector_instance_timeout() {
+    let mut vector = Vector::new(
+        Url::parse("vector://0123456789abcdef0123456789abcdef@127.0.0.1:9?in=127.0.0.1:1080&pin=0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+        Logger,
+    ).unwrap();
+    Arc::get_mut(&mut vector.inner)
+        .unwrap()
+        .config
+        .portal
+        .handshake_timeout = Duration::from_millis(50);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (accepted, client) = tokio::join!(
+        listener.accept(),
+        TcpStream::connect(listener.local_addr().unwrap())
+    );
+    let (server, peer) = accepted.unwrap();
+    let _client = client.unwrap();
+    let started = tokio::time::Instant::now();
+    let error = tokio::time::timeout(
+        Duration::from_secs(1),
+        handle_client(vector.inner.clone(), server, peer, CancellationToken::new()),
+    )
+    .await
+    .expect("SOCKS handshake ignored the instance budget")
+    .unwrap_err();
+    assert!(error.to_string().contains("SOCKS5 handshake timeout"));
+    assert!(started.elapsed() >= Duration::from_millis(50));
+}

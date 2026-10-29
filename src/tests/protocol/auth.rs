@@ -104,6 +104,8 @@ fn service_roles_share_key_validation_and_decode_only_once() {
             "a".repeat(33),
             "a".repeat(64),
             "a".repeat(65),
+            "a".repeat(256),
+            "é".repeat(16),
             "%61".repeat(31),
             "%61".repeat(33),
             "%61".repeat(64),

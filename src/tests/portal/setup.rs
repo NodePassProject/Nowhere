@@ -81,3 +81,30 @@ fn egress_output_accepts_tcp_only_udp_only_and_dual_listeners() {
         );
     }
 }
+
+#[test]
+fn handshake_timeout_is_saved_per_portal_key_across_carriers_and_morph() {
+    let mut instances = Vec::new();
+    for (key, milliseconds) in [
+        ("0123456789abcdef0123456789abcdef", 9100),
+        ("fedcba9876543210fedcba9876543210", 24700),
+    ] {
+        for carrier in ["tcp", "udp"] {
+            for morph in [0, 1] {
+                let portal = Portal::new(
+                    Url::parse(&format!(
+                        "portal://{key}@127.0.0.1/{carrier}:2000?morph={morph}"
+                    ))
+                    .unwrap(),
+                    Logger,
+                )
+                .unwrap();
+                instances.push((portal, std::time::Duration::from_millis(milliseconds)));
+            }
+        }
+    }
+    for (portal, expected) in instances {
+        assert_eq!(portal.inner.runtime.handshake_timeout, expected);
+        assert_eq!(portal.inner.forward.runtime.handshake_timeout, expected);
+    }
+}

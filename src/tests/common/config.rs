@@ -155,6 +155,13 @@ fn invalid_duration_is_rejected_by_each_service_at_startup() {
             assert_invalid_startup(role, name, std::ffi::OsStr::new("invalid"));
         }
     }
+    for role in ["probe", "fingerprint"] {
+        assert_invalid_startup(
+            role,
+            "NOW_HANDSHAKE_TIMEOUT",
+            std::ffi::OsStr::new("invalid"),
+        );
+    }
 }
 
 fn assert_invalid_startup(role: &str, name: &str, raw: &std::ffi::OsStr) {
@@ -180,7 +187,11 @@ fn assert_invalid_startup(role: &str, name: &str, raw: &std::ffi::OsStr) {
 #[test]
 fn non_unicode_duration_is_a_startup_error() {
     let raw = std::ffi::OsString::from_vec(vec![0xff]);
+    for role in ["probe", "fingerprint"] {
+        assert_invalid_startup(role, "NOW_HANDSHAKE_TIMEOUT", &raw);
+    }
     for role in ["portal", "vector", "egress"] {
+        assert_invalid_startup(role, "NOW_HANDSHAKE_TIMEOUT", &raw);
         assert_invalid_startup(role, "NOW_FLOW_SETUP_TIMEOUT", &raw);
         assert_invalid_startup(role, "NOW_QUIC_UDP_QUEUE_BYTES", &raw);
     }
@@ -192,16 +203,160 @@ fn invalid_duration_startup_child() {
         return;
     };
     let name = std::env::var("NOW_TEST_TIMEOUT_NAME").unwrap();
+    let scheme = match role.as_str() {
+        "probe" => "vector",
+        "fingerprint" => "nowhere",
+        _ => &role,
+    };
     let url = Url::parse(&format!(
-        "{role}://0123456789abcdef0123456789abcdef@127.0.0.1:2000"
+        "{scheme}://0123456789abcdef0123456789abcdef@127.0.0.1:2000?morph=0"
     ))
     .unwrap();
     let error = match role.as_str() {
         "portal" => crate::Portal::new(url, crate::Logger).err(),
         "vector" => crate::Vector::new(url, crate::Logger).err(),
         "egress" => crate::Egress::new(url, crate::Logger).err(),
+        "probe" => crate::vector::PortalClientConfig::from_probe_url(&url).err(),
+        "fingerprint" => crate::vector::PortalClientConfig::from_fingerprint_url(&url).err(),
         _ => panic!("invalid test role"),
     }
     .expect("invalid configuration did not stop startup");
     assert!(format!("{error:#}").contains(&name), "{error:#}");
+}
+
+#[test]
+fn handshake_timeout_reference_vectors_cover_ascii_keys_and_range_endpoints() {
+    for (key, milliseconds) in [
+        ("0123456789abcdef0123456789abcdef", 9100),
+        ("fedcba9876543210fedcba9876543210", 24700),
+        ("00000000000000000000000000000000", 18600),
+        ("ffffffffffffffffffffffffffffffff", 24300),
+        ("00000000000000000000000000000005", 3000),
+        ("0000000000000000000000000000002a", 30000),
+    ] {
+        assert_eq!(
+            derive_handshake_timeout(key.as_bytes()),
+            Duration::from_millis(milliseconds)
+        );
+    }
+}
+
+#[test]
+fn handshake_timeout_uses_decoded_ascii_and_explicit_values_take_precedence() {
+    let url = Url::parse("portal://%30123456789abcdef0123456789abcdef@localhost:2000").unwrap();
+    let mut reads = 0;
+    let timeout = read_handshake_timeout(
+        &mut |name| {
+            assert_eq!(name, "NOW_HANDSHAKE_TIMEOUT");
+            reads += 1;
+            Ok(None)
+        },
+        &url,
+    )
+    .unwrap();
+    assert_eq!(timeout, Duration::from_millis(9100));
+    assert_eq!(reads, 1);
+
+    let missing_key = Url::parse("portal://localhost:2000").unwrap();
+    for (raw, expected) in [("1500ms", 1500), ("45s", 45000)] {
+        assert_eq!(
+            read_handshake_timeout(&mut |_| Ok(Some(raw.into())), &missing_key).unwrap(),
+            Duration::from_millis(expected)
+        );
+    }
+    for raw in [
+        "",
+        "0s",
+        "-1s",
+        "invalid",
+        "999999999999999999999999h",
+        "18446744073709551615s",
+    ] {
+        let error = read_handshake_timeout(&mut |_| Ok(Some(raw.into())), &url).unwrap_err();
+        assert!(format!("{error:#}").contains("NOW_HANDSHAKE_TIMEOUT"));
+    }
+}
+
+#[test]
+fn handshake_timeout_startup_logs_show_defaults_and_overrides_for_each_role() {
+    for role in ["portal", "vector", "egress"] {
+        for (explicit, expected) in [(None, "9s 100ms"), (Some("45s"), "45s")] {
+            assert_handshake_startup_log(role, explicit, expected);
+        }
+    }
+}
+
+fn assert_handshake_startup_log(role: &str, explicit: Option<&str>, expected: &str) {
+    const KEY: &str = "0123456789abcdef0123456789abcdef";
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = reservation.local_addr().unwrap().port();
+    drop(reservation);
+    let url = format!(
+        "{role}://{KEY}@127.0.0.1/tcp:{port}?morph=0&in=127.0.0.1:{port}&pin={}",
+        "0".repeat(64)
+    );
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "common::config::tests::handshake_timeout_startup_log_child",
+            "--nocapture",
+        ])
+        .env("NOW_TEST_HANDSHAKE_URL", url)
+        .env_remove("NOW_HANDSHAKE_TIMEOUT");
+    if let Some(raw) = explicit {
+        command.env("NOW_HANDSHAKE_TIMEOUT", raw);
+    }
+    let output = command.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{role}: {stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let line = stdout
+        .lines()
+        .find(|line| line.contains(&format!("{role} starting:")))
+        .expect("missing startup INFO log");
+    assert!(
+        line.ends_with(&format!("handshake_timeout={expected}")),
+        "{line}"
+    );
+    assert!(!line.contains(KEY), "startup log leaked the shared key");
+}
+
+#[tokio::test]
+async fn handshake_timeout_startup_log_child() {
+    let Ok(raw) = std::env::var("NOW_TEST_HANDSHAKE_URL") else {
+        return;
+    };
+    let url = Url::parse(&raw).unwrap();
+    let result = match url.scheme() {
+        "portal" => {
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                crate::Portal::new(url, crate::Logger).unwrap().run(),
+            )
+            .await
+        }
+        "vector" => {
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                crate::Vector::new(url, crate::Logger).unwrap().run(),
+            )
+            .await
+        }
+        "egress" => {
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                crate::Egress::new(url, crate::Logger).unwrap().run(),
+            )
+            .await
+        }
+        _ => panic!("invalid role"),
+    };
+    assert!(
+        result.is_err(),
+        "service exited before the observation window"
+    );
 }

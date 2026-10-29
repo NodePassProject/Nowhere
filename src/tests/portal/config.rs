@@ -12,7 +12,10 @@ fn parse(values: &[(&str, &str)]) -> anyhow::Result<PortalRuntimeConfig> {
         .iter()
         .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
         .collect::<HashMap<_, _>>();
-    PortalRuntimeConfig::from_source(|name| Ok(values.get(name).cloned()))
+    let mut source = |name: &str| Ok(values.get(name).cloned());
+    let url = url::Url::parse("portal://0123456789abcdef0123456789abcdef@localhost:2000")?;
+    let handshake_timeout = crate::common::read_handshake_timeout(&mut source, &url)?;
+    PortalRuntimeConfig::from_source(source, handshake_timeout)
 }
 
 #[test]
@@ -26,7 +29,7 @@ fn absent_values_use_the_existing_defaults() {
     assert_eq!(config.udp_dial_timeout, DEFAULT_UDP_DIAL_TIMEOUT);
     assert_eq!(config.tcp_read_timeout, DEFAULT_TCP_READ_TIMEOUT);
     assert_eq!(config.udp_idle_timeout, DEFAULT_UDP_IDLE_TIMEOUT);
-    assert_eq!(config.handshake_timeout, DEFAULT_HANDSHAKE_TIMEOUT);
+    assert_eq!(config.handshake_timeout, Duration::from_millis(9100));
     assert_eq!(config.shutdown_timeout, DEFAULT_SHUTDOWN_TIMEOUT);
     assert_eq!(config.reload_interval, DEFAULT_RELOAD_INTERVAL);
 }

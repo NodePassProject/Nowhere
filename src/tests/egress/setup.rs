@@ -84,3 +84,31 @@ fn tls_pool_max_requires_a_positive_bounded_integer() {
         assert!(parse_tls_pool_max(value).is_err());
     }
 }
+
+#[test]
+fn handshake_timeout_is_shared_by_egress_connection_and_forwarding_per_instance() {
+    let mut instances = Vec::new();
+    for (key, milliseconds) in [
+        ("0123456789abcdef0123456789abcdef", 9100),
+        ("fedcba9876543210fedcba9876543210", 24700),
+    ] {
+        for carrier in ["tcp", "udp"] {
+            for morph in [0, 1] {
+                let egress = Egress::new(
+                    Url::parse(&format!(
+                        "egress://{key}@127.0.0.1/{carrier}:2000?morph={morph}&pin={}",
+                        "0".repeat(64)
+                    ))
+                    .unwrap(),
+                    Logger,
+                )
+                .unwrap();
+                instances.push((egress, std::time::Duration::from_millis(milliseconds)));
+            }
+        }
+    }
+    for (egress, expected) in instances {
+        assert_eq!(egress.config.handshake_timeout, expected);
+        assert_eq!(egress.forward.runtime.handshake_timeout, expected);
+    }
+}

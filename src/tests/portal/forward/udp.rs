@@ -87,6 +87,7 @@ async fn blocked_download_retains_only_the_payload_and_still_cancels_or_times_ou
             crate::vector::TcpTunnelGuard { _flow: None },
             forward.stats.clone(),
             false,
+            forward.runtime.handshake_timeout,
         );
         let cancel = CancellationToken::new();
         let mut buffer = Vec::new();

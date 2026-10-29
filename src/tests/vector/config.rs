@@ -141,3 +141,92 @@ fn morph_defaults_on_and_honors_explicit_values() {
         }
     }
 }
+
+#[test]
+fn handshake_timeout_is_saved_per_vector_and_inherited_by_probe_and_fingerprint() {
+    let mut instances = Vec::new();
+    for (key, milliseconds) in [
+        ("0123456789abcdef0123456789abcdef", 9100),
+        ("fedcba9876543210fedcba9876543210", 24700),
+    ] {
+        let expected = Duration::from_millis(milliseconds);
+        for carrier in ["tcp", "udp"] {
+            for morph in [0, 1] {
+                let url = Url::parse(&format!(
+                    "vector://{key}@127.0.0.1/{carrier}:2000?in=127.0.0.1:1080&morph={morph}&pin={}",
+                    "0".repeat(64)
+                ))
+                .unwrap();
+                let (probe, _) = PortalClientConfig::from_probe_url(&url).unwrap();
+                let share = Url::parse(&format!(
+                    "nowhere://{key}@127.0.0.1:2000?net={carrier}&morph={morph}"
+                ))
+                .unwrap();
+                let fingerprint = PortalClientConfig::from_fingerprint_url(&share).unwrap();
+                assert_eq!(probe.handshake_timeout, expected);
+                assert_eq!(fingerprint.handshake_timeout, expected);
+                let vector = crate::Vector::new(url, crate::Logger).unwrap();
+                instances.push((vector, expected));
+            }
+        }
+    }
+    for (vector, expected) in instances {
+        assert_eq!(vector.runtime.inner.config.handshake_timeout, expected);
+        assert_eq!(
+            vector.runtime.inner.client.config.handshake_timeout,
+            expected
+        );
+    }
+}
+
+#[test]
+fn probe_and_fingerprint_reject_invalid_shared_keys_without_leaking_them() {
+    for key in [
+        "a".repeat(31),
+        "A".repeat(32),
+        "%2561".repeat(32),
+        "0123456789abcdef0123456789abcdef:do-not-print-password".to_owned(),
+    ] {
+        for morph in [0, 1] {
+            for scheme in ["vector", "nowhere"] {
+                let url =
+                    Url::parse(&format!("{scheme}://{key}@localhost:2000?morph={morph}")).unwrap();
+                let error = if scheme == "vector" {
+                    PortalClientConfig::from_probe_url(&url).map(|(config, _)| config)
+                } else {
+                    PortalClientConfig::from_fingerprint_url(&url)
+                }
+                .unwrap_err();
+                let message = format!("{error:#}");
+                assert!(message.contains("use nowhere generate-key"), "{message}");
+                assert!(!message.contains(&key), "{message}");
+                assert!(!message.contains("do-not-print-password"), "{message}");
+                assert!(!message.contains("localhost"), "{message}");
+            }
+        }
+    }
+}
+
+#[test]
+fn probe_and_fingerprint_use_decoded_key_bytes() {
+    const KEY: &str = "0123456789abcdef0123456789abcdef";
+    let encoded: String = KEY.bytes().map(|byte| format!("%{byte:02X}")).collect();
+    let probe = Url::parse(&format!("vector://{encoded}@localhost:2000?morph=1")).unwrap();
+    let share = Url::parse(&format!(
+        "nowhere://{encoded}@localhost:2000?morph=1#Display%20Name"
+    ))
+    .unwrap();
+    let (probe, credentials) = PortalClientConfig::from_probe_url(&probe).unwrap();
+    let fingerprint = PortalClientConfig::from_fingerprint_url(&share).unwrap();
+    assert_eq!(
+        credentials,
+        crate::protocol::Credentials::from_shared_key(KEY.as_bytes()).unwrap()
+    );
+    for config in [probe, fingerprint] {
+        assert_eq!(config.handshake_timeout, Duration::from_millis(9100));
+        assert_eq!(
+            config.morph_keys.unwrap().udp_keys(),
+            MorphKeys::derive(KEY.as_bytes()).udp_keys()
+        );
+    }
+}

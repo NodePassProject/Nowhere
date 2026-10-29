@@ -217,34 +217,55 @@ async fn quic_lock_wait_and_reused_ready_share_one_budget_without_closing_active
 
 #[tokio::test]
 async fn quic_setup_bounds_blocked_stream_credit_and_request_writes() {
-    for blocked_write in [false, true] {
-        let (endpoint, mut client) = quic_fixture_with_transport(|transport| {
-            if blocked_write {
-                transport.stream_receive_window(0u32.into());
+    for (blocked_write, handshake_first) in [(false, false), (true, false), (false, true)] {
+        timeout(Duration::from_secs(5), async {
+            let (endpoint, mut client) = quic_fixture_with_transport(|transport| {
+                if blocked_write {
+                    transport.stream_receive_window(0u32.into());
+                } else {
+                    transport.max_concurrent_bidi_streams(0u32.into());
+                }
+            });
+            let prepared = if handshake_first {
+                let (connected, accepted) = tokio::join!(
+                    connect_quic(&client.config, &client.tls),
+                    async { endpoint.accept().await.unwrap().await.unwrap() },
+                );
+                let (local, connection) = connected.unwrap();
+                let client = Arc::get_mut(&mut client).unwrap();
+                client.config.handshake_timeout = Duration::from_millis(100);
+                *client.quic.get_mut() = Some((
+                    local,
+                    QuicConnection::new(connection, false, client.udp_queue_bytes),
+                ));
+                Some(accepted)
             } else {
-                transport.max_concurrent_bidi_streams(0u32.into());
-            }
-        });
-        Arc::get_mut(&mut client).unwrap().flow_setup_timeout = Duration::from_millis(400);
-        let opening = client.clone();
-        let task = tokio::spawn(async move {
-            opening
-                .open_quic_flow(FlowKind::Udp, &Target::domain("example.com", 53).unwrap())
-                .await
-        });
-        let connection = endpoint.accept().await.unwrap().await.unwrap();
-        assert_elapsed(
-            timeout(Duration::from_secs(1), task)
-                .await
-                .unwrap()
-                .unwrap()
-                .err()
-                .unwrap(),
-        );
-        assert!(client.quic.try_lock().unwrap().is_none());
-        timeout(Duration::from_secs(1), connection.closed())
-            .await
-            .unwrap();
-        endpoint.close(0u32.into(), b"done");
+                Arc::get_mut(&mut client).unwrap().flow_setup_timeout = Duration::from_millis(400);
+                None
+            };
+            let target = Target::domain("example.com", 53).unwrap();
+            let opening = client.open_quic_flow(FlowKind::Udp, &target);
+            tokio::pin!(opening);
+            let connection = match prepared {
+                Some(connection) => connection,
+                None => tokio::select! {
+                    result = &mut opening => panic!("setup ended before transport connected: {:?}", result.err()),
+                    connection = async { endpoint.accept().await.unwrap().await.unwrap() } => connection,
+                },
+            };
+            assert_elapsed(
+                timeout(Duration::from_secs(1), &mut opening)
+                    .await
+                    .expect("blocked setup ignored its shorter budget")
+                    .err()
+                    .unwrap(),
+            );
+            assert_eq!(client.quic.try_lock().unwrap().is_some(), handshake_first);
+            client.close(Instant::now() + Duration::from_secs(1)).await;
+            connection.closed().await;
+            endpoint.close(0u32.into(), b"done");
+        })
+        .await
+        .expect("QUIC setup test exceeded its total deadline");
     }
 }

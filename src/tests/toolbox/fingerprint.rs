@@ -3,24 +3,32 @@
 
 //! TLS fingerprint queries, share-link validation, and error redaction tests.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 
 use super::*;
+
+const KEY: &str = "0123456789abcdef0123456789abcdef";
 
 #[tokio::test]
 async fn fingerprint_connection_refusal_reports_the_cause_without_echoing_the_endpoint() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     drop(listener);
-    let error =
-        fingerprint(Url::parse(&format!("nowhere://secret@{address}?net=tcp&morph=0")).unwrap())
-            .await
-            .unwrap_err();
+    let error = fingerprint(
+        Url::parse(&format!(
+            "nowhere://0123456789abcdef0123456789abcdef@{address}?net=tcp&morph=0"
+        ))
+        .unwrap(),
+    )
+    .await
+    .unwrap_err();
     let message = format!("{error:#}");
     assert!(
         message.contains("TCP connection failed: connection refused"),
         "{message}"
     );
+    assert!(!message.contains(KEY), "{message}");
     assert!(!message.contains("secret"), "{message}");
     assert!(!message.contains(&address.to_string()), "{message}");
 }
@@ -29,11 +37,11 @@ async fn fingerprint_connection_refusal_reports_the_cause_without_echoing_the_en
 async fn fingerprint_rejects_invalid_share_links_without_leaking_secrets() {
     for (raw, expected) in [
         (
-            "nowhere://secret@localhost/udp:2000#My%20Portal",
+            "nowhere://0123456789abcdef0123456789abcdef@localhost/udp:2000#My%20Portal",
             "invalid nowhere share link",
         ),
         (
-            "nowhere://secret@localhost:2000?net=%ZZ",
+            "nowhere://0123456789abcdef0123456789abcdef@localhost:2000?net=%ZZ",
             "invalid nowhere share link",
         ),
         (
@@ -42,7 +50,7 @@ async fn fingerprint_rejects_invalid_share_links_without_leaking_secrets() {
         ),
         ("nowhere://localhost:2000", "invalid nowhere share link"),
         (
-            "nowhere://secret:password@localhost:2000",
+            "nowhere://0123456789abcdef0123456789abcdef:password@localhost:2000",
             "invalid nowhere share link",
         ),
         (
@@ -50,17 +58,18 @@ async fn fingerprint_rejects_invalid_share_links_without_leaking_secrets() {
             "invalid nowhere share link",
         ),
         (
-            "nowhere://secret@localhost:2000?net=tcp&morph=secret",
+            "nowhere://0123456789abcdef0123456789abcdef@localhost:2000?net=tcp&morph=secret",
             "invalid nowhere share link",
         ),
         (
-            "nowhere://secret@localhost:2000?net=tcp&morph=0&sni=secret:443",
+            "nowhere://0123456789abcdef0123456789abcdef@localhost:2000?net=tcp&morph=0&sni=secret:443",
             "invalid nowhere share link",
         ),
     ] {
         let error = fingerprint(Url::parse(raw).unwrap()).await.unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains(expected), "{message}");
+        assert!(!message.contains(KEY), "{message}");
         assert!(!message.contains("secret"), "{message}");
     }
 }
@@ -68,7 +77,7 @@ async fn fingerprint_rejects_invalid_share_links_without_leaking_secrets() {
 #[test]
 fn fingerprint_share_links_decode_keys_and_ignore_display_names_and_flow_options() {
     let url = Url::parse(
-        "nowhere://shared%40key%3A%2F%3F%23%25%2B@[::1]:2006?net=udp&net=invalid&morph=1&morph=0&sni=relay.example&unknown=ignored&pin=wrong&socks=missing#My%20Portal",
+        "nowhere://%30123456789abcdef0123456789abcdef@[::1]:2006?net=udp&net=invalid&morph=1&morph=0&sni=relay.example&unknown=ignored&pin=wrong&socks=missing#My%20Portal",
     ).unwrap();
     let config = PortalClientConfig::from_fingerprint_url(&url).unwrap();
     assert_eq!(config.endpoint(), "[::1]:2006");
@@ -77,10 +86,11 @@ fn fingerprint_share_links_decode_keys_and_ignore_display_names_and_flow_options
     assert!(config.pin.is_none());
     assert_eq!(
         config.morph_keys.unwrap().udp_keys(),
-        crate::transport::MorphKeys::derive(b"shared@key:/?#%+").udp_keys(),
+        crate::transport::MorphKeys::derive(KEY.as_bytes()).udp_keys(),
     );
     let plain = PortalClientConfig::from_fingerprint_url(
-        &Url::parse("nowhere://secret@localhost:2000?net=tcp&morph=0").unwrap(),
+        &Url::parse("nowhere://0123456789abcdef0123456789abcdef@localhost:2000?net=tcp&morph=0")
+            .unwrap(),
     )
     .unwrap();
     assert_eq!(plain.net, crate::vector::config::CarrierMode::Tcp);
@@ -98,15 +108,22 @@ fn fingerprint_defaults_carrier_and_requires_morph() {
         ("net=tcp&morph=", "morph must be 0 or 1"),
         ("net=tcp&morph=invalid&morph=0", "morph must be 0 or 1"),
     ] {
-        let url = Url::parse(&format!("nowhere://secret@localhost:2000?{query}#NAME")).unwrap();
+        let url = Url::parse(&format!(
+            "nowhere://0123456789abcdef0123456789abcdef@localhost:2000?{query}#NAME"
+        ))
+        .unwrap();
         let error = PortalClientConfig::from_fingerprint_url(&url).unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains(expected), "{message}");
+        assert!(!message.contains(KEY), "{message}");
         assert!(!message.contains("secret"), "{message}");
         assert!(!message.contains("localhost"), "{message}");
     }
     for (query, morph) in [("?morph=0", false), ("?morph=1", true)] {
-        let url = Url::parse(&format!("nowhere://secret@localhost:2000{query}")).unwrap();
+        let url = Url::parse(&format!(
+            "nowhere://0123456789abcdef0123456789abcdef@localhost:2000{query}"
+        ))
+        .unwrap();
         let config = PortalClientConfig::from_fingerprint_url(&url).unwrap();
         assert_eq!(config.net, crate::vector::config::CarrierMode::Tcp);
         assert_eq!(config.morph, morph);
@@ -140,7 +157,7 @@ async fn fingerprint_reads_the_leaf_certificate_with_and_without_morph_without_f
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let url = Url::parse(&format!(
-            "nowhere://secret@{address}?net={net}&morph={morph}&sni=wrong.example&unknown=ignored#My%20Portal"
+            "nowhere://0123456789abcdef0123456789abcdef@{address}?net={net}&morph={morph}&sni=wrong.example&unknown=ignored#My%20Portal"
         )).unwrap();
         let config = PortalClientConfig::from_fingerprint_url(&url).unwrap();
         let morph_keys = config.morph_keys.clone();
