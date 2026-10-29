@@ -7,6 +7,7 @@ mod framing;
 mod io;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -18,9 +19,9 @@ use crate::common::BudgetedDatagram;
 use crate::protocol::{FlowKind, Target};
 use crate::transport::{QuicConnection, Stats, UdpRoute};
 
+use self::framing::UotReadState;
 use super::PortalClient;
 use super::flow::{BoxReader, BoxWriter, FlowGuard, OpenFlowError, TcpTunnelGuard};
-use framing::UotReadState;
 
 pub(crate) use self::io::ReceivedUdpPacket;
 
@@ -48,7 +49,10 @@ pub(crate) struct UdpTunnelReceiver {
 }
 
 enum UdpSendTransport {
-    Stream(BoxWriter),
+    Stream {
+        writer: BoxWriter,
+        handshake_timeout: Duration,
+    },
     Quic {
         connection: Arc<QuicConnection>,
         id: u32,
@@ -71,6 +75,7 @@ impl UdpTunnel {
         guard: TcpTunnelGuard,
         stats: Arc<Stats>,
         account: bool,
+        handshake_timeout: Duration,
     ) -> Self {
         let cancel = CancellationToken::new();
         let flow = if account {
@@ -81,7 +86,10 @@ impl UdpTunnel {
         };
         Self {
             sender: UdpTunnelSender {
-                transport: UdpSendTransport::Stream(writer),
+                transport: UdpSendTransport::Stream {
+                    writer,
+                    handshake_timeout,
+                },
                 stats: stats.clone(),
                 account,
                 cancel: cancel.clone(),
@@ -179,9 +187,11 @@ impl UdpTunnel {
     pub(crate) async fn close(&mut self) {
         self.cancel.cancel();
         match &mut self.sender.transport {
-            UdpSendTransport::Stream(writer) => {
-                let _ = tokio::time::timeout(crate::common::handshake_timeout(), writer.shutdown())
-                    .await;
+            UdpSendTransport::Stream {
+                writer,
+                handshake_timeout,
+            } => {
+                let _ = tokio::time::timeout(*handshake_timeout, writer.shutdown()).await;
             }
             UdpSendTransport::Quic { connection, id, .. } => {
                 connection.remove(*id);
@@ -213,6 +223,7 @@ pub(crate) async fn open_udp(
             guard,
             client.stats.clone(),
             client.account_stats,
+            client.config.handshake_timeout,
         ))
     } else {
         let flow = client.open_quic_flow(FlowKind::Udp, target).await?;

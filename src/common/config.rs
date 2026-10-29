@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use hmac::{Hmac, KeyInit, Mac};
 use percent_encoding::percent_decode_str;
+use sha2::Sha256;
 use tokio::sync::Semaphore;
 use url::Url;
 
@@ -173,8 +175,23 @@ pub fn udp_idle_timeout() -> Duration {
     env_duration("NOW_UDP_IDLE_TIMEOUT", Duration::from_secs(2 * 60))
 }
 
-pub fn handshake_timeout() -> Duration {
-    env_duration("NOW_HANDSHAKE_TIMEOUT", Duration::from_secs(5))
+pub(crate) fn read_handshake_timeout<F>(source: &mut F, url: &Url) -> Result<Duration>
+where
+    F: FnMut(&str) -> Result<Option<String>>,
+{
+    if let Some(raw) = source("NOW_HANDSHAKE_TIMEOUT")? {
+        return parse_duration("NOW_HANDSHAKE_TIMEOUT", &raw);
+    }
+    let shared_key = crate::protocol::Credentials::decode_shared_key(url)?;
+    Ok(derive_handshake_timeout(&shared_key))
+}
+
+fn derive_handshake_timeout(shared_key: &[u8]) -> Duration {
+    let mut mac = Hmac::<Sha256>::new_from_slice(shared_key).expect("HMAC accepts any key length");
+    mac.update(b"nowhere/handshake-timeout");
+    let digest = mac.finalize().into_bytes();
+    let value = u64::from_be_bytes(digest[..8].try_into().expect("SHA-256 has eight bytes"));
+    Duration::from_millis(3000 + 100 * (value % 271))
 }
 
 pub fn flow_setup_timeout() -> Duration {

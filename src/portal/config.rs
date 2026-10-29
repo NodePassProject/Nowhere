@@ -14,7 +14,6 @@ const DEFAULT_TCP_DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_UDP_DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_TCP_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_UDP_IDLE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
-const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_RELOAD_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
@@ -34,11 +33,11 @@ pub(crate) struct PortalRuntimeConfig {
 }
 
 impl PortalRuntimeConfig {
-    pub(crate) fn from_env() -> Result<Self> {
-        Self::from_source(env_value)
+    pub(crate) fn from_env(handshake_timeout: Duration) -> Result<Self> {
+        Self::from_source(env_value, handshake_timeout)
     }
 
-    fn from_source<F>(mut source: F) -> Result<Self>
+    fn from_source<F>(mut source: F, handshake_timeout: Duration) -> Result<Self>
     where
         F: FnMut(&str) -> Result<Option<String>>,
     {
@@ -70,11 +69,6 @@ impl PortalRuntimeConfig {
             &mut source,
             "NOW_UDP_IDLE_TIMEOUT",
             DEFAULT_UDP_IDLE_TIMEOUT,
-        )?;
-        let handshake_timeout = read_duration(
-            &mut source,
-            "NOW_HANDSHAKE_TIMEOUT",
-            DEFAULT_HANDSHAKE_TIMEOUT,
         )?;
         let shutdown_timeout = read_duration(
             &mut source,

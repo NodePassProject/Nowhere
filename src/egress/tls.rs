@@ -127,7 +127,7 @@ async fn pending_connection(
     tokio::select! {
         biased;
         _ = shutdown.cancelled() => bail!("Egress shutting down"),
-        result = tokio::time::timeout(crate::common::handshake_timeout(), async {
+        result = tokio::time::timeout(config.handshake_timeout, async {
             stream.write_all(&encode_auth_frame(key, AuthTransport::TlsTcp, &exporter)).await?;
             stream.flush().await?;
             let reply = stream.read_u8().await?;

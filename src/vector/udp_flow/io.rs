@@ -19,7 +19,7 @@ impl UdpTunnelSender {
             bail!("UDP Flow closed");
         }
         let sent = match &mut self.transport {
-            UdpSendTransport::Stream(writer) => {
+            UdpSendTransport::Stream { writer, .. } => {
                 write_udp_packet(writer, payload).await?;
                 true
             }

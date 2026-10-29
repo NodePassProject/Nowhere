@@ -5,6 +5,7 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use quinn::Connection;
@@ -20,7 +21,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
-use crate::common::{AddressFamily, certificate_sha256, dial_tcp_with_policy, handshake_timeout};
+use crate::common::{AddressFamily, certificate_sha256, dial_tcp_with_policy};
 use crate::protocol::{ALPN, TLS_EXPORTER_LEN, TlsExporter};
 use crate::transport::{ClientPrelude, MorphKeys, MorphTcpStream};
 
@@ -30,6 +31,7 @@ pub(crate) use crate::protocol::AUTH_EXPORTER_LABEL as EXPORTER_LABEL;
 
 #[derive(Clone)]
 pub(crate) struct ClientTls {
+    handshake_timeout: Duration,
     rustls: Arc<rustls::ClientConfig>,
     server_name: ServerName<'static>,
     morph_keys: Option<MorphKeys>,
@@ -80,6 +82,7 @@ impl ClientTls {
             ServerName::try_from(config.sni.as_deref().unwrap_or(config.host()).to_owned())
                 .map_err(|_| anyhow!("vector::tls::ClientTls::new: invalid TLS server name"))?;
         Ok(Self {
+            handshake_timeout: config.handshake_timeout,
             rustls: Arc::new(client),
             server_name,
             morph_keys: config.morph_keys.clone(),
@@ -118,7 +121,7 @@ impl ClientTls {
         family: AddressFamily,
         keepalive: Option<&TcpKeepalive>,
     ) -> Result<(TlsStream<MorphTcpStream<TcpStream>>, TlsExporter)> {
-        let stream = dial_tcp_with_policy(dial_policy, endpoint, handshake_timeout(), family)
+        let stream = dial_tcp_with_policy(dial_policy, endpoint, self.handshake_timeout, family)
             .await
             .with_context(|| format!("vector::tls::connect_tcp: failed to dial {endpoint}"))?;
         stream
@@ -130,7 +133,7 @@ impl ClientTls {
                 .context("Egress TLS: failed to configure TCP keepalive")?;
         }
         let connector = TlsConnector::from(self.rustls.clone());
-        let tls = timeout(handshake_timeout(), async {
+        let tls = timeout(self.handshake_timeout, async {
             let stream =
                 MorphTcpStream::connect(stream, self.morph_keys.clone(), &self.prelude).await?;
             connector.connect(self.server_name.clone(), stream).await

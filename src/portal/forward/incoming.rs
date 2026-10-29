@@ -4,6 +4,7 @@
 //! Incoming flow headers, setup results, and transport-specific tunnel handles.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -111,6 +112,7 @@ impl Incoming {
     pub(super) fn into_udp(
         self,
         stats: Arc<Stats>,
+        handshake_timeout: Duration,
         pending: Option<(
             crate::transport::UdpRoute,
             tokio::sync::mpsc::Receiver<crate::common::BudgetedDatagram>,
@@ -121,7 +123,7 @@ impl Incoming {
                 reader,
                 writer,
                 guard,
-            } => UdpTunnel::stream(reader, writer, guard, stats, false),
+            } => UdpTunnel::stream(reader, writer, guard, stats, false, handshake_timeout),
             Self::Quic {
                 recv,
                 send,

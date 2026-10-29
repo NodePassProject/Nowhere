@@ -23,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 use crate::common::{
     COMMAND_BIND, COMMAND_CONNECT, COMMAND_UDP_ASSOCIATE, REPLY_ADDRESS_NOT_SUPPORTED,
     REPLY_COMMAND_NOT_SUPPORTED, REPLY_CONNECTION_NOT_ALLOWED, REPLY_SUCCEEDED, SocksAddress,
-    authenticate, bind_udp_addrs, decode_udp_packet, encode_udp_packet_into, handshake_timeout,
-    read_request, udp_idle_timeout, write_reply,
+    authenticate, bind_udp_addrs, decode_udp_packet, encode_udp_packet_into, read_request,
+    udp_idle_timeout, write_reply,
 };
 
 use self::udp::run_udp_association;
@@ -115,7 +115,7 @@ async fn handle_client(
     let request = tokio::select! {
         biased;
         _ = shutdown.cancelled() => return Ok(()),
-        request = tokio::time::timeout(handshake_timeout(), async {
+        request = tokio::time::timeout(vector.config.handshake_timeout, async {
             let credentials = vector
                 .config
                 .socks

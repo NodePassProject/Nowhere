@@ -41,6 +41,10 @@ pub struct Credentials {
 
 impl Credentials {
     pub(crate) fn for_service(parsed_url: &Url, context: &str) -> Result<Self> {
+        Self::from_shared_key(&Self::validated_shared_key(parsed_url, context)?)
+    }
+
+    pub(crate) fn validated_shared_key(parsed_url: &Url, context: &str) -> Result<Vec<u8>> {
         let shared_key = Self::decode_shared_key(parsed_url)
             .map_err(|error| anyhow::anyhow!("{context}: {error}; use nowhere generate-key"))?;
         if shared_key.len() != 32
@@ -52,7 +56,7 @@ impl Credentials {
                 "{context}: shared key must be exactly 32 lowercase hexadecimal characters; use nowhere generate-key"
             );
         }
-        Self::from_shared_key(&shared_key)
+        Ok(shared_key)
     }
 
     pub fn new(parsed_url: &Url) -> Result<Self> {

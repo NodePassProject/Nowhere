@@ -4,6 +4,7 @@
 //! Validated `vector://` URL parsing with first-value query semantics.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 use url::Url;
@@ -33,6 +34,7 @@ impl CarrierMode {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PortalClientConfig {
+    pub(crate) handshake_timeout: Duration,
     pub(crate) remote: ServiceEndpoint,
     pub(crate) net: CarrierMode,
     pub(crate) morph: bool,
@@ -118,6 +120,10 @@ impl PortalClientConfig {
             bail!("pin must be 64 lowercase hex characters");
         }
         Ok(Self {
+            handshake_timeout: crate::common::read_handshake_timeout(
+                &mut crate::common::env_value,
+                url,
+            )?,
             remote,
             net,
             morph,
@@ -137,17 +143,15 @@ impl PortalClientConfig {
         if first_raw_query_value(url, "in").is_some() {
             SocksListenConfig::from_url(url)?;
         }
-        Ok((
-            Self::parse(url, &query)?,
-            crate::protocol::Credentials::new(url)?,
-        ))
+        let credentials = crate::protocol::Credentials::new(url)?;
+        Ok((Self::parse(url, &query)?, credentials))
     }
 
     pub(crate) fn from_fingerprint_url(url: &Url) -> Result<Self> {
         if url.scheme() != "nowhere" {
             bail!("fingerprint requires a nowhere:// share link");
         }
-        crate::protocol::Credentials::decode_shared_key(url)?;
+        crate::protocol::Credentials::validated_shared_key(url, "Fingerprint configuration")?;
         if !url.path().is_empty() {
             bail!("share links require HOST:PORT without carrier paths");
         }

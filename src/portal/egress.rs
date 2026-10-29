@@ -5,12 +5,10 @@
 
 mod registry;
 
-pub(crate) use registry::EgressRegistry;
-use registry::Selected;
-
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -19,6 +17,10 @@ use tokio::sync::OwnedSemaphorePermit;
 use crate::protocol::{Carrier, FlowKind, SetupResult, Target};
 use crate::transport::{MorphTcpStream, QuicConnection, Stats};
 use crate::vector::{BoxReader, BoxWriter, TcpTunnel, TcpTunnelGuard, UdpTunnel};
+
+use self::registry::Selected;
+
+pub(crate) use self::registry::EgressRegistry;
 
 pub(super) type TlsStream = tokio_rustls::server::TlsStream<MorphTcpStream<tokio::net::TcpStream>>;
 
@@ -110,6 +112,7 @@ pub(crate) async fn open_udp(
     registry: &EgressRegistry,
     target: &Target,
     stats: Arc<Stats>,
+    handshake_timeout: Duration,
 ) -> Result<UdpTunnel> {
     match registry.claim().await? {
         Selected::Quic(q) => {
@@ -135,6 +138,7 @@ pub(crate) async fn open_udp(
                 TcpTunnelGuard { _flow: None },
                 stats,
                 false,
+                handshake_timeout,
             ))
         }
     }

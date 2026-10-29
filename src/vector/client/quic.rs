@@ -8,7 +8,6 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 use tokio::time::{Instant, timeout, timeout_at};
 
-use crate::common::handshake_timeout;
 use crate::protocol::{
     AuthTransport, FlowKind, SetupResult, Target, encode_auth_frame, encode_flow_request_into,
 };
@@ -98,7 +97,7 @@ impl PortalClient {
         target: &Target,
         auth: Option<[u8; 16]>,
     ) -> std::result::Result<(QuicFlow, SetupResult), OpenFlowError> {
-        let (mut send, mut recv) = timeout(handshake_timeout(), q.connection.open_bi())
+        let (mut send, mut recv) = timeout(self.config.handshake_timeout, q.connection.open_bi())
             .await
             .map_err(|e| OpenFlowError::Transport(e.into()))?
             .map_err(|e| OpenFlowError::Transport(e.into()))?;
@@ -146,7 +145,7 @@ pub(crate) async fn connect_quic(
 ) -> Result<(quinn::Endpoint, quinn::Connection)> {
     let remote = config.udp_endpoint().context("QUIC endpoint missing")?;
     let resolved = timeout(
-        handshake_timeout(),
+        config.handshake_timeout,
         tokio::net::lookup_host((config.host(), remote.port)),
     )
     .await
@@ -196,7 +195,7 @@ pub(crate) async fn connect_quic(
             client.transport_config(Arc::new(transport));
             endpoint.set_default_client_config(client);
             let connection = timeout(
-                handshake_timeout(),
+                config.handshake_timeout,
                 endpoint.connect(address, &tls.quic_server_name())?,
             )
             .await

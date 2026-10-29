@@ -144,8 +144,9 @@ impl VectorRuntime {
                 .error(format_args!("local ipc unavailable: {error:#}")),
         }
         self.inner.logger.info(format_args!(
-            "vector starting: {}",
-            self.inner.config.effective_url()
+            "vector starting: {}, handshake_timeout={}",
+            self.inner.config.effective_url(),
+            humantime::format_duration(self.inner.config.handshake_timeout)
         ));
 
         let mut listener_tasks = JoinSet::new();

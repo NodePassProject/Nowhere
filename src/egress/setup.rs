@@ -23,7 +23,7 @@ impl Egress {
         if url.scheme() != "egress" {
             bail!("Egress configuration: URL scheme must be egress");
         }
-        let runtime = crate::portal::config::PortalRuntimeConfig::from_env()?;
+        crate::common::validate_timeout_env()?;
         let query = query_first(
             &url,
             &[
@@ -32,6 +32,8 @@ impl Egress {
         )?;
         let config = PortalClientConfig::parse(&url, &query)?;
         let credentials = Credentials::new(&url)?;
+        let runtime =
+            crate::portal::config::PortalRuntimeConfig::from_env(config.handshake_timeout)?;
         let tls = ClientTls::new(&config)?;
         let dial = DialPolicy::from_query(&query)?;
         let rate = |name: &str| -> Result<i32> {

@@ -14,9 +14,11 @@ use super::Egress;
 impl Egress {
     pub async fn run(self) -> Result<()> {
         let mut signals = ShutdownSignals::new()?;
-        self.forward
-            .logger
-            .info(format_args!("egress starting: {}", self.effective));
+        self.forward.logger.info(format_args!(
+            "egress starting: {}, handshake_timeout={}",
+            self.effective,
+            humantime::format_duration(self.forward.runtime.handshake_timeout)
+        ));
         let stop = CancellationToken::new();
         let observation = match TelemetryServer::bind(
             InstanceRole::Egress,

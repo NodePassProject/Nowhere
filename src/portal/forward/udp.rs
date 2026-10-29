@@ -30,7 +30,12 @@ impl Forwarder {
                     .map(UdpTarget::Network),
                 Outlet::Egress(registry) => tokio::time::timeout(
                     crate::common::flow_setup_timeout(),
-                    egress::open_udp(registry, target, self.stats.clone()),
+                    egress::open_udp(
+                        registry,
+                        target,
+                        self.stats.clone(),
+                        self.runtime.handshake_timeout,
+                    ),
                 )
                 .await
                 .context("Egress UDP setup timeout")?
@@ -73,7 +78,8 @@ impl Forwarder {
             _ => None,
         };
         incoming.result(SetupResult::Ready).await?;
-        let mut input = incoming.into_udp(self.stats.clone(), pending)?;
+        let mut input =
+            incoming.into_udp(self.stats.clone(), self.runtime.handshake_timeout, pending)?;
         input.activate();
         let _active = ActiveFlow::new(self.stats.clone(), true);
         let input_cancel = input.cancellation();
