@@ -187,3 +187,62 @@ async fn socks_handshake_uses_the_vector_instance_timeout() {
     assert!(error.to_string().contains("SOCKS5 handshake timeout"));
     assert!(started.elapsed() >= Duration::from_millis(50));
 }
+
+#[tokio::test]
+async fn tcp_listener_binding_is_exclusive_and_restarts_after_graceful_close() {
+    for address in ["127.0.0.1:0", "[::1]:0"] {
+        let listener = listen_one(address.parse().unwrap()).unwrap();
+        let endpoint = listener.local_addr().unwrap();
+        let competitor = socket2::Socket::new(
+            socket2::Domain::for_address(endpoint),
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )
+        .unwrap();
+        if endpoint.is_ipv6() {
+            competitor.set_only_v6(true).unwrap();
+        }
+        competitor.set_reuse_address(true).unwrap();
+        assert!(competitor.bind(&endpoint.into()).is_err());
+        drop(competitor);
+        drop(listener);
+        let listener = listen_one(endpoint).expect("idle listener did not immediately rebind");
+        let mut client = tokio::net::TcpStream::connect(endpoint).await.unwrap();
+        let (mut accepted, _) = listener.accept().await.unwrap();
+        client.write_all(b"request").await.unwrap();
+        client.shutdown().await.unwrap();
+        let mut request = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            accepted.read_to_end(&mut request),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(request, b"request");
+        accepted.write_all(b"reply").await.unwrap();
+        accepted.shutdown().await.unwrap();
+        let mut reply = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.read_to_end(&mut reply),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(reply, b"reply");
+        drop((client, accepted, listener));
+        let restarted =
+            listen_one(endpoint).expect("gracefully closed listener did not immediately rebind");
+        drop(restarted);
+    }
+}
+
+#[tokio::test]
+async fn socks_ipv6_listener_is_v6_only_and_coexists_with_ipv4() {
+    let listener = listen_one("[::]:0".parse().unwrap()).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    assert!(socket2::SockRef::from(&listener).only_v6().unwrap());
+    let ipv4 = listen_one(([0, 0, 0, 0], port).into()).unwrap();
+    drop((listener, ipv4));
+}

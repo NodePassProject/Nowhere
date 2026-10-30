@@ -160,3 +160,37 @@ async fn normal_tcp_and_udp_first_flows_pipeline_on_stream_zero_and_reuse_withou
     peer.await.unwrap();
     endpoint.wait_idle().await;
 }
+
+#[tokio::test]
+async fn server_initiated_stream_still_closes_vector_after_authentication() {
+    let (endpoint, client) = quic_fixture();
+    let credentials = client.credentials.clone();
+    let server_endpoint = endpoint.clone();
+    let peer = tokio::spawn(async move {
+        let connection = server_endpoint.accept().await.unwrap().await.unwrap();
+        let (mut send, _recv, _) = read_first_request(&connection, &credentials).await;
+        write_flow_result(&mut send, FlowResult::Ready)
+            .await
+            .unwrap();
+        let (mut illegal, _) = connection.open_bi().await.unwrap();
+        let _ = illegal.write_all(b"illegal").await;
+        connection.closed().await
+    });
+    let flow = client
+        .open_tcp(&Target::domain("example.com", 53).unwrap())
+        .await
+        .unwrap();
+    let reason = timeout(Duration::from_secs(2), peer)
+        .await
+        .unwrap()
+        .unwrap();
+    match reason {
+        quinn::ConnectionError::ApplicationClosed(close) => {
+            assert_eq!(close.reason.as_ref(), b"role direction violation")
+        }
+        other => panic!("unexpected close: {other:?}"),
+    }
+    drop(flow);
+    client.close(Instant::now() + Duration::from_secs(2)).await;
+    endpoint.wait_idle().await;
+}

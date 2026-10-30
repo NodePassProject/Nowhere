@@ -77,6 +77,20 @@ async fn socks_ingress_tcp_half_close_and_udp_reuse_across_carriers_and_morph() 
                 .unwrap();
             assert_eq!(received, payload);
             drop(stream);
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while h
+                    .inner
+                    .forward
+                    .stats
+                    .tcp_active
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    != 0
+                {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
 
             let (control, relay) = request(endpoint, 3, 0).await;
             let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -113,6 +127,17 @@ async fn socks_ingress_tcp_half_close_and_udp_reuse_across_carriers_and_morph() 
             })
             .await
             .unwrap();
+            let released = tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    if let Ok(socket) = tokio::net::UdpSocket::bind(relay).await {
+                        break socket;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("SOCKS UDP relay socket was not released on control EOF");
+            drop(released);
             serving.abort();
             assert!(serving.await.unwrap_err().is_cancelled());
         }
