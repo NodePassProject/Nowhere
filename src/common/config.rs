@@ -82,6 +82,34 @@ pub(crate) fn env_value(name: &str) -> Result<Option<String>> {
     }
 }
 
+pub(crate) fn read_usize<F>(source: &mut F, name: &str, default: usize, max: usize) -> Result<usize>
+where
+    F: FnMut(&str) -> Result<Option<String>>,
+{
+    let Some(raw) = source(name)? else {
+        return Ok(default);
+    };
+    let value = raw
+        .parse::<usize>()
+        .with_context(|| format!("invalid {name}={raw:?}"))?;
+    if value == 0 || value > max {
+        bail!("{name} must be in 1..={max}: {raw:?}");
+    }
+    Ok(value)
+}
+
+pub(crate) fn read_tcp_data_buf_size<F>(source: &mut F) -> Result<usize>
+where
+    F: FnMut(&str) -> Result<Option<String>>,
+{
+    read_usize(
+        source,
+        "NOW_TCP_DATA_BUF_SIZE",
+        32 * 1024,
+        isize::MAX as usize,
+    )
+}
+
 pub(crate) fn read_quic_udp_queue_bytes<F>(source: &mut F) -> Result<usize>
 where
     F: FnMut(&str) -> Result<Option<String>>,

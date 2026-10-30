@@ -77,6 +77,10 @@ impl TcpPreludePolicy {
     }
 }
 
+pub(crate) fn validate_tcp_prelude_env() -> io::Result<()> {
+    TcpPreludePolicy::from_env().map(|_| ())
+}
+
 fn sample_below(
     mut byte: u8,
     upper: u8,

@@ -24,7 +24,7 @@ fn absent_values_use_the_existing_defaults() {
     assert_eq!(config.egress_tls_pending_max, 128);
     assert_eq!(config.egress_tls_idle_ttl, Duration::from_secs(120));
     assert_eq!(config.udp_queue_bytes, 4 * 1024 * 1024);
-    assert_eq!(config.tcp_data_buf_size, DEFAULT_TCP_DATA_BUF_SIZE);
+    assert_eq!(config.tcp_data_buf_size, 32 * 1024);
     assert_eq!(config.tcp_dial_timeout, DEFAULT_TCP_DIAL_TIMEOUT);
     assert_eq!(config.udp_dial_timeout, DEFAULT_UDP_DIAL_TIMEOUT);
     assert_eq!(config.tcp_read_timeout, DEFAULT_TCP_READ_TIMEOUT);

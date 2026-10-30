@@ -5,11 +5,13 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 
-use crate::common::{env_value, read_duration, read_quic_udp_queue_bytes, validate_timeouts};
+use crate::common::{
+    env_value, read_duration, read_quic_udp_queue_bytes, read_tcp_data_buf_size, read_usize,
+    validate_timeouts,
+};
 
-const DEFAULT_TCP_DATA_BUF_SIZE: usize = 32 * 1024;
 const DEFAULT_TCP_DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_UDP_DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_TCP_READ_TIMEOUT: Duration = Duration::from_secs(30);
@@ -44,12 +46,7 @@ impl PortalRuntimeConfig {
         validate_timeouts(&mut source)?;
         let egress_tls_pending_max = read_usize(&mut source, "NOW_PORTAL_TLS_IDLE_MAX", 128, 1023)?;
         let udp_queue_bytes = read_quic_udp_queue_bytes(&mut source)?;
-        let tcp_data_buf_size = read_usize(
-            &mut source,
-            "NOW_TCP_DATA_BUF_SIZE",
-            DEFAULT_TCP_DATA_BUF_SIZE,
-            isize::MAX as usize,
-        )?;
+        let tcp_data_buf_size = read_tcp_data_buf_size(&mut source)?;
         let tcp_dial_timeout = read_duration(
             &mut source,
             "NOW_TCP_DIAL_TIMEOUT",
@@ -92,22 +89,6 @@ impl PortalRuntimeConfig {
             reload_interval,
         })
     }
-}
-
-fn read_usize<F>(source: &mut F, name: &str, default: usize, max: usize) -> Result<usize>
-where
-    F: FnMut(&str) -> Result<Option<String>>,
-{
-    let Some(raw) = source(name)? else {
-        return Ok(default);
-    };
-    let value = raw
-        .parse::<usize>()
-        .with_context(|| format!("portal::config: invalid {name}={raw:?}"))?;
-    if value == 0 || value > max {
-        bail!("portal::config: {name} must be in 1..={max}: {raw:?}");
-    }
-    Ok(value)
 }
 
 #[cfg(test)]

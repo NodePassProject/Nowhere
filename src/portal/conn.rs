@@ -268,7 +268,9 @@ async fn quic_authenticated(
     drop(admission);
     let limits = crate::transport::transport_flow_control()?;
     connection.set_receive_window(limits.connection_receive_window.into());
-    connection.set_max_concurrent_bi_streams(1024u32.into());
+    if role == ConnectionRole::Vector {
+        connection.set_max_concurrent_bi_streams(1024u32.into());
+    }
     let q = QuicConnection::new(
         connection.clone(),
         role == ConnectionRole::Egress,

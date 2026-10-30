@@ -19,9 +19,7 @@ use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::common::{
-    Logger, ShutdownSignals, rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size,
-};
+use crate::common::{Logger, ShutdownSignals, rate_limit_bytes_per_second, shutdown_timeout};
 use crate::protocol::Credentials;
 use crate::telemetry::{InstanceRole, TelemetryServer};
 use crate::transport::{Buffers, RateLimiter, Stats};
@@ -81,6 +79,8 @@ impl VectorRuntime {
         crate::common::validate_timeout_env()?;
         let udp_queue_bytes =
             crate::common::read_quic_udp_queue_bytes(&mut crate::common::env_value)?;
+        let tcp_data_buf_size =
+            crate::common::read_tcp_data_buf_size(&mut crate::common::env_value)?;
         let config = VectorConfig::from_url(&parsed_url)?;
         let credentials = Credentials::new(&parsed_url)?;
         let stats = Arc::new(Stats::default());
@@ -101,7 +101,7 @@ impl VectorRuntime {
                 config,
                 logger,
                 stats,
-                buffers: Buffers::new(tcp_data_buf_size()),
+                buffers: Buffers::new(tcp_data_buf_size),
                 rate_limiter,
                 client,
                 local_udp_budget: Arc::new(Semaphore::new(udp_queue_bytes)),

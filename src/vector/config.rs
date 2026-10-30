@@ -92,6 +92,9 @@ impl PortalClientConfig {
             None | Some("1") => true,
             Some(_) => bail!("{context}: morph must be 0 or 1"),
         };
+        if net == CarrierMode::Tcp && morph {
+            crate::transport::validate_tcp_prelude_env()?;
+        }
         let morph_keys = morph.then(|| MorphKeys::from_url(url)).transpose()?;
         let sni = query
             .get("sni")

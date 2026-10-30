@@ -50,7 +50,7 @@ fn listen_one(address: SocketAddr) -> Result<TcpListener> {
     } else {
         Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?
     };
-    socket.set_reuse_address(true)?;
+    crate::common::configure_tcp_listener(&socket)?;
     socket.set_nonblocking(true)?;
     socket.bind(&address.into())?;
     socket.listen(TCP_LISTEN_BACKLOG)?;

@@ -11,6 +11,36 @@ use tokio::net::{TcpSocket, TcpStream, UdpSocket, lookup_host};
 
 use super::{AddressFamily, CarrierEndpoint, DialPolicy};
 
+pub(crate) fn configure_tcp_listener(socket: &socket2::Socket) -> std::io::Result<()> {
+    #[cfg(unix)]
+    socket.set_reuse_address(true)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawSocket;
+
+        use windows_sys::Win32::Networking::WinSock::{
+            SO_EXCLUSIVEADDRUSE, SOCKET_ERROR, SOL_SOCKET, WSAGetLastError, setsockopt,
+        };
+
+        let enabled = 1i32;
+        let result = unsafe {
+            setsockopt(
+                socket.as_raw_socket() as _,
+                SOL_SOCKET,
+                SO_EXCLUSIVEADDRUSE,
+                (&enabled as *const i32).cast(),
+                std::mem::size_of_val(&enabled) as i32,
+            )
+        };
+        if result == SOCKET_ERROR {
+            return Err(std::io::Error::from_raw_os_error(unsafe {
+                WSAGetLastError()
+            }));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn resolve_bind_addrs(host: &str, endpoint: CarrierEndpoint) -> Result<Vec<SocketAddr>> {
     let mut addrs = if host == "*" || host.is_empty() {
         match endpoint.family {

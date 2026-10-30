@@ -76,7 +76,6 @@ impl PortalClient {
             crate::transport::transport_flow_control().map_err(OpenFlowError::Transport)?;
         q.connection
             .set_receive_window(limits.connection_receive_window.into());
-        q.connection.set_max_concurrent_bi_streams(1024u32.into());
         let monitor = q.clone();
         tokio::spawn(async move {
             if monitor.connection.accept_bi().await.is_ok() {

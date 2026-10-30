@@ -13,7 +13,7 @@ use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use sha2::Sha256;
 
 pub(crate) use prelude::{AuthenticatedPrelude, ClientPrelude};
-pub(crate) use tcp::MorphTcpStream;
+pub(crate) use tcp::{MorphTcpStream, validate_tcp_prelude_env};
 pub(crate) use udp::{UdpRole, configure_morph_mtu, morph_endpoint_config, wrap_morph_udp_socket};
 
 const NONCE_LEN: usize = 12;
