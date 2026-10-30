@@ -66,14 +66,6 @@ fn decode_query_component(raw: &str, name: &str) -> Result<String> {
         .map(|value| value.into_owned())
 }
 
-pub fn env_int(name: &str, default_value: i32) -> i32 {
-    std::env::var(name)
-        .ok()
-        .and_then(|s| s.parse::<i32>().ok())
-        .filter(|v| *v >= 0)
-        .unwrap_or(default_value)
-}
-
 pub(crate) fn env_value(name: &str) -> Result<Option<String>> {
     match std::env::var(name) {
         Ok(value) => Ok(Some(value)),
@@ -189,10 +181,6 @@ fn env_duration(name: &str, default_value: Duration) -> Duration {
 
 pub fn rate_limit_bytes_per_second(mbps: i32) -> u64 {
     if mbps <= 0 { 0 } else { mbps as u64 * 125_000 }
-}
-
-pub fn tcp_data_buf_size() -> usize {
-    env_int("NOW_TCP_DATA_BUF_SIZE", 32 * 1024) as usize
 }
 
 pub fn tcp_read_timeout() -> Duration {

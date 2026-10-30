@@ -64,7 +64,7 @@ impl Egress {
             outbound: Outlet::Network(Arc::new(OutboundDialer::new(dial, None))),
             logger,
             stats: Arc::new(Stats::default()),
-            buffers: Buffers::new(crate::common::tcp_data_buf_size()),
+            buffers: Buffers::new(runtime.tcp_data_buf_size),
             rate: RateLimiter::new(
                 crate::common::rate_limit_bytes_per_second(upload) as i64,
                 crate::common::rate_limit_bytes_per_second(download) as i64,
