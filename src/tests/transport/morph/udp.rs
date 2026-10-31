@@ -65,6 +65,8 @@ fn morph_endpoint_reserves_the_udp_nonce_overhead() {
 #[derive(Debug, Default)]
 struct FakeUdpSocket {
     sent: StdMutex<Vec<(Vec<u8>, Option<usize>)>>,
+    outcomes: StdMutex<VecDeque<Option<io::ErrorKind>>>,
+    attempts: StdMutex<Vec<Vec<u8>>>,
     receive: StdMutex<VecDeque<(Vec<u8>, RecvMeta)>>,
     receive_lengths: StdMutex<Vec<usize>>,
 }
@@ -92,6 +94,13 @@ impl AsyncUdpSocket for FakeUdpSocket {
     }
 
     fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
+        self.attempts
+            .lock()
+            .unwrap()
+            .push(transmit.contents.to_vec());
+        if let Some(Some(kind)) = self.outcomes.lock().unwrap().pop_front() {
+            return Err(io::Error::from(kind));
+        }
         self.sent
             .lock()
             .unwrap()
@@ -540,4 +549,172 @@ async fn client_passes_unsupported_versions_and_native_socket_is_not_wrapped() {
             &wrap_morph_udp_socket(inner.clone(), None, role).unwrap()
         ));
     }
+}
+
+#[test]
+fn udp_prelude_retries_only_until_success_and_preserves_normal_datagrams() {
+    for outcomes in [
+        vec![
+            Some(io::ErrorKind::WouldBlock),
+            Some(io::ErrorKind::WouldBlock),
+        ],
+        vec![None, Some(io::ErrorKind::WouldBlock)],
+        vec![Some(io::ErrorKind::PermissionDenied)],
+        vec![None, Some(io::ErrorKind::PermissionDenied)],
+    ] {
+        let raw = Arc::new(FakeUdpSocket::default());
+        raw.outcomes
+            .lock()
+            .unwrap()
+            .extend(outcomes.iter().copied());
+        let socket = filter_socket(raw.clone(), UdpRole::Client);
+        let prelude = [0x41; UDP_PRELUDE_LEN];
+        socket.send.lock().unwrap().prelude = Some(prelude);
+        let transmit = Transmit {
+            destination: "127.0.0.1:443".parse().unwrap(),
+            ecn: None,
+            contents: b"original QUIC packet",
+            segment_size: None,
+            src_ip: None,
+        };
+        for kind in outcomes.into_iter().flatten() {
+            assert_eq!(socket.try_send(&transmit).unwrap_err().kind(), kind);
+        }
+        socket.try_send(&transmit).unwrap();
+        socket.try_send(&transmit).unwrap();
+        let attempts = raw.attempts.lock().unwrap();
+        assert!(
+            attempts
+                .iter()
+                .filter(|data| data.len() == UDP_PRELUDE_LEN)
+                .all(|data| data == &prelude)
+        );
+        let sent = raw.sent.lock().unwrap();
+        assert_eq!(sent.len(), 3);
+        assert_eq!(sent[0], (prelude.to_vec(), None));
+        for (wire, _) in &sent[1..] {
+            let (nonce, encrypted) = wire.split_at(NONCE_LEN);
+            let nonce: &[u8; NONCE_LEN] = nonce.try_into().unwrap();
+            let mut plain = encrypted.to_vec();
+            ChaCha20::new((&socket.tx_key).into(), nonce.into()).apply_keystream(&mut plain);
+            assert_eq!(plain, transmit.contents);
+        }
+        assert!(socket.send.lock().unwrap().prelude.is_none());
+    }
+}
+
+#[test]
+fn udp_prelude_is_once_per_socket_under_concurrent_sends() {
+    for _ in 0..2 {
+        let raw = Arc::new(FakeUdpSocket::default());
+        let socket = Arc::new(filter_socket(raw.clone(), UdpRole::Client));
+        socket.send.lock().unwrap().prelude = Some([0x41; UDP_PRELUDE_LEN]);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    socket
+                        .try_send(&Transmit {
+                            destination: "127.0.0.1:443".parse().unwrap(),
+                            ecn: None,
+                            contents: b"packet",
+                            segment_size: None,
+                            src_ip: None,
+                        })
+                        .unwrap()
+                });
+            }
+        });
+        let sent = raw.sent.lock().unwrap();
+        assert_eq!(sent.len(), 9);
+        assert_eq!(sent[0].0.len(), UDP_PRELUDE_LEN);
+        assert!(
+            sent[1..]
+                .iter()
+                .all(|(wire, _)| wire.len() == NONCE_LEN + 6)
+        );
+    }
+}
+
+#[test]
+fn udp_server_and_disabled_morph_do_not_send_preludes() {
+    for (keys, role) in [
+        (None, UdpRole::Client),
+        (None, UdpRole::Server),
+        (Some(MorphKeys::derive(b"shared")), UdpRole::Server),
+    ] {
+        let raw = Arc::new(FakeUdpSocket::default());
+        let socket = wrap_morph_udp_socket(raw.clone(), keys.clone(), role).unwrap();
+        socket
+            .try_send(&Transmit {
+                destination: "127.0.0.1:443".parse().unwrap(),
+                ecn: None,
+                contents: b"packet",
+                segment_size: None,
+                src_ip: None,
+            })
+            .unwrap();
+        let sent = raw.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            sent[0].0.len(),
+            6 + if keys.is_some() { NONCE_LEN } else { 0 }
+        );
+        if keys.is_none() {
+            assert_eq!(sent[0].0, b"packet");
+        }
+    }
+}
+
+#[test]
+fn wrapped_client_generates_a_prelude_before_its_first_quic_packet() {
+    let raw = Arc::new(FakeUdpSocket::default());
+    let socket = wrap_morph_udp_socket(
+        raw.clone(),
+        Some(MorphKeys::derive(b"shared")),
+        UdpRole::Client,
+    )
+    .unwrap();
+    for _ in 0..2 {
+        socket
+            .try_send(&Transmit {
+                destination: "127.0.0.1:443".parse().unwrap(),
+                ecn: None,
+                contents: b"packet",
+                segment_size: None,
+                src_ip: None,
+            })
+            .unwrap();
+    }
+    let sent = raw.sent.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert_eq!(sent[0].0.len(), UDP_PRELUDE_LEN);
+    assert_eq!(sent[0].1, None);
+    assert_eq!(sent[1].0.len(), NONCE_LEN + 6);
+}
+
+#[tokio::test]
+async fn server_silently_discards_udp_prelude_then_receives_normal_morph_packet() {
+    let raw = Arc::new(FakeUdpSocket::default());
+    let socket = filter_socket(raw.clone(), UdpRole::Server);
+    for size in 0..=UDP_PRELUDE_LEN {
+        raw.receive.lock().unwrap().push_back((
+            vec![0x41; size],
+            RecvMeta {
+                addr: "127.0.0.1:443".parse().unwrap(),
+                len: size,
+                stride: size,
+                ..RecvMeta::default()
+            },
+        ));
+    }
+    queue_segments(&raw, &[0x40, 1, 2, 3], 4, "127.0.0.1:443");
+    let mut bytes = [0u8; 64];
+    let mut bufs = [IoSliceMut::new(&mut bytes)];
+    let mut meta = [RecvMeta::default()];
+    let received = poll_fn(|cx| socket.poll_recv(cx, &mut bufs, &mut meta))
+        .await
+        .unwrap();
+    assert_eq!(received, 1);
+    assert_eq!(&bufs[0][..meta[0].len], &[0x40, 1, 2, 3]);
+    assert!(raw.sent.lock().unwrap().is_empty());
 }

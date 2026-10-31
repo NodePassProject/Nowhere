@@ -261,7 +261,7 @@ async fn fade_bootstrap_preserves_wire_layout_and_order_across_partial_writes() 
         ])),
     };
     let keys = MorphKeys::derive(b"shared");
-    let prelude = TcpPreludePolicy::Fade.generate().unwrap();
+    let prelude = PreludePolicy::Fade.generate_tcp().unwrap();
     let nonce = [0x23; NONCE_LEN];
     let authentication = AuthenticatedPrelude {
         identity: 1,
@@ -455,11 +455,11 @@ async fn tcp_write_processes_the_full_available_buffer() {
 async fn authenticated_bootstrap_roundtrips_without_changing_ciphertext() {
     let keys = MorphKeys::derive(b"shared");
     for policy in [
-        TcpPreludePolicy::Fade,
-        TcpPreludePolicy::Full8,
-        TcpPreludePolicy::Low7,
+        PreludePolicy::Fade,
+        PreludePolicy::Full8,
+        PreludePolicy::Low7,
     ] {
-        let prelude = policy.generate().unwrap();
+        let prelude = policy.generate_tcp().unwrap();
         let nonce = [0x23; NONCE_LEN];
         let authentication = AuthenticatedPrelude {
             identity: 0x0123_4567_89ab_cdef,
@@ -539,14 +539,14 @@ async fn disabled_morph_does_not_initialize_identity() {
 fn randomized_prelude_policies_preserve_prefix_and_high_bits_after_authentication() {
     let keys = MorphKeys::derive(b"0123456789abcdef0123456789abcdef");
     for policy in [
-        TcpPreludePolicy::Fade,
-        TcpPreludePolicy::Full8,
-        TcpPreludePolicy::Low7,
+        PreludePolicy::Fade,
+        PreludePolicy::Full8,
+        PreludePolicy::Low7,
     ] {
         let mut counts = [0usize; 128];
         let mut high = 0;
         for counter in 1..=2048 {
-            let mut prelude = policy.generate().unwrap();
+            let mut prelude = policy.generate_tcp().unwrap();
             let original = prelude;
             let mut nonce = [0; 12];
             getrandom::fill(&mut nonce).unwrap();
@@ -566,7 +566,7 @@ fn randomized_prelude_policies_preserve_prefix_and_high_bits_after_authenticatio
             }
         }
         assert!(counts.iter().all(|&count| (350..700).contains(&count)));
-        if policy == TcpPreludePolicy::Low7 {
+        if policy == PreludePolicy::Low7 {
             assert_eq!(high, 0);
         } else {
             assert!((30_000..35_500).contains(&high));
