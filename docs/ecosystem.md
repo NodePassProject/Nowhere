@@ -35,9 +35,9 @@ Connect
 
 Deploy
 
-+------------+     installs and operates      +----------+
-| nowhere-sh |------------------------------->|  Portal  |
-+------------+                                +----------+
++------------+     installs and operates      +-----------------+
+| nowhere-sh |------------------------------->| Portal / Egress |
++------------+                                +-----------------+
 
 Manage
 
@@ -54,18 +54,19 @@ Manage
 
 ### Connect
 
-Anywhere connects directly to Portal and imports `nowhere://` links. Vector
-ships in the `nowhere` binary and exposes a local SOCKS5 endpoint. Client peers
+The Anywhere clients connect to Portal and import `nowhere://` links. Vector ships
+in the `nowhere` binary and exposes a local SOCKS5 endpoint. Client peers
 implement [Nowhere Protocol (NW3)](protocol.md) independently of the Rust runtime.
-Nowhere also provides an [Egress Extension](egress.md); ordinary client peers
-do not need that extension when connecting to a Portal using a remote exit.
+Check the client's own documentation and validate the versions used in a
+deployment. Nowhere also provides an [Egress Extension](egress.md); ordinary
+client peers do not need that extension when Portal uses a remote exit.
 
 ### Deploy
 
-nowhere-sh installs and manages one systemd Portal on a Linux VPS. Its
-interactive workflow covers release selection, upgrades, transport and Portal
-configuration, service lifecycle, logs and generated Anywhere or Vector links.
-It operates Portal directly.
+nowhere-sh installs and manages one systemd service on a Linux VPS, running
+Portal or Egress. Its interactive workflow covers release selection, upgrades,
+transport and service configuration, lifecycle, logs and generated Anywhere or
+Vector links for Portal deployments.
 
 ### Manage
 
@@ -95,7 +96,9 @@ egress://KEY@HOST/udp:2001
 
 Use a key from `nowhere generate-key`. Vector requires `in` for its local
 listener and selects one carrier through its endpoint path. Egress uses TLS or
-QUIC and registers only with a Portal configured for `out=egress`.
+QUIC and registers only with a Portal configured for `out=egress`. These lines
+illustrate URL forms; with Portal's default generated certificate, Vector and
+Egress also need a verified `pin`. See [certificate trust](security.md#certificate-trust).
 
 [Configuration](configuration.md) defines the complete CLI grammar, defaults,
 listener options and environment variables. [Integrations](integrations.md)

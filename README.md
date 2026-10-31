@@ -20,8 +20,8 @@
 </p>
 
 Nowhere gives TCP and UDP traffic a secure path to the exit you choose.
-Run it close to your applications, on a public relay, or at a remote exit.
-One Rust binary provides **Portal**, **Vector** and **Egress**.
+One Rust binary brings the pieces together: **Vector** connects applications,
+**Portal** receives their traffic, and **Egress** places the exit on another host.
 
 | Capability | What you get |
 |---|---|
@@ -59,7 +59,8 @@ Listen on port `2000`; allow both TCP and UDP through the firewall:
 
 ### 4. Verify the certificate
 
-Compare this fingerprint with Portal's trusted startup log, then set `pin=<sha256>`:
+Compare this fingerprint with Portal's startup log obtained through a trusted
+channel, then set `pin=<sha256>`:
 
 ```bash
 ./target/release/nowhere fingerprint "nowhere://<generated-key>@portal.example:2000?morph=1"
@@ -119,9 +120,10 @@ families through the endpoint path. See [Configuration](docs/configuration.md).
 
 ### Connection and flow
 
-Ingress and exit can live on different hosts. Egress opens an outbound connection,
-so its host needs no inbound relay port. See [Architecture](docs/egress.md)
-for the connection model.
+TLS dedicates a connection to each Flow. QUIC shares a connection across Flows,
+using streams for TCP and streams plus DATAGRAMs for UDP. Egress opens its own
+outbound connection to Portal, so its host needs no inbound relay port. See the
+[Egress Extension](docs/egress.md) for the connection model.
 
 ## Wire design
 
@@ -133,13 +135,14 @@ the Core contract and documents Nowhere's extensions.
 
 Morph is enabled by default (`morph=1`) for shared-key masking below TLS and QUIC.
 Use `morph=0` to disable it. TLS/QUIC provides certificate verification and
-authenticated encryption. Morph TCP carries bootstrap authentication data
-through the [Prelude Extension](docs/prelude.md).
+authenticated encryption. Morph TCP requires an authenticated Prelude. Nowhere's
+Morph UDP clients send a separate short Prelude datagram. The
+[Prelude Extension](docs/prelude.md) describes both and their security boundaries.
 
 ### Remote exits
 
 Place target access where it belongs. With `out=egress`, independent registered
-TLS and QUIC exits serve Portal's clients. Follow the [Egress guide](docs/egress.md) to set it up.
+TLS and QUIC exits serve Portal's clients. Follow the [Egress Extension](docs/egress.md) to set it up.
 
 ## Observability
 
@@ -163,7 +166,7 @@ nowhere "vector://<generated-key>@portal.example:2000?in=127.0.0.1:1080"
 | --- | --- |
 | [Quick start](docs/quick-start.md) | First connection |
 | [Configuration](docs/configuration.md) | URLs, defaults and runtime settings |
-| [Prelude Extension](docs/prelude.md) | Morph TCP authentication and replay protection; Morph UDP Prelude |
+| [Prelude Extension](docs/prelude.md) | Morph TCP and UDP Prelude |
 | [Egress Extension](docs/egress.md) | Remote exits and registration |
 | [Platforms](docs/platforms.md) | Native targets and containers |
 | [Operations](docs/operations.md) | Service lifecycle and diagnostics |
