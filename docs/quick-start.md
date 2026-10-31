@@ -45,8 +45,10 @@ Listen for TLS on TCP `2000` and QUIC on UDP `2001`:
 ./target/release/nowhere "portal://KEY@*/tcp:2000/udp:2001"
 ```
 
-Portal uses a generated certificate by default. Its startup log includes the
-fingerprint needed for the next step.
+Portal generates a new self-signed certificate on every start. Its startup log
+includes the fingerprint needed for the next step. After a restart, verify the
+new fingerprint and update pinned clients. For a persistent certificate, use
+`tls=2` with supplied PEM files; see [certificate trust](security.md#certificate-trust).
 
 ## Establish trust
 
@@ -69,8 +71,10 @@ Run Vector with a local SOCKS5 listener:
 ./target/release/nowhere "vector://KEY@relay.example/tcp:2000?in=127.0.0.1:1080&pin=TRUSTED_SHA256"
 ```
 
-Point applications at SOCKS5 `127.0.0.1:1080`. The example selects dedicated
-TLS on TCP `2000`; use `relay.example/udp:2001` to select QUIC.
+Point applications at SOCKS5 `127.0.0.1:1080`. This listener has no SOCKS
+credentials and is bound to loopback. The example selects dedicated TLS on TCP
+`2000`; use `relay.example/udp:2001` to select QUIC. See
+[SOCKS5 ingress](configuration.md#socks5-ingress) before exposing a listener.
 
 ## Verify the connection
 

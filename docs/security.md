@@ -9,6 +9,7 @@ and network isolation. Wire contracts follow the
 
 - [Certificate trust](#certificate-trust)
 - [Connection authentication](#connection-authentication)
+- [SOCKS5 ingress](#socks5-ingress)
 - [Morph transport protection](#morph-transport-protection)
 - [Observable boundaries](#observable-boundaries)
 - [Admission and Flow resources](#admission-and-flow-resources)
@@ -25,13 +26,24 @@ including on resumed connections.
 | Trust mode | Verification |
 |---|---|
 | System CA | The certificate chain is trusted and the server name matches |
-| Exact pin | The presented certificate matches the configured SHA-256 fingerprint |
+| Exact pin | The presented leaf certificate matches the configured SHA-256 fingerprint |
 | Fingerprint inspection | Reads the presented certificate for separate trust verification |
 
 A pin is 64 lowercase hexadecimal characters. A missing, empty or `none` pin
 uses normal certificate verification. Explicit fingerprint inspection does
 not establish trust; compare its result through a trusted channel before use.
 See [Operations](operations.md#diagnose-target-setup) for inspection commands.
+
+Pinning checks the SHA-256 digest of the leaf certificate and the TLS handshake
+signature; it does not perform CA-chain, hostname or certificate-validity checks.
+A pin therefore needs its own trusted provisioning and rotation process.
+
+With the default `tls=1`, Portal generates a new self-signed certificate on each
+start. Pinned clients need the newly verified fingerprint after a restart. With
+`tls=2`, Portal loads the supplied certificate and key at startup. Once
+`NOW_RELOAD_INTERVAL` has elapsed, a subsequent handshake attempts a reload; a
+failed reload is logged and leaves the last valid certificate in use. Coordinate
+certificate rotation with pinned clients, which each accept one configured pin.
 
 ## Connection authentication
 
@@ -52,6 +64,23 @@ entropy; key derivation does not increase it.
 
 One credential derives both Vector and Egress role keys. Sharing it shares its
 authority; role derivation does not provide independent credential permissions.
+
+## SOCKS5 ingress
+
+Vector's SOCKS5 listener is a separate trust boundary from the encrypted
+Vector-to-Portal connection:
+
+```text
++-------------+     SOCKS5      +----------+    TLS / QUIC    +----------+
+| Application |---------------->|  Vector  |=================>|  Portal  |
++-------------+                 +----------+                  +----------+
+            No Nowhere encryption             Morph optional
+```
+
+Without configured SOCKS credentials, any client that can reach the listener
+can use it. SOCKS username/password authentication does not encrypt that hop.
+Restrict access to the TCP listener and the ephemeral UDP sockets used by UDP
+ASSOCIATE. See [SOCKS5 ingress](configuration.md#socks5-ingress).
 
 ## Morph transport protection
 
@@ -167,7 +196,7 @@ input and the stage it reaches:
 | Rejected Morph TCP bootstrap or ClientHello | No parser response before the original deadline; socket closure remains observable |
 | Accepted Morph TCP ClientHello with committed replay state | TLS responses and later alerts are possible before AuthFrame succeeds |
 | Unsupported-version Morph UDP long header | Silently discarded before Quinn; no Version Negotiation response |
-| Captured valid QUIC Initial | Can trigger Retry and address validation |
+| Captured valid Morph QUIC Initial | Replay can trigger Retry or other QUIC responses, depending on packet and address-validation state |
 | Standard TLS or native QUIC | Uses the transport's normal response behavior |
 
 RST, deadlines, business connection limits and operating-system resource

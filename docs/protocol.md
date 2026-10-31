@@ -5,6 +5,10 @@ version is **NW3**, with ALPN `nw3`.
 
 The independent [Core specification](https://github.com/NodePassProject/Nowhere-Protocol/blob/main/PROTOCOL.md)
 defines Vector/Portal connections, authentication, Flow framing, UDP and Morph.
+The extensions below add Nowhere-specific behavior to that baseline. In
+particular, Core permits receivers to ignore the TCP Morph Prelude, while this
+Portal requires the authenticated Prelude Extension. A Core-only Morph TCP
+sender is therefore not sufficient for this Portal.
 
 | Nowhere documentation | Purpose |
 | --- | --- |

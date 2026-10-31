@@ -12,6 +12,7 @@ Configure listeners, transport selection and a fixed exit with service URLs.
 - [Egress URL](#egress-url)
 - [Parsing configuration](#parsing-configuration)
 - [Parameter overview](#parameter-overview)
+- [Rate limits](#rate-limits)
 - [Runtime environment](#runtime-environment)
 
 ## Role URLs
@@ -100,8 +101,10 @@ Optional parameters:
 | `net` | `tcp` or `udp` | `tcp` | Client carrier: TLS or QUIC |
 | `morph` | `0` or `1` | `1` | Shared-key wire masking; peers must agree |
 
-For certificate inspection with `fingerprint`, see
-[Operations](operations.md#diagnose-target-setup).
+The `fingerprint` command additionally accepts `sni` and requires an explicit
+`morph=0` or `morph=1`. It always inspects TCP/TLS, even when the link specifies
+`net=udp`. See [Operations](operations.md#diagnose-target-setup). Client
+applications define their own support for additional share-link parameters.
 
 ## Portal URL
 
@@ -134,6 +137,9 @@ behavior.
 form, an omitted family uses `auto`. Explicit source binding errors fail the
 dial; they do not trigger an unbound retry. Portal applies these settings to
 its own outbound work, including connections to a SOCKS5 upstream.
+
+A SOCKS5 upstream must support UDP ASSOCIATE to carry UDP Flows. Failure to
+establish that association fails the affected Flow.
 
 ### SOCKS credentials
 
@@ -169,6 +175,20 @@ Obtain a fingerprint with `nowhere fingerprint` and compare it through a trusted
 channel before setting `pin`. See [certificate trust](security.md#certificate-trust).
 Upload and download follow the Vector-to-Target business direction, regardless
 of which transport peer establishes the connection.
+
+### SOCKS5 ingress
+
+Vector supports SOCKS5 CONNECT and UDP ASSOCIATE; BIND is unsupported. It drops
+SOCKS UDP packets with a nonzero fragmentation field. A UDP association uses a
+separate ephemeral UDP socket and remains tied to its TCP control connection.
+The requested UDP source must be an unspecified IP or the TCP peer's IP; a
+domain source constraint is unsupported. If the request does not specify a
+port, the first accepted UDP packet selects the source port for that association.
+
+Without `USER:PASS@`, the listener accepts unauthenticated SOCKS5 clients. SOCKS5
+credentials and traffic on this application-to-Vector hop are not encrypted by
+Nowhere. Bind to loopback or protect the listener and its UDP sockets with an
+appropriate network boundary.
 
 ## Egress URL
 
@@ -231,6 +251,14 @@ A dash means that the role does not recognize the parameter.
 | `rate` | `0..=2147483647` Mbps | `0` | Yes | Yes | Yes |
 | `etar` | `0..=2147483647` Mbps | `0` | Yes | Yes | Yes |
 
+## Rate limits
+
+Each role applies `rate` and `etar` to the aggregate business payload it
+handles across its TCP and UDP Flows. Values are decimal megabits per second;
+`0` disables the corresponding limit. Each service has its own limits, so a
+Flow passing through Vector, Portal and Egress can encounter limits at each hop.
+These limits do not account for transport headers, encryption or retransmissions.
+
 ## Runtime environment
 
 Set environment variables before starting the service. Byte sizes use integer
@@ -246,6 +274,9 @@ including TLS-only configurations. It accepts positive integer byte counts up to
 the smaller of `Semaphore::MAX_PERMITS` and `u32::MAX`. The saved value bounds each
 QUIC connection's UDP queue and reassembly reservations, and Vector's separate
 local UDP queue budget. Invalid values fail startup with the variable name.
+`NOW_TCP_DATA_BUF_SIZE` is likewise validated at startup by all three roles and
+must be in `1..=isize::MAX`. `NOW_PORTAL_TLS_IDLE_MAX` is validated by Portal
+and Egress, including configurations that do not use TLS Egress registrations.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -257,7 +288,7 @@ local UDP queue budget. Invalid values fail startup with the variable name.
 | `NOW_UDP_IDLE_TIMEOUT` | `120s` | UDP Flow/QUIC idle limit |
 | `NOW_QUIC_UDP_QUEUE_BYTES` | `4194304` | Connection-wide queue/reassembly reservation |
 | `NOW_SHUTDOWN_TIMEOUT` | `5s` | Bounded drain |
-| `NOW_RELOAD_INTERVAL` | `1h` | Supplied certificate reload |
+| `NOW_RELOAD_INTERVAL` | `1h` | Minimum interval between supplied-certificate reload attempts |
 | `NOW_SERVICE_COOLDOWN` | `3s` | Egress reconnect and failed-seed backoff |
 | `NOW_EGRESS_TLS_POOL_MAX` | `128` | Maximum TLS Egress pending connections per process |
 | `NOW_PORTAL_TLS_IDLE_MAX` | `128` | Portal-wide TLS Egress pending capacity |
@@ -350,4 +381,6 @@ exact distributions, nonblocking send semantics and receiver compatibility.
 Each variable is validated only for Morph clients using its corresponding
 carrier. Values are case-sensitive; empty, unknown and non-Unicode values are
 invalid. Portal and clients with `morph=0` do not use these policy variables.
-Neither policy is negotiated or included in service or share URLs.
+Neither policy is negotiated or included in service or share URLs. With Morph
+enabled, certificate inspection sends a TCP Prelude; when its share link selects
+`net=udp`, parsing also validates the UDP policy.

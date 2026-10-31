@@ -22,7 +22,9 @@ nowhere status
 Status discovers protected IPC endpoints, queries at most eight instances at a
 time with a two-second deadline per instance, and exits without requiring a
 terminal. Results are sorted by role, PID and instance ID. Successful snapshots
-remain visible when another instance fails; partial failures are reported.
+remain visible when another instance fails; partial failures are reported and
+the command exits unsuccessfully. When no instances are discovered, it reports
+`IDLE` and exits successfully.
 
 | Display | Meaning |
 |---|---|
@@ -48,8 +50,9 @@ Shared Key characters as services, checked after URL decoding and before
 connecting.
 
 `in` is optional for probe. READY verifies the selected Portal output; probe
-sends no target payload. Output failures return the fixed SetupResult described
-in the [wire specification](protocol.md).
+sends no target payload and does not verify an application protocol at the
+target. Output failures return the fixed SetupResult described in the
+[wire specification](protocol.md).
 
 Read a presented certificate over TCP/TLS:
 
@@ -61,6 +64,10 @@ nowhere fingerprint "nowhere://KEY@relay.example:2000?morph=1"
 name are optional. Inspection uses TCP/TLS even with `net=udp`, so the shared
 host and port must expose TLS. Compare the result through a trusted channel
 before configuring a pin. See [Security](security.md#certificate-trust).
+
+The default self-signed certificate changes on every Portal restart. Update
+pinned clients after independently verifying the new fingerprint. Supplied
+certificates can be reloaded as described in [certificate trust](security.md#certificate-trust).
 
 Running `nowhere` without arguments displays help and exits normally.
 
