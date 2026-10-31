@@ -14,7 +14,9 @@ use chacha20::cipher::{KeyIvInit, StreamCipher};
 use quinn::udp::{RecvMeta, Transmit};
 use quinn::{AsyncUdpSocket, UdpPoller};
 
-use super::{MorphKeyBytes, MorphKeys, NONCE_LEN, exhausted};
+use super::policy::{PreludePolicy, UDP_PRELUDE_ENV};
+use super::udp_socket::ClientUdpSocket;
+use super::{MorphKeyBytes, MorphKeys, NONCE_LEN, UDP_PRELUDE_LEN, exhausted};
 
 const QUINN_DEFAULT_MTU_UPPER_BOUND: u16 = 1452;
 pub(super) const UDP_NONCE_STREAM_LIMIT: u64 = (1u64 << 38) - 64;
@@ -23,6 +25,21 @@ pub(super) const UDP_NONCE_STREAM_LIMIT: u64 = (1u64 << 38) - 64;
 pub(crate) enum UdpRole {
     Client,
     Server,
+}
+
+pub(crate) fn wrap_morph_client_udp_socket(
+    socket: std::net::UdpSocket,
+    keys: Option<MorphKeys>,
+    runtime: &dyn quinn::Runtime,
+) -> io::Result<Arc<dyn AsyncUdpSocket>> {
+    if keys.is_none() {
+        return runtime.wrap_udp_socket(socket);
+    }
+    wrap_morph_udp_socket(
+        Arc::new(ClientUdpSocket::new(socket)?),
+        keys,
+        UdpRole::Client,
+    )
 }
 
 pub(crate) fn wrap_morph_udp_socket(
@@ -42,7 +59,7 @@ pub(crate) fn wrap_morph_udp_socket(
                 tx_key,
                 rx_key,
                 role,
-                send: Mutex::new(UdpSendState::new()?),
+                send: Mutex::new(UdpSendState::new(role)?),
                 receive: Mutex::new(UdpReceiveState::new()),
             }))
         }
@@ -50,19 +67,29 @@ pub(crate) fn wrap_morph_udp_socket(
     }
 }
 
+pub(crate) fn validate_udp_prelude_env() -> io::Result<()> {
+    PreludePolicy::from_env(UDP_PRELUDE_ENV).map(|_| ())
+}
+
 pub(super) struct UdpSendState {
     send: Vec<u8>,
+    prelude: Option<[u8; UDP_PRELUDE_LEN]>,
     pub(super) nonce_generator: UdpNonceGenerator,
 }
 
 impl UdpSendState {
-    fn new() -> io::Result<Self> {
-        Ok(Self::from_seed(random_seed()?))
+    fn new(role: UdpRole) -> io::Result<Self> {
+        let mut state = Self::from_seed(random_seed()?);
+        if matches!(role, UdpRole::Client) {
+            state.prelude = Some(PreludePolicy::from_env(UDP_PRELUDE_ENV)?.generate_udp()?);
+        }
+        Ok(state)
     }
 
     pub(super) fn from_seed(seed: [u8; 32]) -> Self {
         Self {
             send: Vec::new(),
+            prelude: None,
             nonce_generator: UdpNonceGenerator::from_seed(seed),
         }
     }
@@ -183,9 +210,20 @@ impl AsyncUdpSocket for MorphUdpSocket {
             )
             .ok_or_else(|| io::Error::other("Morph UDP datagram length overflow"))?;
         let mut state = self.send.lock().unwrap_or_else(|lock| lock.into_inner());
+        if let Some(prelude) = &state.prelude {
+            self.inner.try_send(&Transmit {
+                destination: transmit.destination,
+                ecn: transmit.ecn,
+                contents: prelude,
+                segment_size: None,
+                src_ip: transmit.src_ip,
+            })?;
+            state.prelude = None;
+        }
         let UdpSendState {
             send,
             nonce_generator,
+            ..
         } = &mut *state;
         if send.len() < wire_len {
             send.resize(wire_len, 0);

@@ -3,9 +3,11 @@
 
 //! Optional keyed wire transform below TLS and QUIC.
 
+mod policy;
 mod prelude;
 mod tcp;
 mod udp;
+mod udp_socket;
 
 use std::{fmt, io};
 
@@ -14,10 +16,14 @@ use sha2::Sha256;
 
 pub(crate) use prelude::{AuthenticatedPrelude, ClientPrelude};
 pub(crate) use tcp::{MorphTcpStream, validate_tcp_prelude_env};
-pub(crate) use udp::{UdpRole, configure_morph_mtu, morph_endpoint_config, wrap_morph_udp_socket};
+pub(crate) use udp::{
+    UdpRole, configure_morph_mtu, morph_endpoint_config, validate_udp_prelude_env,
+    wrap_morph_client_udp_socket, wrap_morph_udp_socket,
+};
 
 const NONCE_LEN: usize = 12;
 const TCP_PRELUDE_LEN: usize = 64;
+const UDP_PRELUDE_LEN: usize = 12;
 const MORPH_ROOT_SALT: &[u8] = b"nowhere/nw3/morph";
 const TCP_C2S_INFO: &[u8] = b"tcp c2s";
 const TCP_S2C_INFO: &[u8] = b"tcp s2c";

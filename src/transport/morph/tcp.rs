@@ -11,86 +11,14 @@ use chacha20::ChaCha20;
 use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
+use super::policy::{PreludePolicy, TCP_PRELUDE_ENV};
 use super::{
     AuthenticatedPrelude, ClientPrelude, MorphKeys, NONCE_LEN, TCP_PRELUDE_LEN, exhausted,
 };
 
 const TCP_STREAM_LIMIT: u64 = (1u64 << 38) - 64;
-const TCP_PRELUDE_ENV: &str = "NOW_MORPH_TCP_PRELUDE";
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TcpPreludePolicy {
-    Fade,
-    Full8,
-    Low7,
-}
-
-impl TcpPreludePolicy {
-    fn from_env() -> io::Result<Self> {
-        Self::parse(std::env::var(TCP_PRELUDE_ENV))
-    }
-
-    fn parse(value: Result<String, std::env::VarError>) -> io::Result<Self> {
-        match value {
-            Ok(value) if value == "fade" => Ok(Self::Fade),
-            Ok(value) if value == "full8" => Ok(Self::Full8),
-            Ok(value) if value == "low7" => Ok(Self::Low7),
-            Err(std::env::VarError::NotPresent) => Ok(Self::Fade),
-            Ok(_) | Err(std::env::VarError::NotUnicode(_)) => Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("{TCP_PRELUDE_ENV} must be fade, full8 or low7"),
-            )),
-        }
-    }
-
-    fn generate(self) -> io::Result<[u8; TCP_PRELUDE_LEN]> {
-        self.generate_with(|bytes| getrandom::fill(bytes).map_err(io::Error::other))
-    }
-
-    fn generate_with(
-        self,
-        mut fill: impl FnMut(&mut [u8]) -> io::Result<()>,
-    ) -> io::Result<[u8; TCP_PRELUDE_LEN]> {
-        let mut prelude = [0u8; TCP_PRELUDE_LEN];
-        fill(&mut prelude)?;
-        match self {
-            Self::Fade => {
-                let mut boundaries = [0u8; 2];
-                fill(&mut boundaries)?;
-                let a = 8 + usize::from(sample_below(boundaries[0], 5, &mut fill)?);
-                let b = 16 + usize::from(sample_below(boundaries[1], 17, &mut fill)?);
-                for byte in &mut prelude[..a] {
-                    *byte = 0x20 + sample_below(*byte, 95, &mut fill)?;
-                }
-                for byte in &mut prelude[a..b] {
-                    *byte &= 0x7f;
-                }
-            }
-            Self::Full8 => {}
-            Self::Low7 => {
-                for byte in &mut prelude {
-                    *byte &= 0x7f;
-                }
-            }
-        }
-        Ok(prelude)
-    }
-}
-
 pub(crate) fn validate_tcp_prelude_env() -> io::Result<()> {
-    TcpPreludePolicy::from_env().map(|_| ())
-}
-
-fn sample_below(
-    mut byte: u8,
-    upper: u8,
-    fill: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
-) -> io::Result<u8> {
-    let limit = 256u16 - 256 % u16::from(upper);
-    while u16::from(byte) >= limit {
-        fill(std::slice::from_mut(&mut byte))?;
-    }
-    Ok(byte % upper)
+    PreludePolicy::from_env(TCP_PRELUDE_ENV).map(|_| ())
 }
 
 pub(super) struct TcpMorph {
@@ -128,7 +56,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> MorphTcpStream<S> {
         let Some(keys) = keys else {
             return Ok(Self { inner, morph: None });
         };
-        let mut prelude = TcpPreludePolicy::from_env()?.generate()?;
+        let mut prelude = PreludePolicy::from_env(TCP_PRELUDE_ENV)?.generate_tcp()?;
         let mut nonce = [0u8; NONCE_LEN];
         getrandom::fill(&mut nonce).map_err(io::Error::other)?;
         keys.encode_prelude(&mut prelude, &nonce, identity.allocate()?);

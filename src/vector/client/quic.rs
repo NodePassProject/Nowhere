@@ -165,10 +165,10 @@ pub(crate) async fn connect_quic(
             let socket = std::net::UdpSocket::bind(bind)?;
             socket.set_nonblocking(true)?;
             let runtime = quinn::default_runtime().context("QUIC runtime missing")?;
-            let socket = crate::transport::wrap_morph_udp_socket(
-                runtime.wrap_udp_socket(socket)?,
+            let socket = crate::transport::wrap_morph_client_udp_socket(
+                socket,
                 config.morph_keys.clone(),
-                crate::transport::UdpRole::Client,
+                runtime.as_ref(),
             )?;
             let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
                 crate::transport::morph_endpoint_config(config.morph)?,
