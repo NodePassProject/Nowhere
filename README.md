@@ -163,7 +163,7 @@ nowhere "vector://<generated-key>@portal.example:2000?in=127.0.0.1:1080"
 | --- | --- |
 | [Quick start](docs/quick-start.md) | First connection |
 | [Configuration](docs/configuration.md) | URLs, defaults and runtime settings |
-| [Prelude Extension](docs/prelude.md) | Morph TCP authentication and replay protection |
+| [Prelude Extension](docs/prelude.md) | Morph TCP authentication and replay protection; Morph UDP Prelude |
 | [Egress Extension](docs/egress.md) | Remote exits and registration |
 | [Platforms](docs/platforms.md) | Native targets and containers |
 | [Operations](docs/operations.md) | Service lifecycle and diagnostics |

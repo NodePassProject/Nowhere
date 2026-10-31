@@ -177,7 +177,7 @@ egress://KEY@ENDPOINT
 ```
 
 Egress connects to Portal over its selected TLS or QUIC carrier and provides
-target access. The `HOST:PORT` shorthand continues to select QUIC.
+target access. The `HOST:PORT` shorthand selects QUIC.
 
 | Parameter | Accepted value | Default | Purpose |
 |---|---|---|---|
@@ -262,7 +262,8 @@ local UDP queue budget. Invalid values fail startup with the variable name.
 | `NOW_EGRESS_TLS_POOL_MAX` | `128` | Maximum TLS Egress pending connections per process |
 | `NOW_PORTAL_TLS_IDLE_MAX` | `128` | Portal-wide TLS Egress pending capacity |
 | `NOW_TRANSPORT_MEMORY_PROFILE` | `throughput` | QUIC window profile |
-| `NOW_MORPH_TCP_PRELUDE` | `fade` | [Morph prelude mode](#tcp-morph-prelude): `fade`, `full8` or `low7` |
+| `NOW_MORPH_TCP_PRELUDE` | `fade` | [Morph TCP Prelude policy](#tcp-morph-prelude): `fade`, `full8` or `low7` |
+| `NOW_MORPH_UDP_PRELUDE` | `fade` | [Morph UDP Prelude policy](#udp-morph-prelude): `fade`, `full8` or `low7` |
 
 ### Timeout semantics
 
@@ -333,16 +334,20 @@ selected policy.
 consumes the 64-byte prelude independently of that policy; this setting is not
 negotiated and need not match the peer's generation policy.
 
-- `fade` (default): independently sample uniform A in `[8,12]` and B in `[16,32]`.
-  Bytes `[0,A)` are uniform printable ASCII (`0x20–0x7E`), `[A,B)` are uniform
-  low7 (`0x00–0x7F`), and `[B,64)` are uniform full8 (`0x00–0xFF`).
-- `full8`: generate all eight bits randomly throughout the base prelude.
-- `low7`: clear each random byte's high bit.
+The [Morph TCP Prelude specification](prelude.md#morph-tcp-prelude) defines
+the three base generation policies, authentication encoding and acceptance.
+TCP Fade uses randomized ASCII/low7/full8 boundaries; authentication
+encoding preserves the base prefix and all highest bits.
 
-All modes use a secure random source. Fade uses rejection sampling for its
-boundaries and printable ASCII to avoid modulo bias. The distributions above
-describe the base Prelude before authentication encoding. The encoded tail
-preserves highest bits and carries masked payload in its low seven bits.
-The [Core Morph contract](protocol.md) defines the envelope and directional
-cipher; the [Prelude Extension](prelude.md) defines authentication encoding
-and acceptance.
+### UDP Morph prelude
+
+`NOW_MORPH_UDP_PRELUDE` selects `fade` (default), `full8` or `low7` for the
+independent 12-byte Prelude sent once by each new Morph QUIC client socket.
+Vector and Egress share this behavior. UDP Fade uses fixed 2B ASCII + 8B low7 +
+2B full8 boundaries. See [Morph UDP Prelude](prelude.md#morph-udp-prelude) for
+exact distributions, nonblocking send semantics and receiver compatibility.
+
+Each variable is validated only for Morph clients using its corresponding
+carrier. Values are case-sensitive; empty, unknown and non-Unicode values are
+invalid. Portal and clients with `morph=0` do not use these policy variables.
+Neither policy is negotiated or included in service or share URLs.

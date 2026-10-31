@@ -9,7 +9,7 @@ defines Vector/Portal connections, authentication, Flow framing, UDP and Morph.
 | Nowhere documentation | Purpose |
 | --- | --- |
 | [Configuration](configuration.md) | Service URLs, runtime defaults and Morph prelude policy |
-| [Prelude Extension](prelude.md) | Morph TCP bootstrap authentication and replay protection |
+| [Prelude Extension](prelude.md) | Morph TCP authentication and replay protection; Morph UDP Prelude |
 | [Egress Extension](egress.md) | Optional remote exits: deployment, authentication, registration and Wire rules |
 | [Security](security.md) | Certificate trust and implementation resource protection |
 | [Interoperability](interoperability.md) | Compatible peer requirements and validation cases |

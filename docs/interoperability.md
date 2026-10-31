@@ -3,7 +3,8 @@
 Validate independent Nowhere Protocol implementations against Nowhere's Rust
 runtime. The [Core specification entry](protocol.md) identifies the Wire
 baseline. The [Prelude Extension](prelude.md) defines Morph TCP bootstrap
-authentication; the [Egress Extension](egress.md) defines remote-exit behavior.
+authentication and the per-socket UDP Prelude; the [Egress Extension](egress.md)
+defines remote-exit behavior.
 This guide describes integration and validation, not a second Wire specification.
 
 ## Contents
@@ -60,19 +61,29 @@ Morph TCP senders must encode the [Prelude Extension](prelude.md). Portal
 requires a valid Tag and Counter independently of the generation policy.
 Invalid Tags are rejected before ClientHello parsing. Replay precheck precedes
 silent ClientHello acceptance; successful acceptance precedes atomic replay
-commit and TLS responses. There is no Legacy Prelude fallback.
+commit and TLS responses. There is no unauthenticated Prelude fallback.
 
 | Sender | This Portal's Morph TCP ingress |
 |---|---|
 | Without authenticated Prelude | Rejected silently |
 | With valid authenticated Prelude | Accepted subject to TLS, AuthFrame and replay checks |
 
-Test all three policies, invalid Tags, legacy input, invalid and replayed
-Counters, and the commit boundary after ClientHello acceptance. Verify that
-zero linger remains enabled through TLS and AuthFrame validation and is
-restored only after complete Vector authentication within the original
-deadline. Check normal authenticated close and half-close behavior and retain
+Test all three policies, invalid Tags, unauthenticated input, invalid and
+replayed Counters, and the commit boundary after ClientHello acceptance. Verify
+that zero linger remains enabled through TLS and AuthFrame validation and is
+restored only after complete authorized Vector or Egress authentication within
+the deadline. Check normal authenticated close and half-close behavior and
 standard TLS (`morph=0`) coverage.
+
+### Morph UDP Prelude compatibility
+
+Morph-enabled Vector and Egress QUIC clients send one independent 12-byte
+[UDP Prelude](prelude.md#morph-udp-prelude) per socket. Portal silently discards
+Morph UDP datagrams of 12 bytes or less and does not require a Prelude before
+QUIC packets. Receivers need no matching generation policy, authentication
+decoder or replay state for the Prelude. Normal Morph UDP datagrams contain a
+12-byte Nonce followed by the masked QUIC packet. Interoperable receivers must
+silently discard these short datagrams without sending a response.
 
 ## Reference vectors and observation
 

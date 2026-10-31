@@ -1,26 +1,43 @@
 # Prelude Extension
 
-Authenticated Prelude is a Nowhere-specific extension to
-[Nowhere Protocol (NW3)](protocol.md). It carries Shared Key authentication data
-in the 64-byte Morph TCP Prelude. Authenticated Prelude is mandatory for Morph
-TCP ingress. Portal verifies the Tag and Counter before parsing ClientHello,
-and commits replay state before sending a TLS response.
-
-The extension uses the Core TCP envelope, Nonce and directional cipher keys.
-It requires no additional message, ALPN, negotiation or round trip. TLS 1.3,
-certificate verification, exporter-bound AuthFrame and Flow processing apply.
-The extension operates only on Morph TCP.
+The Prelude Extension supplements [Nowhere Protocol (NW3)](protocol.md) below
+TLS and QUIC. Morph TCP uses an authenticated 64-byte Prelude. Morph UDP clients
+send one independent 12-byte Prelude datagram per socket. The extension requires
+no additional negotiation, ALPN, round trip or artificial delay.
 
 ## Contents
 
-- [Wire layout](#wire-layout)
-- [Authentication](#authentication)
-- [Identity and Counter](#identity-and-counter)
-- [Replay window](#replay-window)
-- [Silent admission](#silent-admission)
-- [Acceptance policy and limits](#acceptance-policy-and-limits)
+- [Morph TCP Prelude](#morph-tcp-prelude)
+- [Morph UDP Prelude](#morph-udp-prelude)
+- [Compatibility](#compatibility)
 
-## Wire layout
+## Morph TCP Prelude
+
+Authenticated Prelude carries Shared Key authentication data in the 64-byte
+Morph TCP Prelude. It is mandatory for Morph TCP ingress. Portal
+verifies the Tag and Counter before parsing ClientHello and commits replay
+state before sending a TLS response.
+
+Vector and Egress use the same client implementation. The extension uses the
+Core TCP envelope, Nonce and directional cipher keys. TLS 1.3, certificate
+verification, exporter-bound AuthFrame and Flow processing apply.
+
+### Base generation policies
+
+`NOW_MORPH_TCP_PRELUDE` accepts `fade` (default), `full8` and `low7`:
+
+- `fade`: independently sample uniform A in `[8,12]` and B in `[16,32]`.
+  Bytes `[0,A)` are uniform printable ASCII (`0x20–0x7E`), `[A,B)` are uniform
+  low7 (`0x00–0x7F`), and `[B,64)` are uniform full8 (`0x00–0xFF`).
+- `full8`: generate all eight bits randomly throughout the 64-byte base Prelude.
+- `low7`: clear each random byte's highest bit throughout the base Prelude.
+
+All modes use a secure random source. Fade uses rejection sampling for its
+boundaries and printable ASCII. These distributions describe the base Prelude
+before authentication encoding; the encoded tail preserves highest bits and
+carries masked payload in its low seven bits.
+
+### Wire layout
 
 The TCP envelope starts with a 64-byte Prelude and a 12-byte random Nonce:
 
@@ -43,7 +60,7 @@ Tail    | H |    Masked payload bits    |
         Repeated for all 32 tail bytes.
 ```
 
-Vector first generates all 64 bytes using the configured
+The client first generates all 64 bytes using the configured
 [Prelude policy](configuration.md#tcp-morph-prelude): `fade`, `full8` or `low7`.
 It preserves the first 32 bytes and every highest bit, replacing only the tail's
 low seven bits. The tail carries `32 x 7 = 224` bits, exactly 28 bytes:
@@ -57,10 +74,10 @@ Offset  0                8              14                           28
 
 Identity and Counter are unsigned big-endian integers. Payload bits are encoded
 most significant bit first, in byte order. No visible marker or version field
-is reserved. Nonce remains twelve independent CSPRNG bytes; none of its bits
+is reserved. Nonce consists of twelve independent CSPRNG bytes; none of its bits
 are reused for authentication metadata. Portal uses one decoder for all policies.
 
-## Authentication
+### Authentication
 
 The authentication input uses these byte strings:
 
@@ -95,20 +112,21 @@ Portal reverses this encoding, reconstructs Mask, recovers Identity, Counter and
 Tag, and compares all fourteen Tag bytes in constant time. A matching Tag marks
 an authenticated input before Counter validity is checked.
 
-## Identity and Counter
+### Identity and Counter
 
-Each Vector instance lazily generates one random 64-bit Identity on its first
-Morph TCP connection. All TCP Flows and TLS client clones share that Identity
-and one atomic Counter. QUIC and disabled Morph do not allocate counter values.
+Each Vector or Egress instance lazily generates one random 64-bit Identity on
+its first Morph TCP connection. All TCP Flows and TLS client clones share that
+Identity and one atomic Counter. QUIC and disabled Morph do not allocate counter
+values.
 
 Counter starts at one and is allocated immediately before Prelude encoding and
 transmission. Each allocation is unique, including concurrent attempts. Failed
 connections and cancelled tasks consume any value already allocated. Values
 range from `1` through `2^48-1`; exhaustion rejects further allocations without
-wrapping. Identity and Counter are not persisted. A new Vector instance creates
+wrapping. Identity and Counter are not persisted. A new client instance creates
 fresh state.
 
-## Replay window
+### Replay window
 
 All TCP listeners of one Portal instance share a fixed registry:
 
@@ -139,7 +157,7 @@ There is no TTL, timer, persistence or additional Nonce cache. Registry storage
 is preallocated; registration, window updates and eviction allocate no per-Flow
 memory. A new Portal instance starts with an empty registry.
 
-## Silent admission
+### Silent admission
 
 Portal applies the accept-time handshake deadline, admission limits and socket
 close policy. Rejected input stops further reads until that deadline. Prelude
@@ -147,7 +165,7 @@ verification precedes ClientHello parsing; successful parsing precedes replay
 commit:
 
 ```text
-      Vector                                            Portal
+   Vector / Egress                                      Portal
          |                                                 |
          |---------------- TCP connection ---------------->|
          |-------------- Prelude + Nonce ----------------->|
@@ -159,9 +177,9 @@ commit:
          |                                 Deadline check  |
          |<-------------- TLS 1.3 response ----------------|
          |------------------- AuthFrame ------------------>|
-         |                          Verify Vector identity |
+         |                           Verify role AuthFrame |
          |                          Linger/deadline check  |
-         |<================== Flow data ==================>|
+         |<========= Authenticated TLS connection ========>|
          |                                                 |
 ```
 
@@ -178,14 +196,15 @@ undo a commit. Configuration-dependent TLS checks after the silent boundary
 can send alerts.
 
 Portal enables zero linger before reading the bootstrap and retains it through
-Prelude validation, TLS, ALPN and AuthFrame verification. Only a complete,
-valid Vector AuthFrame permits restoration of normal linger. The absolute
-deadline is checked before and after restoration; expiry retains zero linger.
+Prelude validation, TLS, ALPN and AuthFrame verification. A complete, valid
+Vector or Egress AuthFrame for an available role permits restoration of normal
+linger. The absolute deadline is checked before and after restoration; expiry
+retains zero linger.
 Timeouts, cancellation and failures before this point retain abortive close.
 Authenticated Flows use normal close and half-close behavior. Packet-level
 FIN/RST behavior depends on the operating system.
 
-## Acceptance policy and limits
+### Acceptance policy and limits
 
 Portal applies these rules to every complete Morph TCP bootstrap:
 
@@ -195,11 +214,10 @@ Portal applies these rules to every complete Morph TCP bootstrap:
 | Matching Tag, valid unused Counter | Precheck, parse ClientHello, then atomically recheck and commit |
 | Matching Tag, zero, duplicate or out-of-window Counter | Reject silently before TLS responses |
 
-There is no Legacy Prelude fallback or compatibility switch. A sender that
-omits Prelude authentication cannot connect to this Portal. See
-[Interoperability](interoperability.md#morph) for the compatibility boundary.
-A receiver that ignores Prelude contents can still consume an authenticated
-sender's envelope; no negotiated policy or additional configuration is needed.
+Portal requires Prelude authentication and has no unauthenticated fallback.
+See [Interoperability](interoperability.md#morph) for peer requirements.
+Receivers that ignore Prelude contents can consume an authenticated sender's
+envelope; no negotiated policy or additional configuration is needed.
 
 The Tag does not bind the complete ClientHello: a captured bootstrap can race
 its first use with a modified hello and consume its Counter. FIFO eviction and Portal restart discard history.
@@ -214,3 +232,93 @@ The 112-bit Tag authenticates bootstrap metadata. TLS supplies integrity for
 the connection. See [Security](security.md#morph-transport-protection) and
 [Interoperability](interoperability.md) for the full protection boundary and
 peer requirements.
+
+## Morph UDP Prelude
+
+### Generation policies
+
+`NOW_MORPH_UDP_PRELUDE` selects the local generation policy for Morph-enabled
+QUIC clients, including Vector and Egress. The default is `fade`.
+
+| Policy | Independent 12-byte datagram |
+|---|---|
+| `fade` | 2 uniform printable ASCII bytes (`0x20–0x7E`), 8 uniform low7 bytes (`0x00–0x7F`), 2 uniform full8 bytes (`0x00–0xFF`) |
+| `full8` | 12 uniform full8 bytes (`0x00–0xFF`) |
+| `low7` | 12 uniform low7 bytes (`0x00–0x7F`) |
+
+All bytes originate from a secure random source. Printable ASCII uses rejection
+sampling to avoid modulo bias. UDP Fade has fixed boundaries at offsets 2 and 10.
+
+```text
+UDP Prelude datagram (12B, fade)
+Offset  0       2                               10      12
+        +-------+-------------------------------+-------+
+        | ASCII |             low7              | full8 |
+        |  2B   |              8B               |  2B   |
+        +-------+-------------------------------+-------+
+
+Subsequent Morph UDP datagram (separate packet)
+Offset  0                   12
+        +-------------------+--------------------------------+
+        |    Nonce (12B)    |    ChaCha20-XOR(QUIC packet)   |
+        +-------------------+--------------------------------+
+```
+
+### Transmission and reception
+
+Each new Morph client UDP socket sends the Prelude through that same socket to
+the destination of its first QUIC transmission. The Prelude is an independent,
+unmasked datagram without a Morph Nonce or GSO segmentation. It must be
+successfully submitted to the underlying socket before the first QUIC datagram
+is submitted. The client sends the QUIC datagram without waiting for a Prelude
+response or introducing a delay. UDP does not guarantee network delivery or
+arrival order.
+
+```text
+Vector / Egress (one UDP socket)                    Portal
+       |                                              |
+       |------------- Prelude (12B) ----------------->|
+       |                               Silent discard |
+       |------------- Nonce + QUIC Initial ---------->|
+       |<============ Normal QUIC exchange ==========>|
+       |                                              |
+       |       Further Flows using this socket        |
+       |       send no additional Prelude             |
+```
+
+The diagram shows submission order; Prelude delivery is not acknowledged.
+
+The nonblocking writable path retries an unsubmitted Prelude using the same
+bytes after `WouldBlock`. Successful submission consumes that socket's pending
+Prelude, even if the subsequent QUIC send must be retried. Other Prelude send
+errors propagate through the QUIC error path.
+
+The Prelude is sent once per socket, not once per Flow or QUIC transmission.
+Each socket generates its own Prelude; reusing a socket does not send another.
+Portal and other server-role sockets do not send it. Disabled Morph bypasses
+the extension entirely.
+
+Portal's Morph UDP receiver silently discards datagrams of 12 bytes or less,
+including this Prelude. It sends no response, performs no Prelude
+authentication and allocates no Prelude admission or replay state. Normal
+Morph datagrams use `Nonce (12B) || ChaCha20-XOR(QUIC packet)`.
+
+### Security boundary
+
+The UDP Prelude carries no Identity, Counter, Tag, authentication or replay
+protection. It is not a normal Morph UDP Nonce, is not consumed by the Nonce
+generator and does not alter the encryption or format of subsequent datagrams.
+TLS 1.3, QUIC and AuthFrame provide connection security. MTU, Keep-Alive,
+timeouts and handshake behavior follow the QUIC transport configuration.
+
+## Compatibility
+
+Portal requires authenticated TCP Preludes. UDP ingress does not require a
+Prelude: Portal accepts Morph-protected QUIC packets without a preceding UDP
+Prelude, subject to QUIC and AuthFrame checks. Interoperable Morph UDP receivers
+silently discard datagrams of 12 bytes or less without sending a response.
+
+Prelude policies are local choices and need not match the peer. They are not
+negotiated or specified in URLs. See
+[Configuration](configuration.md#udp-morph-prelude) and
+[Interoperability](interoperability.md#morph).

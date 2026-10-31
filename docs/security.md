@@ -114,8 +114,8 @@ at this point. Standard TLS (`morph=0`) and QUIC do not use this stage.
 
 ### TCP socket closure
 
-Portal enables `SO_LINGER=0` when TCP accept completes and retains it
-through TLS, ALPN and AuthFrame verification.
+For Morph TCP, Portal enables `SO_LINGER=0` when TCP accept completes and
+retains it through TLS, ALPN and AuthFrame verification.
 
 | Authentication state | Socket close policy |
 |---|---|
@@ -138,7 +138,8 @@ this close policy's guarantees.
 After unmasking, Portal checks the first QUIC packet in each UDP datagram before
 handing it to Quinn. A long header with an incomplete or unsupported Version,
 including Version 0, is silently discarded. Supported versions follow Quinn's
-default endpoint version list. Short headers continue to Quinn unchanged.
+default endpoint version list. Short headers pass to Quinn without version
+filtering.
 
 Each UDP GRO segment is checked independently. This filter applies only to
 Portal's Morph UDP ingress; native QUIC retains its normal Version Negotiation
@@ -147,6 +148,14 @@ behavior. The filter adds no replay state or authentication exchange.
 Portal requires Retry for QUIC connections whose remote address has not been
 validated. Version filtering does not change address validation, TLS,
 AuthFrame or business Flow admission.
+
+### Morph UDP Prelude
+
+The [UDP Prelude](prelude.md#morph-udp-prelude) contains 12 policy-generated
+random bytes. It provides neither identity authentication nor replay protection
+and is separate from every encrypted datagram's Morph Nonce. Portal silently
+discards it without a response or authentication state. QUIC uses TLS 1.3 and
+AuthFrame for connection protection and authentication.
 
 ## Observable boundaries
 
