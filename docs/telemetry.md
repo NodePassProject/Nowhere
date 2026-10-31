@@ -33,13 +33,14 @@ mode `0700`. An instance atomically publishes
 `nowhere.<32 lowercase hexadecimal instance ID>.json` with mode `0600`.
 
 Its `endpoint` is a Unix socket in the same private directory. Socket filenames
-use the first 16 hexadecimal characters of the random ID to fit platform path
-limits. The socket has mode `0600` and is not a data-storage file.
+are `<first 16 hexadecimal characters of the instance ID>.sock` to fit platform
+path limits. The socket has mode `0600` and is not a data-storage file.
 
 ### Windows
 
-The directory suffix is the first 16 bytes of SHA-256 of the current user's SID,
-encoded as lowercase hexadecimal. Endpoints are local byte-mode named pipes:
+The directory suffix is the first 16 bytes of SHA-256 of the current user's SID
+string encoded as UTF-8, rendered as lowercase hexadecimal. Endpoints are local
+byte-mode named pipes:
 
 ```text
 \\.\pipe\nowhere-telemetry-<user suffix>-<instance ID>
@@ -65,7 +66,7 @@ history. Before trusting a record:
 2. Check that the filename matches the embedded instance identity.
 3. On Linux, check namespace identity before PID checks or cleanup.
 4. Check process liveness and validate its incarnation where the platform supports it.
-5. Match Hello's instance ID against discovery after connecting.
+5. Match Hello's contract, instance ID and PID against discovery after connecting.
 
 Linux compares boot, PID namespace and user namespace identity and checks the
 socket peer PID. Windows checks the named-pipe server PID and user identity.
@@ -199,9 +200,8 @@ fingerprints and graceful shutdown information. Service stderr contains original
 exception details and their cause chains; addresses and file paths may appear.
 Errors are constructed without passwords, Shared Keys or complete credential
 URLs. Logs use `2026-10-11T08:30:00.123Z message`, without levels or ANSI colors.
-Error operation descriptions use lowercase text without source paths or
-addresses. Original error chains retain their text, casing and any addresses.
-Embedded newlines are escaped so each record occupies one line.
+Original error chains retain their text, casing and any addresses. Embedded
+newlines are escaped so each log record occupies one line.
 
 Normal Flow starts, successful finishes, normal EOF, active cancellation and
 ordinary UDP idle cleanup produce no access logs.
@@ -210,7 +210,7 @@ ordinary UDP idle cleanup produce no access logs.
 
 There are at most 16 IPC connections. Frames are at most 64 KiB and each write
 has a five-second timeout. Input is discarded through a fixed-size buffer.
-Slow writers, EOF and I/O errors release connection resources. Snapshots use a
+Slow readers, EOF and I/O errors release connection resources. Snapshots use a
 fixed one-second interval without an event queue.
 
 ## Containers

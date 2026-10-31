@@ -46,8 +46,9 @@ and Egress reconnection do not change process state.
    for the same instance without adding repeated samples. Clear stale active
    counts; a different instance ID starts a separate counter lifetime.
 
-The [contract and JSON messages](telemetry.md#messages) and
-[JSON Schema](telemetry.md#json-schema) define the wire interface.
+The [discovery record](telemetry.md#validate-discovery),
+[JSON messages](telemetry.md#messages) and [JSON Schema](telemetry.md#json-schema)
+define the local interface.
 See [Testing](testing.md) for native IPC regression coverage.
 
 ## Deployment boundaries
