@@ -344,9 +344,13 @@ Setup deadlines end at READY; they do not limit established Flow lifetimes.
 
 | Profile | Stream receive | Connection receive | Send window |
 |---|---:|---:|---:|
-| `memory` | 4 MiB | 8 MiB | 8 MiB |
-| `balanced` | 8 MiB | 16 MiB | 16 MiB |
-| `throughput` | 16 MiB | 32 MiB | 32 MiB |
+| `memory` | 4 MiB | 16 MiB | 8 MiB |
+| `balanced` | 4 MiB | 16 MiB | 16 MiB |
+| `throughput` | 4 MiB | 32 MiB | 32 MiB |
+
+The 4 MiB per-stream window leaves connection credit for other streams when a
+reader stalls and limits out-of-order buffering on that stream. It can limit
+single-stream throughput on high-RTT paths.
 
 Portal uses a 64 KiB connection receive window before authentication and raises
 it after success. Transport windows are separate from UDP application budgets

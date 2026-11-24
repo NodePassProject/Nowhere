@@ -15,9 +15,9 @@ pub(crate) struct TransportFlowControl {
 }
 
 impl TransportFlowControl {
-    const MEMORY: Self = Self::new(4, 8, 8);
-    const BALANCED: Self = Self::new(8, 16, 16);
-    const THROUGHPUT: Self = Self::new(16, 32, 32);
+    const MEMORY: Self = Self::new(4, 16, 8);
+    const BALANCED: Self = Self::new(4, 16, 16);
+    const THROUGHPUT: Self = Self::new(4, 32, 32);
 
     const fn new(stream_mib: u32, connection_mib: u32, send_mib: u64) -> Self {
         Self {

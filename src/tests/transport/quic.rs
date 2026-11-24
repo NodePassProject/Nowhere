@@ -6,14 +6,20 @@
 use super::*;
 
 #[test]
-fn profiles_keep_streams_within_connection_limits() {
-    for profile in [
-        parse_transport_profile(Some("memory")).unwrap(),
-        parse_transport_profile(Some("balanced")).unwrap(),
-        parse_transport_profile(Some("throughput")).unwrap(),
+fn profiles_select_expected_window_budgets() {
+    for (name, connection_mib, send_mib) in [
+        ("memory", 16, 8),
+        ("balanced", 16, 16),
+        ("throughput", 32, 32),
     ] {
-        assert!(profile.stream_receive_window <= profile.connection_receive_window);
-        assert!(u64::from(profile.connection_receive_window) <= profile.send_window * 2);
+        let profile = parse_transport_profile(Some(name)).unwrap();
+        assert_eq!(profile.stream_receive_window, 4 * MIB, "{name}");
+        assert_eq!(
+            profile.connection_receive_window,
+            connection_mib * MIB,
+            "{name}"
+        );
+        assert_eq!(profile.send_window, send_mib * u64::from(MIB), "{name}");
     }
 }
 
