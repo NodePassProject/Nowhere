@@ -16,7 +16,7 @@ use crate::common::{
     resolve_bind_addrs,
 };
 use crate::protocol::Credentials;
-use crate::transport::{Buffers, MorphKeys, RateLimiter, Stats};
+use crate::transport::{Buffers, MorphCipher, MorphKeys, RateLimiter, Stats};
 
 use super::{
     Portal, PortalInner, admission,
@@ -25,7 +25,7 @@ use super::{
 };
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
-    "tls", "crt", "key", "rate", "etar", "dial", "dial4", "dial6", "morph", "out",
+    "tls", "crt", "key", "rate", "etar", "dial", "dial4", "dial6", "morph", "cipher", "out",
 ];
 
 impl Portal {
@@ -45,8 +45,9 @@ impl Portal {
         let handshake_timeout =
             crate::common::read_handshake_timeout(&mut crate::common::env_value, &url)?;
         let runtime = super::config::PortalRuntimeConfig::from_env(handshake_timeout)?;
+        let cipher = MorphCipher::parse(query.get("cipher").map(String::as_str))?;
         let morph_keys = (query.get("morph").is_none_or(|s| s == "1"))
-            .then(|| MorphKeys::from_url(&url))
+            .then(|| MorphKeys::from_url(&url, cipher))
             .transpose()?;
         let out = query.get("out").map(String::as_str).unwrap_or("direct");
         let registry = if out == "egress" {
@@ -82,14 +83,15 @@ impl Portal {
             morph_keys.is_some(),
         )?;
         let effective = format!(
-            "portal://{}?out={out_label}&tls={tls_mode}{}&morph={}&rate={rate}&etar={etar}",
+            "portal://{}?out={out_label}&tls={tls_mode}{}&morph={}{}&rate={rate}&etar={etar}",
             endpoint.canonical(),
             if registry.is_some() {
                 String::new()
             } else {
                 format!("&{}", dial.to_string().replace(' ', "&"))
             },
-            u8::from(morph_keys.is_some())
+            u8::from(morph_keys.is_some()),
+            morph_keys.as_ref().map_or("", MorphKeys::cipher_query)
         );
         let outbound = match &registry {
             Some(registry) => Outlet::Egress(registry.clone()),

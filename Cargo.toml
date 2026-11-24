@@ -8,10 +8,12 @@ repository = "https://github.com/NodePassProject/Nowhere"
 readme = "README.md"
 
 [dependencies]
+aes = "0.9.4"
 anyhow = "1.0.104"
 bytes = "1.12.1"
 chacha20 = "0.10.2"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+ctr = "0.10.1"
 getrandom = "0.4.3"
 hmac = "0.13.0"
 humantime = "2.4.0"

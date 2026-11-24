@@ -151,6 +151,7 @@ async fn udp_preserves_gso_datagram_boundaries() {
     let raw = Arc::new(FakeUdpSocket::default());
     let socket = MorphUdpSocket {
         inner: raw.clone(),
+        cipher: MorphCipher::ChaCha,
         tx_key: key,
         rx_key: key,
         role: UdpRole::Client,
@@ -207,6 +208,7 @@ async fn udp_discards_invalid_wire_datagrams_before_returning_valid_data() {
     let raw = Arc::new(FakeUdpSocket::default());
     let socket = MorphUdpSocket {
         inner: raw.clone(),
+        cipher: MorphCipher::ChaCha,
         tx_key: key,
         rx_key: key,
         role: UdpRole::Client,
@@ -279,6 +281,7 @@ async fn udp_reuses_buffers_without_relaxing_current_receive_bounds() {
     let raw = Arc::new(FakeUdpSocket::default());
     let socket = MorphUdpSocket {
         inner: raw.clone(),
+        cipher: MorphCipher::ChaCha,
         tx_key: key,
         rx_key: key,
         role: UdpRole::Client,
@@ -411,6 +414,7 @@ fn filter_socket(raw: Arc<FakeUdpSocket>, role: UdpRole) -> MorphUdpSocket {
     let key = MorphKeys::derive(b"shared").udp_c2s;
     MorphUdpSocket {
         inner: raw,
+        cipher: MorphCipher::ChaCha,
         tx_key: key,
         rx_key: key,
         role,

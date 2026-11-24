@@ -27,7 +27,7 @@ impl Egress {
         let query = query_first(
             &url,
             &[
-                "sni", "pin", "morph", "dial", "dial4", "dial6", "rate", "etar",
+                "sni", "pin", "morph", "cipher", "dial", "dial4", "dial6", "rate", "etar",
             ],
         )?;
         let config = PortalClientConfig::parse(&url, &query)?;
@@ -47,12 +47,16 @@ impl Egress {
         let upload = rate("rate")?;
         let download = rate("etar")?;
         let effective = format!(
-            "egress://{}?sni={}&pin={}&{}&morph={}&rate={upload}&etar={download}",
+            "egress://{}?sni={}&pin={}&{}&morph={}{}&rate={upload}&etar={download}",
             config.endpoint(),
             config.sni.as_deref().unwrap_or(config.host()),
             config.pin.as_deref().unwrap_or("none"),
             dial.to_string().replace(' ', "&"),
-            u8::from(config.morph)
+            u8::from(config.morph),
+            config
+                .morph_keys
+                .as_ref()
+                .map_or("", |keys| keys.cipher_query())
         );
         let tls_pool_max = if config.net == crate::vector::config::CarrierMode::Tcp {
             tls_pool_max_from_env()?

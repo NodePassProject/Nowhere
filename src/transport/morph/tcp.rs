@@ -7,23 +7,19 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::{fmt, io};
 
-use chacha20::ChaCha20;
-use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
+use super::cipher::TcpCipher;
 use super::policy::{PreludePolicy, TCP_PRELUDE_ENV};
-use super::{
-    AuthenticatedPrelude, ClientPrelude, MorphKeys, NONCE_LEN, TCP_PRELUDE_LEN, exhausted,
-};
+use super::{AuthenticatedPrelude, ClientPrelude, MorphKeys, NONCE_LEN, TCP_PRELUDE_LEN};
 
-const TCP_STREAM_LIMIT: u64 = (1u64 << 38) - 64;
 pub(crate) fn validate_tcp_prelude_env() -> io::Result<()> {
     PreludePolicy::from_env(TCP_PRELUDE_ENV).map(|_| ())
 }
 
 pub(super) struct TcpMorph {
-    pub(super) read_cipher: ChaCha20,
-    pub(super) write_cipher: ChaCha20,
+    pub(super) read_cipher: TcpCipher,
+    pub(super) write_cipher: TcpCipher,
     read_offset: u64,
     write_offset: u64,
     pub(super) write_buffer: Vec<u8>,
@@ -117,8 +113,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> MorphTcpStream<S> {
         Self {
             inner,
             morph: Some(TcpMorph {
-                read_cipher: ChaCha20::new(read_key.into(), (&nonce).into()),
-                write_cipher: ChaCha20::new(write_key.into(), (&nonce).into()),
+                read_cipher: TcpCipher::new(keys.cipher, read_key, &nonce),
+                write_cipher: TcpCipher::new(keys.cipher, write_key, &nonce),
                 read_offset: 0,
                 write_offset: 0,
                 write_buffer: Vec::new(),
@@ -139,9 +135,10 @@ impl<S: AsyncRead + Unpin> AsyncRead for MorphTcpStream<S> {
         if self.morph.is_none() {
             return Pin::new(&mut self.inner).poll_read(cx, buf);
         }
-        let remaining = TCP_STREAM_LIMIT.saturating_sub(self.morph.as_ref().unwrap().read_offset);
+        let state = self.morph.as_ref().unwrap();
+        let remaining = state.read_cipher.limit().saturating_sub(state.read_offset);
         if remaining == 0 && buf.remaining() != 0 {
-            return Poll::Ready(Err(exhausted()));
+            return Poll::Ready(Err(state.read_cipher.exhausted()));
         }
         let before = buf.filled().len();
         let allowed = usize::try_from(remaining.min(buf.remaining() as u64)).unwrap();
@@ -153,8 +150,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for MorphTcpStream<S> {
                 let state = self.morph.as_mut().unwrap();
                 state
                     .read_cipher
-                    .try_apply_keystream(&mut inner_buf.filled_mut()[..count])
-                    .map_err(|_| exhausted())?;
+                    .try_apply_keystream(&mut inner_buf.filled_mut()[..count])?;
                 state.read_offset += count as u64;
                 buf.advance(count);
                 debug_assert_eq!(buf.filled().len(), before + count);
@@ -188,9 +184,13 @@ impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
             return Pin::new(&mut self.inner).poll_write(cx, input);
         }
         let this = self.as_mut().get_mut();
-        let remaining = TCP_STREAM_LIMIT.saturating_sub(this.morph.as_ref().unwrap().write_offset);
+        let state = this.morph.as_ref().unwrap();
+        let remaining = state
+            .write_cipher
+            .limit()
+            .saturating_sub(state.write_offset);
         if remaining == 0 {
-            return Poll::Ready(Err(exhausted()));
+            return Poll::Ready(Err(state.write_cipher.exhausted()));
         }
         let count = usize::try_from(remaining.min(input.len() as u64))
             .expect("count is bounded by usize input length");
@@ -205,38 +205,25 @@ impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
         }
         state
             .write_cipher
-            .try_apply_keystream_b2b(&input[..count], &mut state.write_buffer[..count])
-            .map_err(|_| exhausted())?;
+            .try_apply_keystream_b2b(&input[..count], &mut state.write_buffer[..count])?;
         match Pin::new(&mut this.inner).poll_write(cx, &state.write_buffer[..count]) {
             Poll::Ready(Ok(0)) => {
-                state
-                    .write_cipher
-                    .try_seek(state.write_offset)
-                    .map_err(|_| exhausted())?;
+                state.write_cipher.try_seek(state.write_offset)?;
                 Poll::Ready(Err(io::ErrorKind::WriteZero.into()))
             }
             Poll::Ready(Ok(n)) => {
                 state.write_offset += n as u64;
                 if n != count {
-                    state
-                        .write_cipher
-                        .try_seek(state.write_offset)
-                        .map_err(|_| exhausted())?;
+                    state.write_cipher.try_seek(state.write_offset)?;
                 }
                 Poll::Ready(Ok(n))
             }
             Poll::Ready(Err(error)) => {
-                state
-                    .write_cipher
-                    .try_seek(state.write_offset)
-                    .map_err(|_| exhausted())?;
+                state.write_cipher.try_seek(state.write_offset)?;
                 Poll::Ready(Err(error))
             }
             Poll::Pending => {
-                state
-                    .write_cipher
-                    .try_seek(state.write_offset)
-                    .map_err(|_| exhausted())?;
+                state.write_cipher.try_seek(state.write_offset)?;
                 Poll::Pending
             }
         }

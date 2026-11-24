@@ -70,6 +70,7 @@ fn fixed_quic_and_effective_defaults_ignore_unknown_options_and_hide_credentials
             ("dial4".into(), "192.0.2.254".into()),
             ("dial6".into(), "auto".into()),
             ("morph".into(), "1".into()),
+            ("cipher".into(), "chacha".into()),
             ("rate".into(), "0".into()),
             ("etar".into(), "0".into()),
         ])

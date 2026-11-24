@@ -3,6 +3,7 @@
 
 //! Optional keyed wire transform below TLS and QUIC.
 
+mod cipher;
 mod policy;
 mod prelude;
 mod tcp;
@@ -14,6 +15,7 @@ use std::{fmt, io};
 use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use sha2::Sha256;
 
+pub(crate) use cipher::MorphCipher;
 pub(crate) use prelude::{AuthenticatedPrelude, ClientPrelude};
 pub(crate) use tcp::{MorphTcpStream, validate_tcp_prelude_env};
 pub(crate) use udp::{
@@ -36,6 +38,7 @@ type MorphKeyBytes = [u8; 32];
 
 #[derive(Clone)]
 pub(crate) struct MorphKeys {
+    cipher: MorphCipher,
     tcp_c2s: MorphKeyBytes,
     tcp_s2c: MorphKeyBytes,
     udp_c2s: MorphKeyBytes,
@@ -51,15 +54,21 @@ impl fmt::Debug for MorphKeys {
 }
 
 impl MorphKeys {
-    pub(crate) fn from_url(url: &url::Url) -> anyhow::Result<Self> {
-        Ok(Self::derive(
-            &crate::protocol::Credentials::decode_shared_key(url)?,
-        ))
+    pub(crate) fn from_url(url: &url::Url, cipher: MorphCipher) -> anyhow::Result<Self> {
+        Ok(Self {
+            cipher,
+            ..Self::derive(&crate::protocol::Credentials::decode_shared_key(url)?)
+        })
+    }
+
+    pub(crate) fn cipher_query(&self) -> &'static str {
+        self.cipher.query()
     }
 
     pub(crate) fn derive(shared_key: &[u8]) -> Self {
         let root = hmac_sha256(MORPH_ROOT_SALT, shared_key);
         Self {
+            cipher: MorphCipher::ChaCha,
             tcp_c2s: hkdf_expand_one(root, TCP_C2S_INFO),
             tcp_s2c: hkdf_expand_one(root, TCP_S2C_INFO),
             udp_c2s: hkdf_expand_one(root, UDP_C2S_INFO),

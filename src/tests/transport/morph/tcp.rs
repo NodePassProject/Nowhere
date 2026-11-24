@@ -10,9 +10,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
+use chacha20::ChaCha20;
+use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
+use super::super::exhausted;
 use super::*;
+
+const TCP_STREAM_LIMIT: u64 = (1u64 << 38) - 64;
 
 impl super::MorphWriteReady for tokio::io::DuplexStream {
     fn poll_morph_write_ready(&self, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {

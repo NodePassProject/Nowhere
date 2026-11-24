@@ -33,6 +33,7 @@ fn defaults_and_unknown_options_are_ignored() {
             ("sni".into(), "localhost".into()),
             ("pin".into(), "none".into()),
             ("morph".into(), "1".into()),
+            ("cipher".into(), "chacha".into()),
             ("rate".into(), "0".into()),
             ("etar".into(), "0".into()),
         ])

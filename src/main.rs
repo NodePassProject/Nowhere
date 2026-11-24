@@ -56,6 +56,7 @@ Service options:
   sni=<name|none>     Client verified server name; default endpoint host.
   pin=<sha256|none>   Exact certificate pin; otherwise system CA verification.
   morph=0|1           Keyed wire masking; default 1, both peers must agree.
+  cipher=chacha|aes  Morph algorithm; default chacha, both peers must agree.
   rate=<mbps>         Vector-to-target limit; default 0 disables it.
   etar=<mbps>         Target-to-Vector limit; default 0 disables it.
 
