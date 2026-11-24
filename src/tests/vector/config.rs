@@ -235,3 +235,22 @@ fn probe_and_fingerprint_use_decoded_key_bytes() {
         );
     }
 }
+
+#[test]
+fn cipher_validates_the_first_literal_parameter_even_when_morph_is_disabled() {
+    let aes = parse("%63ipher=chacha&cipher=%61es&cipher=%ZZ").unwrap();
+    assert!(aes.effective_url().contains("morph=1&cipher=aes"));
+
+    let disabled = parse("morph=0&cipher=aes").unwrap();
+    assert!(disabled.morph_keys.is_none());
+    assert!(!disabled.effective_url().contains("cipher="));
+
+    for query in [
+        "morph=0&cipher=AES",
+        "cipher",
+        "cipher=&cipher=aes",
+        "cipher=%FF",
+    ] {
+        assert!(parse(query).is_err(), "{query}");
+    }
+}

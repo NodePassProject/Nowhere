@@ -121,3 +121,7 @@ impl TcpCipher {
         .map_err(|_| self.exhausted())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/transport/morph/cipher.rs"]
+mod tests;

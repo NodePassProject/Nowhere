@@ -5,7 +5,7 @@
 
 use super::*;
 
-fn hex<const N: usize>(value: &str) -> [u8; N] {
+pub(super) fn hex<const N: usize>(value: &str) -> [u8; N] {
     assert_eq!(value.len(), N * 2);
     let mut bytes = [0; N];
     for (index, byte) in bytes.iter_mut().enumerate() {

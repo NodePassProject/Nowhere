@@ -147,11 +147,17 @@ impl AsyncUdpSocket for FakeUdpSocket {
 
 #[tokio::test]
 async fn udp_preserves_gso_datagram_boundaries() {
+    for cipher in [MorphCipher::ChaCha, MorphCipher::Aes] {
+        assert_gso_datagram_boundaries(cipher).await;
+    }
+}
+
+async fn assert_gso_datagram_boundaries(cipher: MorphCipher) {
     let key = MorphKeys::derive(b"shared").udp_c2s;
     let raw = Arc::new(FakeUdpSocket::default());
     let socket = MorphUdpSocket {
         inner: raw.clone(),
-        cipher: MorphCipher::ChaCha,
+        cipher,
         tx_key: key,
         rx_key: key,
         role: UdpRole::Client,

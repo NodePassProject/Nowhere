@@ -25,6 +25,7 @@ struct Harness {
     tcp: std::net::SocketAddr,
     udp: std::net::SocketAddr,
     pin: String,
+    cipher: &'static str,
     stop: CancellationToken,
     tasks: Vec<JoinHandle<anyhow::Result<()>>>,
 }
@@ -64,9 +65,19 @@ impl Harness {
         host: &str,
         configure: impl FnOnce(&mut PortalRuntimeConfig),
     ) -> Self {
+        Self::configured_cipher(out, morph, host, "chacha", configure).await
+    }
+
+    async fn configured_cipher(
+        out: &str,
+        morph: bool,
+        host: &str,
+        cipher: &'static str,
+        configure: impl FnOnce(&mut PortalRuntimeConfig),
+    ) -> Self {
         let portal = Portal::new(
             Url::parse(&format!(
-                "portal://{KEY}@{host}:2000?out={out}&morph={}",
+                "portal://{KEY}@{host}:2000?out={out}&morph={}&cipher={cipher}",
                 u8::from(morph)
             ))
             .unwrap(),
@@ -99,6 +110,7 @@ impl Harness {
             tcp,
             udp,
             pin,
+            cipher,
             stop,
             tasks,
         }
@@ -111,14 +123,15 @@ impl Harness {
             self.tcp.ip().to_string()
         };
         Url::parse(&format!(
-            "{scheme}://{KEY}@{host}/{net}:{}?morph={}&pin={}",
+            "{scheme}://{KEY}@{host}/{net}:{}?morph={}&pin={}&cipher={}",
             if net == "tcp" {
                 self.tcp.port()
             } else {
                 self.udp.port()
             },
             u8::from(morph),
-            self.pin
+            self.pin,
+            self.cipher,
         ))
         .unwrap()
     }

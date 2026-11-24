@@ -14,7 +14,7 @@ use chacha20::ChaCha20;
 use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
-use super::super::exhausted;
+use super::super::{MorphCipher, exhausted};
 use super::*;
 
 const TCP_STREAM_LIMIT: u64 = (1u64 << 38) - 64;
@@ -337,6 +337,12 @@ fn tcp_waits_for_write_readiness_before_copying_or_xoring() {
 
 #[test]
 fn tcp_retries_changed_input_after_short_write_pending_and_error() {
+    for cipher in [MorphCipher::ChaCha, MorphCipher::Aes] {
+        assert_write_retries(cipher);
+    }
+}
+
+fn assert_write_retries(cipher: MorphCipher) {
     let written = Arc::new(std::sync::Mutex::new(Vec::new()));
     let inner = PendingWriteStream {
         ready: Arc::new(AtomicBool::new(true)),
@@ -349,8 +355,10 @@ fn tcp_retries_changed_input_after_short_write_pending_and_error() {
             WriteOutcome::Accept(usize::MAX),
         ])),
     };
-    let keys = MorphKeys::derive(b"shared");
-    let mut client = MorphTcpStream::initialized_for_test(inner, &keys, [12; NONCE_LEN], true);
+    let mut keys = MorphKeys::derive(b"shared");
+    keys.cipher = cipher;
+    let nonce = [12; NONCE_LEN];
+    let mut client = MorphTcpStream::initialized_for_test(inner, &keys, nonce, true);
     let mut context = Context::from_waker(Waker::noop());
 
     assert!(matches!(
@@ -371,7 +379,9 @@ fn tcp_retries_changed_input_after_short_write_pending_and_error() {
     ));
     let wire = written.lock().unwrap();
     let mut payload = wire.to_vec();
-    apply_at(&keys.tcp_c2s, &[12; NONCE_LEN], 0, &mut payload).unwrap();
+    TcpCipher::new(cipher, &keys.tcp_c2s, &nonce)
+        .try_apply_keystream(&mut payload)
+        .unwrap();
     assert_eq!(&payload, b"abcz");
 }
 
@@ -609,4 +619,33 @@ async fn invalid_bootstrap_returns_original_stream_without_reading_tls() {
         receiver.read_exact(&mut unread).await.unwrap();
         assert_eq!(&unread, b"unparsed TLS");
     }
+}
+
+#[tokio::test]
+async fn aes_limits_each_tcp_direction() {
+    let mut keys = MorphKeys::derive(b"0123456789abcdef0123456789abcdef");
+    keys.cipher = MorphCipher::Aes;
+    let (io, mut peer) = tokio::io::duplex(64);
+    let nonce = std::array::from_fn(|index| index as u8);
+    let mut stream = MorphTcpStream::initialized_for_test(io, &keys, nonce, true);
+    let state = stream.morph.as_mut().unwrap();
+    let limit = 1 << 48;
+    state.write_offset = limit - 8;
+    state.write_cipher.try_seek(state.write_offset).unwrap();
+
+    assert_eq!(stream.write(&[0, 1, 2, 3, 4, 5, 6, 7, 8]).await.unwrap(), 8);
+    let mut wire = [0; 8];
+    peer.read_exact(&mut wire).await.unwrap();
+    assert_eq!(wire, hex("8e053ffe0fc59c76"));
+    assert!(
+        stream
+            .write(&[8])
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("AES")
+    );
+    assert_eq!(stream.morph.as_ref().unwrap().read_offset, 0);
+    stream.shutdown().await.unwrap();
+    assert_eq!(peer.read(&mut wire).await.unwrap(), 0);
 }
