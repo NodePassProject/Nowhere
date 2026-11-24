@@ -214,5 +214,5 @@ fn parse_command_url(raw: &str) -> Result<Url> {
 }
 
 #[cfg(test)]
-#[path = "tests/main.rs"]
+#[path = "tests/main/mod.rs"]
 mod tests;
