@@ -84,17 +84,18 @@ ASSOCIATE. See [SOCKS5 ingress](configuration.md#socks5-ingress).
 
 ## Morph transport protection
 
-Morph masks the transport wire image. TLS/QUIC supplies authenticated encryption
+Morph masks the transport wire image with the locally configured
+[Cipher Extension](cipher.md). TLS and QUIC provide authenticated encryption
 and integrity. TCP bootstrap authentication and UDP version filtering apply at
 different ingress stages; neither replaces AuthFrame authentication.
 
 ### Cipher and Nonce limits
 
-Each TCP cipher direction is limited to `2^38 - 64` bytes to prevent cipher
-block-counter wrap within a connection. The 96-bit TCP Nonce is randomly
+Each TCP direction permits `2^38 - 64` bytes with ChaCha20-IETF or
+`2^48` bytes (256 TiB) with AES-128-CTR. The 96-bit TCP Nonce is randomly
 generated, so uniqueness across connections sharing a key is probabilistic.
-A repeated Nonce reuses the outer Morph keystream; Prelude counters do not
-prevent that collision.
+Reusing a Nonce with the same direction key and Cipher repeats the outer
+Morph keystream. The Prelude Counter is independent of the connection Nonce.
 
 ### TCP bootstrap and replay
 

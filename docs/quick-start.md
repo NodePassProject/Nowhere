@@ -58,6 +58,9 @@ Read the presented certificate over TCP/TLS:
 ./target/release/nowhere fingerprint "nowhere://KEY@relay.example:2000?morph=1"
 ```
 
+If Portal uses AES-128-CTR, include `cipher=aes` in the fingerprint URL
+and in each Morph-enabled client configuration.
+
 Compare the result with Portal's fingerprint obtained through a trusted channel,
 such as its startup log on a host you control. Use the matching value for `pin`.
 A CA-issued certificate with a matching hostname can be used instead; see

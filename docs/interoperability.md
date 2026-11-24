@@ -13,7 +13,7 @@ This guide describes integration and validation, not a second Wire specification
 - [Flow direction and framing](#flow-direction-and-framing)
 - [UDP delivery and lifetime](#udp-delivery-and-lifetime)
 - [Morph](#morph)
-- [Reference vectors and observation](#reference-vectors-and-observation)
+- [Validation and observation](#validation-and-observation)
 
 ## Transport and authentication
 
@@ -50,6 +50,9 @@ reconnection must not recover a previous Flow.
 
 ## Morph
 
+Peers must agree on Morph enablement and select the same
+[Cipher](cipher.md) when Morph is enabled.
+
 Use the [Core Morph contract](protocol.md). Test both enabled and disabled
 configurations, TCP partial reads/writes and continuous cipher offsets, UDP
 segmentation boundaries and nonce overhead. The receive path must accept the
@@ -85,13 +88,9 @@ decoder or replay state for the Prelude. Normal Morph UDP datagrams contain a
 12-byte Nonce followed by the masked QUIC packet. Interoperable receivers must
 silently discard these short datagrams without sending a response.
 
-## Reference vectors and observation
+## Validation and observation
 
-The [wire fixtures](../src/tests/protocol/vectors.json),
-[Morph fixtures](../src/tests/transport/morph.rs) and
-[Prelude fixtures](../src/tests/transport/morph/prelude.rs) cover Core and
-extension encoding. Fixed byte agreement complements live
-transport and lifecycle tests; it does not replace them. See [Testing](testing.md).
+See [Testing](testing.md) for transport and lifecycle checks.
 
 Third-party observers use the separate [Telemetry JSON contract](telemetry.md).
 Local IPC, discovery, process identity and statistics are implementation

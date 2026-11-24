@@ -134,9 +134,10 @@ the Core contract and documents Nowhere's extensions.
 ### Wire masking
 
 Morph is enabled by default (`morph=1`) for shared-key masking below TLS and QUIC.
-Use `morph=0` to disable it. TLS/QUIC provides certificate verification and
-authenticated encryption. Morph TCP requires an authenticated Prelude. Nowhere's
-Morph UDP clients send a separate short Prelude datagram. The
+The default Cipher is ChaCha20-IETF. Use `cipher=aes` on both peers for
+AES-128-CTR, or `morph=0` to disable Morph. TLS and QUIC provide certificate
+verification and authenticated encryption. Morph TCP requires an authenticated
+Prelude. Morph UDP clients send a separate short Prelude datagram. The
 [Prelude Extension](docs/prelude.md) describes both and their security boundaries.
 
 ### Remote exits
@@ -166,6 +167,7 @@ nowhere "vector://<generated-key>@portal.example:2000?in=127.0.0.1:1080"
 | --- | --- |
 | [Quick start](docs/quick-start.md) | First connection |
 | [Configuration](docs/configuration.md) | URLs, defaults and runtime settings |
+| [Cipher Extension](docs/cipher.md) | ChaCha20-IETF and AES-128-CTR |
 | [Prelude Extension](docs/prelude.md) | Morph TCP and UDP Prelude |
 | [Egress Extension](docs/egress.md) | Remote exits and registration |
 | [Platforms](docs/platforms.md) | Native targets and containers |

@@ -78,10 +78,10 @@ production component they exercise.
 | `src/tests/transport/` | QUIC ownership, Morph, flow control, buffering and statistics |
 | `src/tests/telemetry/` | Minimal statistics contract and endpoint privacy; nested IPC framing, registry and subscriber lifetimes |
 | `src/tests/toolbox/` | Key generation, certificate inspection, probe, status and diagnostics |
-| `src/tests/main.rs` | CLI parsing and command behavior |
+| `src/tests/main/` | CLI dispatch, argument validation and secret redaction |
 
 Cross-module integration tests live under the owning service. Portal's
-`mod.rs` provides the shared harness; `conn/`, `egress.rs` and `forward/`
+`mod.rs` provides the shared harness; `conn/`, `egress/` and `forward/`
 cover the service's connection, exit and forwarding boundaries. Shared fixtures
 usually use `support.rs` or `*_support.rs`; small test-only resource accessors
 may live in their component's test module.
@@ -101,13 +101,13 @@ When wire bytes change, update the specification, vectors and codec tests togeth
 | Area | Required cases |
 |---|---|
 | Wire contract | KDF/Auth/Morph vectors, FlowStart, Target, SetupResult and DATAGRAM bytes; reserved bits and truncated inputs |
-| Authenticated TCP Prelude | Fixed Tag/tail, every bootstrap bit, policy/high-bit preservation, shared Counter exhaustion/cancellation, FIFO/window reference model, concurrent commit, strict Tag/Counter rejection, legacy rejection and unbound ClientHello behavior |
+| Authenticated TCP Prelude | Fixed Tag/tail, every bootstrap bit, policy/high-bit preservation, shared Counter exhaustion/cancellation, FIFO/window reference model, concurrent commit, strict Tag/Counter rejection, unauthenticated Prelude rejection and unbound ClientHello behavior |
 | UDP Prelude | Generation policies, one send per socket, retry and silent short-datagram discard |
 | Authentication | ALPN, role and transport mismatch; fresh/resumed replay; pre-authentication admission, zero linger through Vector AuthFrame validation and post-authentication windows |
 | Forwarding | TLS/QUIC × direct/SOCKS5/Egress × TCP/UDP, IPv4/IPv6, Morph and concurrent Vectors |
 | Lifetime | Half-close, handshake/authentication/registration cancellation, setup deadlines/cancellation, idle timeout, UDP control FIN/reset/stop, late DATAGRAMs and bounded drain |
 | Egress | Mixed-carrier FIFO, ACCEPTED/BUSY, offline waiting, Hydra growth and decay, TTL, claim races, reconnect and cleanup |
-| Configuration | Role-specific endpoint carrier counts and families, first duplicates, ignored unknowns, percent decoding, conflicts, effective configuration and explicit bind failure |
+| Configuration | Role-specific endpoint carrier counts and families, URL parsing, conflicts, effective configuration and explicit bind failure |
 | Telemetry | Known-byte counters, ownership counts, passive snapshots, ignored input, EOF and write timeout cleanup |
 | IPC | Frame/client limits, permissions, identity/incarnation checks, PID reuse and namespace isolation |
 

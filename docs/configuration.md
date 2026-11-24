@@ -10,7 +10,7 @@ Configure listeners, transport selection and a fixed exit with service URLs.
 - [Portal URL](#portal-url)
 - [Vector URL](#vector-url)
 - [Egress URL](#egress-url)
-- [Parsing configuration](#parsing-configuration)
+- [Startup logs](#startup-logs)
 - [Parameter overview](#parameter-overview)
 - [Rate limits](#rate-limits)
 - [Runtime environment](#runtime-environment)
@@ -87,7 +87,7 @@ Share links use a compact host and port:
 
 ```text
 nowhere://KEY@HOST:PORT
-nowhere://KEY@HOST:PORT?net=udp&morph=1#NAME
+nowhere://KEY@HOST:PORT?net=udp&morph=1&cipher=aes#NAME
 ```
 
 Share links do not accept carrier paths. Use a concrete DNS name, IPv4 address
@@ -100,11 +100,13 @@ Optional parameters:
 |---|---|---|---|
 | `net` | `tcp` or `udp` | `tcp` | Client carrier: TLS or QUIC |
 | `morph` | `0` or `1` | `1` | Shared-key wire masking; peers must agree |
+| `cipher` | `chacha` or `aes` | `chacha` | [Masking algorithm](cipher.md) for enabled Morph |
 
 The `fingerprint` command additionally accepts `sni` and requires an explicit
-`morph=0` or `morph=1`. It always inspects TCP/TLS, even when the link specifies
-`net=udp`. See [Operations](operations.md#diagnose-target-setup). Client
-applications define their own support for additional share-link parameters.
+`morph=0` or `morph=1`. When Morph is enabled, select the Cipher used by Portal.
+Inspection uses TCP/TLS even when the link specifies `net=udp`. See
+[Operations](operations.md#diagnose-target-setup). Client applications define
+their own support for additional share-link parameters.
 
 ## Portal URL
 
@@ -124,6 +126,7 @@ Portal listens on `ENDPOINT` and uses one fixed `out` for all Flows.
 | `dial4` | IPv4 literal or `auto` | `auto` | IPv4 outbound source binding |
 | `dial6` | IPv6 literal or `auto` | `auto` | IPv6 outbound source binding; IPv4-mapped addresses are invalid |
 | `morph` | `0` or `1` | `1` | Shared-key wire masking; peers must agree |
+| `cipher` | `chacha` or `aes` | `chacha` | [Masking algorithm](cipher.md) for enabled Morph |
 | `rate` | `0..=2147483647` Mbps | `0` | Vector-to-Target upload limit; `0` disables it |
 | `etar` | `0..=2147483647` Mbps | `0` | Target-to-Vector download limit; `0` disables it |
 
@@ -168,6 +171,7 @@ Vector connects to Portal over the carrier selected by `ENDPOINT`.
 | `sni` | ASCII DNS name, empty or `none` | Endpoint host | Verified server name; empty or `none` uses the host |
 | `pin` | 64 lowercase hexadecimal characters, empty or `none` | System CA and hostname verification | Exact certificate SHA-256; empty or `none` uses normal verification |
 | `morph` | `0` or `1` | `1` | Shared-key wire masking; peers must agree |
+| `cipher` | `chacha` or `aes` | `chacha` | [Masking algorithm](cipher.md) for enabled Morph |
 | `rate` | `0..=2147483647` Mbps | `0` | Vector-to-Target upload limit; `0` disables it |
 | `etar` | `0..=2147483647` Mbps | `0` | Target-to-Vector download limit; `0` disables it |
 
@@ -207,6 +211,7 @@ target access. The `HOST:PORT` shorthand selects QUIC.
 | `dial4` | IPv4 literal or `auto` | `auto` | IPv4 target source binding |
 | `dial6` | IPv6 literal or `auto` | `auto` | IPv6 target source binding; IPv4-mapped addresses are invalid |
 | `morph` | `0` or `1` | `1` | Shared-key wire masking; peers must agree |
+| `cipher` | `chacha` or `aes` | `chacha` | [Masking algorithm](cipher.md) for enabled Morph |
 | `rate` | `0..=2147483647` Mbps | `0` | Vector-to-Target upload limit; `0` disables it |
 | `etar` | `0..=2147483647` Mbps | `0` | Target-to-Vector download limit; `0` disables it |
 
@@ -216,20 +221,12 @@ resolved target addresses. DNS lookup uses the host resolver; these options
 do not select the DNS query's source address. Egress-to-Portal connections
 use automatic source selection.
 
-## Parsing configuration
-
-Unknown parameters and their values are ignored. For recognized parameters,
-the first duplicate wins; an invalid first value is an error.
-
-| Query | Result |
-|---|---|
-| `morph=1&morph=0` | Morph is enabled |
-| `morph=invalid&morph=1` | Configuration error |
+## Startup logs
 
 Startup logs show role URLs with explicit defaults. Shared Key, SOCKS
 credentials, `crt`, `key` and unknown options are omitted. Portal with
 `out=egress` also omits source-binding parameters. These redacted URLs are
-diagnostic views, not complete launch configurations.
+diagnostic views. With Morph enabled, they show the effective `cipher`.
 
 ## Parameter overview
 
@@ -248,6 +245,7 @@ A dash means that the role does not recognize the parameter.
 | `dial4` | IPv4 literal, `auto` | `auto` | Yes | — | Yes |
 | `dial6` | IPv6 literal, `auto` | `auto` | Yes | — | Yes |
 | `morph` | `0`, `1` | `1` | Yes | Yes | Yes |
+| `cipher` | `chacha`, `aes` | `chacha` | Yes | Yes | Yes |
 | `rate` | `0..=2147483647` Mbps | `0` | Yes | Yes | Yes |
 | `etar` | `0..=2147483647` Mbps | `0` | Yes | Yes | Yes |
 
@@ -378,9 +376,5 @@ Vector and Egress share this behavior. UDP Fade uses fixed 2B ASCII + 8B low7 +
 2B full8 boundaries. See [Morph UDP Prelude](prelude.md#morph-udp-prelude) for
 exact distributions, nonblocking send semantics and receiver compatibility.
 
-Each variable is validated only for Morph clients using its corresponding
-carrier. Values are case-sensitive; empty, unknown and non-Unicode values are
-invalid. Portal and clients with `morph=0` do not use these policy variables.
-Neither policy is negotiated or included in service or share URLs. With Morph
-enabled, certificate inspection sends a TCP Prelude; when its share link selects
-`net=udp`, parsing also validates the UDP policy.
+Each policy is configured locally for the corresponding Morph client carrier.
+Certificate inspection uses the TCP Prelude policy.

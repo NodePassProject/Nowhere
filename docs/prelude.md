@@ -13,6 +13,9 @@ no additional negotiation, ALPN, round trip or artificial delay.
 
 ## Morph TCP Prelude
 
+Both [Morph ciphers](cipher.md) use the same Prelude and Nonce
+envelopes.
+
 Authenticated Prelude carries Shared Key authentication data in the 64-byte
 Morph TCP Prelude. It is mandatory for Morph TCP ingress. Portal
 verifies the Tag and Counter before parsing ClientHello and commits replay
@@ -44,7 +47,7 @@ The TCP envelope starts with a 64-byte Prelude and a 12-byte random Nonce:
 ```text
 Offset  0                          64             76
         +--------------------------+--------------+------------------------+
-        |      Prelude (64B)       | Nonce (12B)  | ChaCha20-XOR(TLS) ...  |
+        |      Prelude (64B)       | Nonce (12B)  |   Morph-XOR(TLS) ...   |
         +--------------------------+--------------+------------------------+
 
 Offset  0                          32                         64
@@ -260,7 +263,7 @@ Offset  0       2                               10      12
 Subsequent Morph UDP datagram (separate packet)
 Offset  0                   12
         +-------------------+--------------------------------+
-        |    Nonce (12B)    |    ChaCha20-XOR(QUIC packet)   |
+        |    Nonce (12B)    |     Morph-XOR(QUIC packet)     |
         +-------------------+--------------------------------+
 ```
 
@@ -301,7 +304,8 @@ the extension entirely.
 Portal's Morph UDP receiver silently discards datagrams of 12 bytes or less,
 including this Prelude. It sends no response, performs no Prelude
 authentication and allocates no Prelude admission or replay state. Normal
-Morph datagrams use `Nonce (12B) || ChaCha20-XOR(QUIC packet)`.
+Morph datagrams carry the 12-byte nonce followed by the QUIC packet masked
+with the configured [Morph cipher](cipher.md).
 
 ### Security boundary
 

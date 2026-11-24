@@ -220,8 +220,9 @@ pool returns to the seed without a separate maintenance protocol.
 TLS Egress uses the same authenticated TCP Prelude, replay protection and
 continuous TCP Morph transform as TLS Vector connections. QUIC Egress uses the
 UDP Morph transform; directional keys follow transport roles even
-though Portal initiates business Streams. Peers must agree on Shared Key and
-Morph enablement out of band.
+though Portal initiates business Streams. Portal and Egress must agree on the
+Shared Key and Morph setting. With Morph enabled, they use the same
+[Cipher](cipher.md).
 
 ## Observe registration
 

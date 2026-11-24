@@ -14,6 +14,7 @@ sender is therefore not sufficient for this Portal.
 | --- | --- |
 | [Configuration](configuration.md) | Service URLs, runtime defaults and Morph prelude policy |
 | [Prelude Extension](prelude.md) | Morph TCP authentication and replay protection; Morph UDP Prelude |
+| [Cipher Extension](cipher.md) | Optional AES-128-CTR and its configuration and Wire rules |
 | [Egress Extension](egress.md) | Optional remote exits: deployment, authentication, registration and Wire rules |
 | [Security](security.md) | Certificate trust and implementation resource protection |
 | [Interoperability](interoperability.md) | Compatible peer requirements and validation cases |
