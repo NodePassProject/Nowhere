@@ -57,6 +57,8 @@ jobs:
       - if: matrix.cross
         run: cross build --release --locked --target ${{ matrix.target }}
       - if: ${{ !matrix.cross }}
+        env:
+          CFLAGS_x86_64_unknown_linux_gnu: "-march=x86-64"
         run: cargo build --release --locked --target ${{ matrix.target }}
       - if: matrix.archive == 'tar'
         shell: bash
