@@ -50,12 +50,9 @@ reconnection must not recover a previous Flow.
 
 ## Morph
 
-Peers must agree on Morph enablement and select the same
-[Cipher](cipher.md) when Morph is enabled.
-
-Use the [Core Morph contract](protocol.md). Test both enabled and disabled
-configurations, TCP partial reads/writes and continuous cipher offsets, UDP
-segmentation boundaries and nonce overhead. The receive path must accept the
+Peers use the same [Morph mode](grade.md) and, when enabled, the same
+[Cipher](cipher.md). Cover Off, Full and Core, including TCP partial reads and
+writes, absolute Cipher offsets, UDP segmentation boundaries and nonce overhead. The receive path must accept the
 64-byte prelude independently of the sender's generation policy. Nowhere's
 [prelude policies](configuration.md#tcp-morph-prelude) do not require a matching
 policy on the peer.

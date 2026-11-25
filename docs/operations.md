@@ -60,9 +60,9 @@ Read a presented certificate over TCP/TLS:
 nowhere fingerprint "nowhere://KEY@relay.example:2000?morph=1"
 ```
 
-`fingerprint` requires `morph=0|1` matching Portal. For AES-128-CTR, add
-`cipher=aes` to the share link. The `#NAME` fragment and an `sni` DNS name
-are optional. Inspection uses TCP/TLS even with `net=udp`, so the shared
+`fingerprint` requires an explicit [Morph mode](grade.md#configuration)
+(`morph=0|1|2`) matching Portal. For AES-128-CTR, add `cipher=aes` to the
+share link. The `#NAME` fragment and an `sni` DNS name are optional. Inspection uses TCP/TLS even with `net=udp`, so the shared
 host and port must expose TLS. Compare the result through a trusted channel
 before configuring a pin. See [Security](security.md#certificate-trust).
 

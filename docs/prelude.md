@@ -13,8 +13,8 @@ no additional negotiation, ALPN, round trip or artificial delay.
 
 ## Morph TCP Prelude
 
-Both [Morph ciphers](cipher.md) use the same Prelude and Nonce
-envelopes.
+Both [Morph grades](grade.md) and both [ciphers](cipher.md) use the same
+Prelude and Nonce envelopes.
 
 Authenticated Prelude carries Shared Key authentication data in the 64-byte
 Morph TCP Prelude. It is mandatory for Morph TCP ingress. Portal
@@ -22,8 +22,9 @@ verifies the Tag and Counter before parsing ClientHello and commits replay
 state before sending a TLS response.
 
 Vector and Egress use the same client implementation. The extension uses the
-Core TCP envelope, Nonce and directional cipher keys. TLS 1.3, certificate
-verification, exporter-bound AuthFrame and Flow processing apply.
+same TCP envelope, Nonce and [directional keys](grade.md#directional-keys)
+for both grades. TLS 1.3, certificate verification, exporter-bound AuthFrame
+and Flow processing apply.
 
 ### Base generation policies
 
@@ -305,7 +306,7 @@ Portal's Morph UDP receiver silently discards datagrams of 12 bytes or less,
 including this Prelude. It sends no response, performs no Prelude
 authentication and allocates no Prelude admission or replay state. Normal
 Morph datagrams carry the 12-byte nonce followed by the QUIC packet masked
-with the configured [Morph cipher](cipher.md).
+according to the configured [grade](grade.md) and [cipher](cipher.md).
 
 ### Security boundary
 

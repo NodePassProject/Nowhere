@@ -75,7 +75,7 @@ production component they exercise.
 | `src/tests/vector/` | Client configuration and carrier setup; nested SOCKS5 ingress and UDP framing |
 | `src/tests/portal/` | Listener admission and configuration; connection security, Egress ownership and forwarding matrices |
 | `src/tests/egress/` | Service construction and registered connection ordering |
-| `src/tests/transport/` | QUIC ownership, Morph, flow control, buffering and statistics |
+| `src/tests/transport/` | QUIC ownership, Full and Core Morph, flow control, buffering and statistics |
 | `src/tests/telemetry/` | Minimal statistics contract and endpoint privacy; nested IPC framing, registry and subscriber lifetimes |
 | `src/tests/toolbox/` | Key generation, certificate inspection, probe, status and diagnostics |
 | `src/tests/main/` | CLI dispatch, argument validation and secret redaction |
@@ -103,6 +103,7 @@ When wire bytes change, update the specification, vectors and codec tests togeth
 | Wire contract | KDF/Auth/Morph vectors, FlowStart, Target, SetupResult and DATAGRAM bytes; reserved bits and truncated inputs |
 | Authenticated TCP Prelude | Fixed Tag/tail, every bootstrap bit, policy/high-bit preservation, shared Counter exhaustion/cancellation, FIFO/window reference model, concurrent commit, strict Tag/Counter rejection, unauthenticated Prelude rejection and unbound ClientHello behavior |
 | UDP Prelude | Generation policies, one send per socket, retry and silent short-datagram discard |
+| [Core Morph](grade.md) | TLS Record classification, partial writes, absolute offsets and exhaustion, QUIC masking intervals and UDP segment boundaries |
 | Authentication | ALPN, role and transport mismatch; fresh/resumed replay; pre-authentication admission, zero linger through Vector AuthFrame validation and post-authentication windows |
 | Forwarding | TLS/QUIC × direct/SOCKS5/Egress × TCP/UDP, IPv4/IPv6, Morph and concurrent Vectors |
 | Lifetime | Half-close, handshake/authentication/registration cancellation, setup deadlines/cancellation, idle timeout, UDP control FIN/reset/stop, late DATAGRAMs and bounded drain |

@@ -7,14 +7,15 @@ The independent [Core specification](https://github.com/NodePassProject/Nowhere-
 defines Vector/Portal connections, authentication, Flow framing, UDP and Morph.
 The extensions below add Nowhere-specific behavior to that baseline. In
 particular, Core permits receivers to ignore the TCP Morph Prelude, while this
-Portal requires the authenticated Prelude Extension. A Core-only Morph TCP
+Portal requires the authenticated Prelude Extension. A baseline NW3 Morph TCP
 sender is therefore not sufficient for this Portal.
 
 | Nowhere documentation | Purpose |
 | --- | --- |
 | [Configuration](configuration.md) | Service URLs, runtime defaults and Morph prelude policy |
 | [Prelude Extension](prelude.md) | Morph TCP authentication and replay protection; Morph UDP Prelude |
-| [Cipher Extension](cipher.md) | Optional AES-128-CTR and its configuration and Wire rules |
+| [Grade Extension](grade.md) | Full and Core Morph modes, shared directional labels and masking ranges |
+| [Cipher Extension](cipher.md) | ChaCha20-IETF and AES-128-CTR keystream rules |
 | [Egress Extension](egress.md) | Optional remote exits: deployment, authentication, registration and Wire rules |
 | [Security](security.md) | Certificate trust and implementation resource protection |
 | [Interoperability](interoperability.md) | Compatible peer requirements and validation cases |

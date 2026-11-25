@@ -84,10 +84,11 @@ ASSOCIATE. See [SOCKS5 ingress](configuration.md#socks5-ingress).
 
 ## Morph transport protection
 
-Morph masks the transport wire image with the locally configured
-[Cipher Extension](cipher.md). TLS and QUIC provide authenticated encryption
-and integrity. TCP bootstrap authentication and UDP version filtering apply at
-different ingress stages; neither replaces AuthFrame authentication.
+Morph masks the transport bytes selected by the local [grade](grade.md)
+using the configured [cipher](cipher.md). TLS and QUIC provide authenticated
+encryption and integrity. TCP bootstrap authentication and UDP version
+filtering apply at different ingress stages. Target access requires
+AuthFrame authentication.
 
 ### Cipher and Nonce limits
 
