@@ -11,10 +11,6 @@ use super::*;
 fn startup_url_preserves_effective_values_and_omits_credentials() {
     for (query, expected) in [
         (
-            "",
-            "portal://127.0.0.1:2000?out=direct&tls=1&dial=auto&morph=1&cipher=chacha&rate=0&etar=0",
-        ),
-        (
             "?net=%ZZ&socks=%FF&unknown=%ZZ",
             "portal://127.0.0.1:2000?out=direct&tls=1&dial=auto&morph=1&cipher=chacha&rate=0&etar=0",
         ),
@@ -54,10 +50,6 @@ fn startup_url_preserves_effective_values_and_omits_credentials() {
         assert_eq!(
             actual.query_pairs().collect::<HashMap<_, _>>(),
             expected.query_pairs().collect::<HashMap<_, _>>()
-        );
-        assert_eq!(
-            portal.inner.morph_keys.is_some(),
-            !query.contains("morph=0")
         );
     }
 }

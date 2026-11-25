@@ -53,6 +53,18 @@ async fn invalid_configuration_urls_fail_before_service_startup_with_safe_errors
             format!("portal://{KEY}@*/tcp:2000/../udp:2001"),
             "must not contain '.' or '..' segments",
         ),
+        (
+            format!("portal://{KEY}@127.0.0.1:2000?rate="),
+            "rate must be a non-negative integer",
+        ),
+        (
+            format!("vector://{KEY}@localhost:2000?in=127.0.0.1:1080&etar=-1"),
+            "etar must be a non-negative integer",
+        ),
+        (
+            format!("egress://{KEY}@localhost:2000?etar=2147483648"),
+            "etar must be a non-negative integer",
+        ),
     ] {
         let error = tokio::time::timeout(
             std::time::Duration::from_secs(1),

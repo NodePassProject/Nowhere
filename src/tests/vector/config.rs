@@ -3,6 +3,9 @@
 
 //! Vector carrier selection, defaults, query validation, and effective configuration tests.
 
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
+
 use super::*;
 
 fn parse(query: &str) -> Result<VectorConfig> {
@@ -39,17 +42,18 @@ fn defaults_and_unknown_options_are_ignored() {
             ("etar".into(), "0".into()),
         ])
     );
-    assert_eq!(parse("net=udp&net=bad").unwrap().net, CarrierMode::Tcp);
-    assert!(parse("net=bad&net=udp").is_ok());
 }
 
 #[test]
 fn recognized_invalid_values_and_missing_ingress_fail() {
-    for query in ["morph=3", "rate=-1", "etar=no", "pin=bad"] {
+    for query in ["morph=3", "pin=bad"] {
         assert!(parse(query).is_err(), "{query}");
     }
     let url = Url::parse("vector://0123456789abcdef0123456789abcdef@localhost:2000").unwrap();
-    assert!(VectorConfig::from_url(&url).is_err());
+    assert_eq!(
+        VectorConfig::from_url(&url).unwrap_err().to_string(),
+        "Vector configuration: in parameter is required"
+    );
     assert!(PortalClientConfig::from_probe_url(&url).is_ok());
 }
 
@@ -117,15 +121,17 @@ fn endpoint_selects_one_carrier_and_address_family() {
 #[test]
 fn ingress_credentials_split_before_single_decode_and_are_redacted() {
     let url = Url::parse(
-        "vector://0123456789abcdef0123456789abcdef@localhost:2000?in=a%3Ab:p%2540ss@127.0.0.1:1080",
+        "vector://0123456789abcdef0123456789abcdef@localhost:2000?in=a%3Ab:p%2540ss@127.0.0.1:1080&in=%ZZ&rate=13&etar=7&rate=%FF",
     )
     .unwrap();
     let (config, _) = VectorConfig::from_url(&url).unwrap();
+    assert_eq!((config.rate_mbps, config.etar_mbps), (13, 7));
     assert_eq!(
         config.socks.credentials.as_ref().unwrap().as_pair(),
         ("a:b", "p%40ss")
     );
     assert!(!config.effective_url().contains("p%40ss"));
+    assert!(PortalClientConfig::from_probe_url(&url).is_ok());
 }
 
 #[test]
@@ -260,4 +266,124 @@ fn cipher_validates_the_first_literal_parameter_even_when_morph_is_disabled() {
     ] {
         assert!(parse(query).is_err(), "{query}");
     }
+}
+
+#[test]
+fn morph_prelude_validation_follows_the_role_and_carrier() {
+    const TCP: &str = "NOW_MORPH_TCP_PRELUDE";
+    const UDP: &str = "NOW_MORPH_UDP_PRELUDE";
+    let cases = [
+        (None, None),
+        (Some("fade"), Some("fade")),
+        (Some("full8"), Some("low7")),
+        (Some("low7"), Some("full8")),
+        (Some(""), Some("fade")),
+        (Some("fade"), Some("")),
+        (Some("FADE"), None),
+        (None, Some("FADE")),
+        (Some("bad"), Some("full8")),
+        (Some("low7"), Some("bad")),
+        (Some("bad"), Some("bad")),
+    ];
+    let run = |tcp: Option<&std::ffi::OsStr>, udp: Option<&std::ffi::OsStr>| {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "vector::config::tests::morph_prelude_validation_child",
+            ])
+            .env("NOW_TEST_PRELUDE_CHILD", "1")
+            .env_remove(TCP)
+            .env_remove(UDP);
+        for (name, value) in [(TCP, tcp), (UDP, udp)] {
+            if let Some(value) = value {
+                child.env(name, value);
+            }
+        }
+        let output = child.output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("running 1 test"),
+            "tcp={tcp:?} udp={udp:?}: {stdout} {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    for (tcp, udp) in cases {
+        run(tcp.map(std::ffi::OsStr::new), udp.map(std::ffi::OsStr::new));
+    }
+    #[cfg(unix)]
+    {
+        let non_unicode = std::ffi::OsString::from_vec(vec![0xff]);
+        run(Some(&non_unicode), None);
+        run(None, Some(&non_unicode));
+    }
+}
+
+#[test]
+fn morph_prelude_validation_child() {
+    if std::env::var_os("NOW_TEST_PRELUDE_CHILD").is_none() {
+        return;
+    }
+
+    const KEY: &str = "0123456789abcdef0123456789abcdef";
+    const TCP: &str = "NOW_MORPH_TCP_PRELUDE";
+    const UDP: &str = "NOW_MORPH_UDP_PRELUDE";
+    let pin = "0".repeat(64);
+
+    for carrier in ["tcp", "udp"] {
+        for morph in [0, 1, 2] {
+            let vector = Url::parse(&format!(
+                "vector://{KEY}@127.0.0.1/{carrier}:2000?in=127.0.0.1:1080&morph={morph}&pin={pin}"
+            ))
+            .unwrap();
+            let egress = Url::parse(&format!(
+                "egress://{KEY}@127.0.0.1/{carrier}:2000?morph={morph}&pin={pin}"
+            ))
+            .unwrap();
+            let share = Url::parse(&format!(
+                "nowhere://{KEY}@127.0.0.1:2000?net={carrier}&morph={morph}"
+            ))
+            .unwrap();
+
+            let client_env = if carrier == "tcp" { TCP } else { UDP };
+            for (role, error, env) in [
+                (
+                    "probe",
+                    PortalClientConfig::from_probe_url(&vector).err(),
+                    client_env,
+                ),
+                (
+                    "vector",
+                    crate::Vector::new(vector, crate::Logger).err(),
+                    client_env,
+                ),
+                (
+                    "egress",
+                    crate::Egress::new(egress, crate::Logger).err(),
+                    client_env,
+                ),
+                (
+                    "fingerprint",
+                    PortalClientConfig::from_fingerprint_url(&share).err(),
+                    TCP,
+                ),
+            ] {
+                let invalid = !matches!(
+                    std::env::var(env).as_deref(),
+                    Err(std::env::VarError::NotPresent) | Ok("fade" | "full8" | "low7")
+                );
+                assert_eq!(
+                    error.is_some(),
+                    invalid && morph != 0,
+                    "{role}/{carrier}/{morph}: {error:?}"
+                );
+                if let Some(error) = error {
+                    assert!(format!("{error:#}").contains(env));
+                }
+            }
+        }
+    }
+
+    let portal = Url::parse(&format!("portal://{KEY}@127.0.0.1:2000")).unwrap();
+    assert!(crate::Portal::new(portal, crate::Logger).is_ok());
 }

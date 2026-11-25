@@ -22,11 +22,15 @@ fn endpoint_accepts_one_carrier_or_a_compact_quic_port() {
         assert_eq!(egress.config.endpoint(), endpoint);
     }
     let tls = Egress::new(
-        Url::parse(&format!("egress://{KEY}@localhost/tcp:2000")).unwrap(),
+        Url::parse(&format!(
+            "egress://{KEY}@localhost/tcp:2000?rate=13&etar=7&etar=%FF"
+        ))
+        .unwrap(),
         Logger,
     )
     .unwrap();
     assert_eq!(tls.config.net, crate::vector::config::CarrierMode::Tcp);
+    assert!(tls.effective.contains("rate=13&etar=7"));
     {
         let endpoint = "localhost/tcp:2000/udp:2001";
         let error = Egress::new(

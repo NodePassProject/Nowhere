@@ -35,6 +35,14 @@ fn toolbox_configuration_errors_explain_the_failure_without_echoing_values() {
             "port must be in 1..=65535",
         ),
         (
+            "vector://0123456789abcdef0123456789abcdef@localhost:2000?rate=-1&in=user:secret%ZZ@localhost:1080&in=localhost:1080",
+            "invalid percent encoding in query value",
+        ),
+        (
+            "vector://0123456789abcdef0123456789abcdef@localhost:2000?in=user:secret@localhost:0&rate=-1",
+            "rate must be a non-negative integer",
+        ),
+        (
             "vector://0123456789abcdef0123456789abcdef@localhost:2000?rate=%FFsecret",
             "invalid UTF-8 in query value",
         ),

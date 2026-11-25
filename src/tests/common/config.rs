@@ -49,6 +49,26 @@ fn query_first_preserves_literal_slash_and_plus_and_validates_the_selected_value
 }
 
 #[test]
+fn rate_parameters_default_to_zero_and_accept_non_negative_i32_values() {
+    for name in ["rate", "etar"] {
+        let mut query = HashMap::new();
+        assert_eq!(parse_rate(&query, name).unwrap(), 0);
+
+        for (raw, expected) in [("0", 0), ("42", 42), ("+1", 1), ("2147483647", i32::MAX)] {
+            query.insert(name.to_owned(), raw.to_owned());
+            assert_eq!(parse_rate(&query, name).unwrap(), expected, "{name}={raw}");
+        }
+        for raw in ["", "-1", "1.5", " 1", "2147483648"] {
+            query.insert(name.to_owned(), raw.to_owned());
+            assert_eq!(
+                parse_rate(&query, name).unwrap_err().to_string(),
+                format!("{name} must be a non-negative integer")
+            );
+        }
+    }
+}
+
+#[test]
 fn rate_limit_converts_mbps_to_bytes_per_second() {
     assert_eq!(rate_limit_bytes_per_second(-1), 0);
     assert_eq!(rate_limit_bytes_per_second(0), 0);
@@ -326,186 +346,4 @@ fn tcp_buffer_defaults_bounds_and_vector_startup_are_strict() {
         "NOW_TCP_DATA_BUF_SIZE",
         &std::ffi::OsString::from_vec(vec![0xff]),
     );
-}
-
-#[test]
-fn morph_prelude_is_validated_only_by_tcp_morph_clients_at_startup() {
-    for raw in [
-        None,
-        Some("fade"),
-        Some("full8"),
-        Some("low7"),
-        Some("bad"),
-        Some(""),
-    ] {
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
-        child
-            .args([
-                "--exact",
-                "common::config::tests::morph_prelude_startup_child",
-                "--nocapture",
-            ])
-            .env("NOW_TEST_PRELUDE_CHILD", "1")
-            .env_remove("NOW_MORPH_TCP_PRELUDE")
-            .env_remove("NOW_MORPH_UDP_PRELUDE");
-        if let Some(raw) = raw {
-            child.env("NOW_MORPH_TCP_PRELUDE", raw);
-        }
-        let output = child.output().unwrap();
-        assert!(
-            output.status.success(),
-            "{raw:?}: {} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    #[cfg(unix)]
-    {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "common::config::tests::morph_prelude_startup_child",
-                "--nocapture",
-            ])
-            .env("NOW_TEST_PRELUDE_CHILD", "1")
-            .env(
-                "NOW_MORPH_TCP_PRELUDE",
-                std::ffi::OsString::from_vec(vec![0xff]),
-            )
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-    }
-}
-
-#[test]
-fn morph_prelude_startup_child() {
-    if std::env::var_os("NOW_TEST_PRELUDE_CHILD").is_none() {
-        return;
-    }
-    let invalid = !matches!(
-        std::env::var("NOW_MORPH_TCP_PRELUDE"),
-        Err(std::env::VarError::NotPresent)
-    ) && !matches!(
-        std::env::var("NOW_MORPH_TCP_PRELUDE").as_deref(),
-        Ok("fade" | "full8" | "low7")
-    );
-    for role in ["vector", "egress"] {
-        for (carrier, morph) in [("tcp", 1), ("tcp", 0), ("udp", 1)] {
-            let url = Url::parse(&format!("{role}://0123456789abcdef0123456789abcdef@127.0.0.1/{carrier}:2000?in=127.0.0.1:1080&morph={morph}&pin={}", "0".repeat(64))).unwrap();
-            let error = if role == "vector" {
-                crate::Vector::new(url, crate::Logger).err()
-            } else {
-                crate::Egress::new(url, crate::Logger).err()
-            };
-            assert_eq!(
-                error.is_some(),
-                invalid && carrier == "tcp" && morph == 1,
-                "{role}/{carrier}/{morph}: {error:?}"
-            );
-            if let Some(error) = error {
-                assert!(format!("{error:#}").contains("NOW_MORPH_TCP_PRELUDE"));
-            }
-        }
-    }
-}
-
-#[test]
-fn udp_prelude_configuration_is_isolated_by_role_carrier_and_morph() {
-    let values = [
-        None,
-        Some("fade"),
-        Some("full8"),
-        Some("low7"),
-        Some(""),
-        Some("FADE"),
-        Some("bad"),
-    ];
-    for tcp in values {
-        for udp in values {
-            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
-            child
-                .args([
-                    "--exact",
-                    "common::config::tests::udp_prelude_configuration_child",
-                ])
-                .env("NOW_TEST_UDP_PRELUDE_CHILD", "1")
-                .env_remove("NOW_MORPH_TCP_PRELUDE")
-                .env_remove("NOW_MORPH_UDP_PRELUDE");
-            if let Some(value) = tcp {
-                child.env("NOW_MORPH_TCP_PRELUDE", value);
-            }
-            if let Some(value) = udp {
-                child.env("NOW_MORPH_UDP_PRELUDE", value);
-            }
-            let output = child.output().unwrap();
-            assert!(
-                output.status.success(),
-                "tcp={tcp:?} udp={udp:?}: {} {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-    }
-    #[cfg(unix)]
-    {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "common::config::tests::udp_prelude_configuration_child",
-            ])
-            .env("NOW_TEST_UDP_PRELUDE_CHILD", "1")
-            .env_remove("NOW_MORPH_TCP_PRELUDE")
-            .env(
-                "NOW_MORPH_UDP_PRELUDE",
-                std::ffi::OsString::from_vec(vec![0xff]),
-            )
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-    }
-}
-
-#[test]
-fn udp_prelude_configuration_child() {
-    if std::env::var_os("NOW_TEST_UDP_PRELUDE_CHILD").is_none() {
-        return;
-    }
-    for role in ["vector", "egress"] {
-        for carrier in ["tcp", "udp"] {
-            for morph in [0, 1] {
-                let env = if carrier == "tcp" {
-                    "NOW_MORPH_TCP_PRELUDE"
-                } else {
-                    "NOW_MORPH_UDP_PRELUDE"
-                };
-                let invalid = !matches!(std::env::var(env), Err(std::env::VarError::NotPresent))
-                    && !matches!(std::env::var(env).as_deref(), Ok("fade" | "full8" | "low7"));
-                let url = Url::parse(&format!("{role}://0123456789abcdef0123456789abcdef@127.0.0.1/{carrier}:2000?in=127.0.0.1:1080&morph={morph}&pin={}", "0".repeat(64))).unwrap();
-                let error = if role == "vector" {
-                    crate::Vector::new(url, crate::Logger).err()
-                } else {
-                    crate::Egress::new(url, crate::Logger).err()
-                };
-                assert_eq!(
-                    error.is_some(),
-                    invalid && morph == 1,
-                    "{role}/{carrier}/{morph}: {error:?}"
-                );
-                if let Some(error) = error {
-                    assert!(format!("{error:#}").contains(env));
-                }
-            }
-        }
-    }
-    let url = Url::parse("portal://0123456789abcdef0123456789abcdef@127.0.0.1:2000").unwrap();
-    assert!(crate::Portal::new(url, crate::Logger).is_ok());
 }

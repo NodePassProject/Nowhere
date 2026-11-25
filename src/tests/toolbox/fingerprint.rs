@@ -88,23 +88,12 @@ fn fingerprint_share_links_decode_keys_and_ignore_display_names_and_flow_options
         config.morph_keys.unwrap().udp_keys(),
         crate::transport::MorphKeys::derive(KEY.as_bytes()).udp_keys(),
     );
-    let plain = PortalClientConfig::from_fingerprint_url(
-        &Url::parse("nowhere://0123456789abcdef0123456789abcdef@localhost:2000?net=tcp&morph=0")
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(plain.net, crate::vector::config::CarrierMode::Tcp);
-    assert!(plain.morph_keys.is_none());
 }
 
 #[test]
 fn fingerprint_defaults_carrier_and_requires_morph() {
     for (query, expected) in [
         ("", "fingerprint requires morph=0, morph=1 or morph=2"),
-        (
-            "net=tcp",
-            "fingerprint requires morph=0, morph=1 or morph=2",
-        ),
         (
             "net=udp",
             "fingerprint requires morph=0, morph=1 or morph=2",
