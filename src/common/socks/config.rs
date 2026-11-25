@@ -5,9 +5,10 @@
 
 use std::fmt;
 
-use anyhow::{Context, Result, anyhow, bail};
-use percent_encoding::percent_decode_str;
+use anyhow::{Result, anyhow, bail};
 use url::Url;
+
+use crate::common::decode_query_component;
 
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct SocksCredentials {
@@ -73,7 +74,7 @@ impl SocksConfig {
 
 pub(crate) fn parse_socks_value(raw_value: &str) -> Result<(String, Option<SocksCredentials>)> {
     let Some((raw_credentials, raw_endpoint)) = raw_value.split_once('@') else {
-        return Ok((decode_component(raw_value, "socks endpoint")?, None));
+        return Ok((decode_query_component(raw_value, "socks endpoint")?, None));
     };
     if raw_endpoint.contains('@') {
         bail!("invalid socks credentials: expected USERNAME:PASSWORD@HOST:PORT");
@@ -86,12 +87,12 @@ pub(crate) fn parse_socks_value(raw_value: &str) -> Result<(String, Option<Socks
     }
     validate_raw_credential(raw_username)?;
     validate_raw_credential(raw_password)?;
-    let username = decode_component(raw_username, "socks username")?;
-    let password = decode_component(raw_password, "socks password")?;
+    let username = decode_query_component(raw_username, "socks username")?;
+    let password = decode_query_component(raw_password, "socks password")?;
     validate_credential("username", &username)?;
     validate_credential("password", &password)?;
     Ok((
-        decode_component(raw_endpoint, "socks endpoint")?,
+        decode_query_component(raw_endpoint, "socks endpoint")?,
         Some(SocksCredentials { username, password }),
     ))
 }
@@ -154,33 +155,6 @@ fn validate_raw_credential(value: &str) -> Result<()> {
         .any(|byte| b":/?#[]@!$&'()*+,;=".contains(&byte))
     {
         bail!("reserved characters in socks credentials must be percent-encoded");
-    }
-    Ok(())
-}
-
-fn decode_component(raw: &str, name: &str) -> Result<String> {
-    validate_percent_encoding(raw, name)?;
-    percent_decode_str(raw)
-        .decode_utf8()
-        .with_context(|| format!("invalid UTF-8 in {name}"))
-        .map(|value| value.into_owned())
-}
-
-fn validate_percent_encoding(raw: &str, name: &str) -> Result<()> {
-    let bytes = raw.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            if index + 2 >= bytes.len()
-                || !bytes[index + 1].is_ascii_hexdigit()
-                || !bytes[index + 2].is_ascii_hexdigit()
-            {
-                bail!("invalid percent encoding in {name}");
-            }
-            index += 3;
-        } else {
-            index += 1;
-        }
     }
     Ok(())
 }

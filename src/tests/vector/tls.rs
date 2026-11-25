@@ -15,7 +15,9 @@ use crate::vector::config::VectorConfig;
 use super::*;
 
 fn vector_config(raw: &str) -> VectorConfig {
-    VectorConfig::from_url(&url::Url::parse(raw).unwrap()).unwrap()
+    VectorConfig::from_url(&url::Url::parse(raw).unwrap())
+        .unwrap()
+        .0
 }
 
 fn config(raw: &str) -> PortalClientConfig {

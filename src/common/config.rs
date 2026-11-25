@@ -13,23 +13,44 @@ use sha2::Sha256;
 use tokio::sync::Semaphore;
 use url::Url;
 
-pub const DEFAULT_RATE_LIMIT: i32 = 0;
+const DEFAULT_RATE_LIMIT: i32 = 0;
 pub(crate) const EGRESS_TLS_IDLE_TTL: Duration = Duration::from_secs(120);
 
+pub(crate) fn parse_rate(query: &HashMap<String, String>, name: &str) -> Result<i32> {
+    let Some(value) = query.get(name) else {
+        return Ok(DEFAULT_RATE_LIMIT);
+    };
+    value
+        .parse::<i32>()
+        .ok()
+        .filter(|value| *value >= 0)
+        .with_context(|| format!("{name} must be a non-negative integer"))
+}
+
 pub fn query_first(parsed_url: &Url, allowed: &[&str]) -> Result<HashMap<String, String>> {
+    query_first_with_unlisted(parsed_url, allowed, |_, _| Ok(()))
+}
+
+pub(crate) fn query_first_with_unlisted(
+    parsed_url: &Url,
+    allowed: &[&str],
+    mut unlisted: impl FnMut(&str, &str) -> Result<()>,
+) -> Result<HashMap<String, String>> {
     let mut values = HashMap::with_capacity(allowed.len());
     let Some(query) = parsed_url.query() else {
         return Ok(values);
     };
     for pair in query.split('&') {
         let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
-        if !allowed.contains(&raw_key) || values.contains_key(raw_key) {
+        if !allowed.contains(&raw_key) {
+            unlisted(raw_key, raw_value)?;
             continue;
         }
-        values.insert(
-            raw_key.to_owned(),
-            decode_query_component(raw_value, "query value")?,
-        );
+        if values.contains_key(raw_key) {
+            continue;
+        }
+        let value = decode_query_component(raw_value, "query value")?;
+        values.insert(raw_key.to_owned(), value);
     }
     Ok(values)
 }
@@ -42,7 +63,7 @@ pub(crate) fn first_raw_query_value<'a>(parsed_url: &'a Url, name: &str) -> Opti
     })
 }
 
-fn decode_query_component(raw: &str, name: &str) -> Result<String> {
+pub(crate) fn decode_query_component(raw: &str, name: &str) -> Result<String> {
     let bytes = raw.as_bytes();
     let mut index = 0;
     while index < bytes.len() {

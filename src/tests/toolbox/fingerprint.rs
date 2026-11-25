@@ -81,7 +81,7 @@ fn fingerprint_share_links_decode_keys_and_ignore_display_names_and_flow_options
     ).unwrap();
     let config = PortalClientConfig::from_fingerprint_url(&url).unwrap();
     assert_eq!(config.endpoint(), "[::1]:2006");
-    assert_eq!(config.net, crate::vector::config::CarrierMode::Udp);
+    assert_eq!(config.net, crate::vector::config::CarrierMode::Tcp);
     assert_eq!(config.sni.as_deref(), Some("relay.example"));
     assert!(config.pin.is_none());
     assert_eq!(
@@ -94,7 +94,7 @@ fn fingerprint_share_links_decode_keys_and_ignore_display_names_and_flow_options
     )
     .unwrap();
     assert_eq!(plain.net, crate::vector::config::CarrierMode::Tcp);
-    assert!(!plain.morph);
+    assert!(plain.morph_keys.is_none());
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn fingerprint_defaults_carrier_and_requires_morph() {
         .unwrap();
         let config = PortalClientConfig::from_fingerprint_url(&url).unwrap();
         assert_eq!(config.net, crate::vector::config::CarrierMode::Tcp);
-        assert_eq!(config.morph, morph);
+        assert_eq!(config.morph_keys.is_some(), morph);
     }
 }
 

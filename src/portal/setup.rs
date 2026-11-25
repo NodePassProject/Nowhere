@@ -11,8 +11,8 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::common::{
-    DEFAULT_RATE_LIMIT, DialPolicy, Logger, OutboundDialer, ServiceEndpoint, SocksConfig,
-    new_server_configs_with_reload_interval, query_first, rate_limit_bytes_per_second,
+    DialPolicy, Logger, OutboundDialer, ServiceEndpoint, SocksConfig,
+    new_server_configs_with_reload_interval, parse_rate, query_first, rate_limit_bytes_per_second,
     resolve_bind_addrs,
 };
 use crate::protocol::Credentials;
@@ -149,7 +149,7 @@ impl Portal {
 }
 
 fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<Option<MorphGrade>> {
-    for name in ["tls", "crt", "key", "rate", "etar", "dial", "out"] {
+    for name in ["tls", "crt", "key", "dial", "out"] {
         if query.get(name).is_some_and(String::is_empty) {
             anyhow::bail!("empty {name} parameter");
         }
@@ -167,16 +167,6 @@ fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<O
         anyhow::bail!("crt and key are required exactly when tls=2");
     }
     Ok(grade)
-}
-
-fn parse_rate(query: &std::collections::HashMap<String, String>, name: &str) -> Result<i32> {
-    query.get(name).map_or(Ok(DEFAULT_RATE_LIMIT), |value| {
-        value
-            .parse::<i32>()
-            .ok()
-            .filter(|value| *value >= 0)
-            .ok_or_else(|| anyhow::anyhow!("{name} must be a non-negative integer"))
-    })
 }
 
 #[cfg(test)]

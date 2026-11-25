@@ -12,6 +12,7 @@ fn parse(query: &str) -> Result<VectorConfig> {
         ))
         .unwrap(),
     )
+    .map(|(config, _)| config)
 }
 
 #[test]
@@ -96,7 +97,7 @@ fn endpoint_selects_one_carrier_and_address_family() {
             "vector://{KEY}@{endpoint}?in=127.0.0.1:1080&net=invalid"
         ))
         .unwrap();
-        let config = VectorConfig::from_url(&url).unwrap();
+        let (config, _) = VectorConfig::from_url(&url).unwrap();
         assert_eq!(config.net, mode, "{endpoint}");
         let carrier = if mode == CarrierMode::Tcp {
             config.tcp_endpoint()
@@ -119,7 +120,7 @@ fn ingress_credentials_split_before_single_decode_and_are_redacted() {
         "vector://0123456789abcdef0123456789abcdef@localhost:2000?in=a%3Ab:p%2540ss@127.0.0.1:1080",
     )
     .unwrap();
-    let config = VectorConfig::from_url(&url).unwrap();
+    let (config, _) = VectorConfig::from_url(&url).unwrap();
     assert_eq!(
         config.socks.credentials.as_ref().unwrap().as_pair(),
         ("a:b", "p%40ss")
@@ -137,7 +138,6 @@ fn morph_defaults_on_and_honors_explicit_values() {
             .unwrap();
             let query = query_first(&url, &["morph"]).unwrap();
             let config = PortalClientConfig::parse(&url, &query).unwrap();
-            assert_eq!(config.morph, enabled, "{url}");
             assert_eq!(config.morph_keys.is_some(), enabled, "{url}");
         }
     }

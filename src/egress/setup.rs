@@ -10,7 +10,7 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::common::{DialPolicy, Logger, OutboundDialer, query_first};
+use crate::common::{DialPolicy, Logger, OutboundDialer, parse_rate, query_first};
 use crate::portal::forward::{Forwarder, Outlet};
 use crate::protocol::Credentials;
 use crate::transport::{Buffers, RateLimiter, Stats};
@@ -32,20 +32,12 @@ impl Egress {
         )?;
         let config = PortalClientConfig::parse(&url, &query)?;
         let credentials = Credentials::new(&url)?;
+        let upload = parse_rate(&query, "rate")?;
+        let download = parse_rate(&query, "etar")?;
         let runtime =
             crate::portal::config::PortalRuntimeConfig::from_env(config.handshake_timeout)?;
         let tls = ClientTls::new(&config)?;
         let dial = DialPolicy::from_query(&query)?;
-        let rate = |name: &str| -> Result<i32> {
-            query.get(name).map_or(Ok(0), |s| {
-                s.parse::<i32>()
-                    .ok()
-                    .filter(|n| *n >= 0)
-                    .context("invalid rate limit")
-            })
-        };
-        let upload = rate("rate")?;
-        let download = rate("etar")?;
         let effective = format!(
             "egress://{}?sni={}&pin={}&{}&morph={}{}&rate={upload}&etar={download}",
             config.endpoint(),

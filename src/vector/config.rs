@@ -6,16 +6,18 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use url::Url;
 
 use crate::common::{
-    CarrierEndpoint, DialPolicy, ServiceEndpoint, SocksCredentials, first_raw_query_value,
-    format_host_port, parse_host_port, parse_socks_value, query_first,
+    CarrierEndpoint, DialPolicy, ServiceEndpoint, SocksCredentials, decode_query_component,
+    format_host_port, parse_host_port, parse_rate, parse_socks_value, query_first,
+    query_first_with_unlisted,
 };
+use crate::protocol::Credentials;
 use crate::transport::{MorphCipher, MorphGrade, MorphKeys};
 
-const VECTOR_QUERY_KEYS: &[&str] = &["in", "sni", "pin", "rate", "etar", "morph", "cipher"];
+const VECTOR_CLIENT_QUERY_KEYS: &[&str] = &["sni", "pin", "rate", "etar", "morph", "cipher"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CarrierMode {
@@ -37,7 +39,6 @@ pub(crate) struct PortalClientConfig {
     pub(crate) handshake_timeout: Duration,
     pub(crate) remote: ServiceEndpoint,
     pub(crate) net: CarrierMode,
-    pub(crate) morph: bool,
     pub(crate) morph_keys: Option<MorphKeys>,
     pub(crate) sni: Option<String>,
     pub(crate) pin: Option<String>,
@@ -81,8 +82,7 @@ impl PortalClientConfig {
                 }
             }
             "nowhere" => match query.get("net").map(String::as_str) {
-                None | Some("tcp") => CarrierMode::Tcp,
-                Some("udp") => CarrierMode::Udp,
+                None | Some("tcp" | "udp") => CarrierMode::Tcp,
                 Some(_) => bail!("share link net must be tcp or udp"),
             },
             _ => bail!("unsupported client URL scheme"),
@@ -90,8 +90,7 @@ impl PortalClientConfig {
         let cipher = MorphCipher::parse(query.get("cipher").map(String::as_str))?;
         let grade = MorphGrade::parse(query.get("morph").map(String::as_str))
             .map_err(|error| anyhow::anyhow!("{context}: {error}"))?;
-        let morph = grade.is_some();
-        if morph {
+        if grade.is_some() {
             match net {
                 CarrierMode::Tcp => crate::transport::validate_tcp_prelude_env()?,
                 CarrierMode::Udp => crate::transport::validate_udp_prelude_env()?,
@@ -133,7 +132,6 @@ impl PortalClientConfig {
             )?,
             remote,
             net,
-            morph,
             morph_keys,
             sni,
             pin,
@@ -141,24 +139,40 @@ impl PortalClientConfig {
         })
     }
 
-    pub(crate) fn from_probe_url(url: &Url) -> Result<(Self, crate::protocol::Credentials)> {
+    fn parse_vector_url(
+        url: &Url,
+    ) -> Result<(Self, Credentials, [i32; 2], Option<SocksListenConfig>)> {
         if url.scheme() != "vector" {
             bail!("probe requires vector://");
         }
-        let query = query_first(url, VECTOR_QUERY_KEYS)?;
-        validate_options(&query)?;
-        if first_raw_query_value(url, "in").is_some() {
-            SocksListenConfig::from_url(url)?;
-        }
-        let credentials = crate::protocol::Credentials::new(url)?;
-        Ok((Self::parse(url, &query)?, credentials))
+        let mut socks = None;
+        let query = query_first_with_unlisted(url, VECTOR_CLIENT_QUERY_KEYS, |key, raw| {
+            if key == "in" && socks.is_none() {
+                let ingress = SocksListenConfig::parse(raw);
+                if ingress.is_err() {
+                    decode_query_component(raw, "query value")?;
+                }
+                socks = Some(ingress);
+            }
+            Ok(())
+        })?;
+        let rates = [parse_rate(&query, "rate")?, parse_rate(&query, "etar")?];
+        let socks = socks.transpose()?;
+        let credentials = Credentials::new(url)?;
+        let portal = Self::parse(url, &query)?;
+        Ok((portal, credentials, rates, socks))
+    }
+
+    pub(crate) fn from_probe_url(url: &Url) -> Result<(Self, Credentials)> {
+        let (portal, credentials, _, _) = Self::parse_vector_url(url)?;
+        Ok((portal, credentials))
     }
 
     pub(crate) fn from_fingerprint_url(url: &Url) -> Result<Self> {
         if url.scheme() != "nowhere" {
             bail!("fingerprint requires a nowhere:// share link");
         }
-        crate::protocol::Credentials::validated_shared_key(url, "Fingerprint configuration")?;
+        Credentials::validated_shared_key(url, "Fingerprint configuration")?;
         if !url.path().is_empty() {
             bail!("share links require HOST:PORT without carrier paths");
         }
@@ -196,9 +210,7 @@ pub(crate) struct SocksListenConfig {
 }
 
 impl SocksListenConfig {
-    fn from_url(url: &Url) -> Result<Self> {
-        let raw = first_raw_query_value(url, "in")
-            .ok_or_else(|| anyhow!("Vector configuration: in parameter is required"))?;
+    fn parse(raw: &str) -> Result<Self> {
         let (endpoint, credentials) = parse_socks_value(raw)?;
         let (host, port) = parse_host_port(&endpoint, "SOCKS ingress", true)?;
         Ok(Self {
@@ -229,15 +241,19 @@ impl std::ops::Deref for VectorConfig {
 }
 
 impl VectorConfig {
-    pub(super) fn from_url(url: &Url) -> Result<Self> {
-        let (portal, _) = PortalClientConfig::from_probe_url(url)?;
-        let query = query_first(url, VECTOR_QUERY_KEYS)?;
-        Ok(Self {
-            portal,
-            rate_mbps: parse_rate(query.get("rate").map(String::as_str), "rate")?,
-            etar_mbps: parse_rate(query.get("etar").map(String::as_str), "etar")?,
-            socks: SocksListenConfig::from_url(url)?,
-        })
+    pub(super) fn from_url(url: &Url) -> Result<(Self, Credentials)> {
+        let (portal, credentials, [rate_mbps, etar_mbps], socks) =
+            PortalClientConfig::parse_vector_url(url)?;
+        let socks = socks.context("Vector configuration: in parameter is required")?;
+        Ok((
+            Self {
+                portal,
+                rate_mbps,
+                etar_mbps,
+                socks,
+            },
+            credentials,
+        ))
     }
 
     pub(crate) fn portal_client_config(&self) -> PortalClientConfig {
@@ -256,23 +272,6 @@ impl VectorConfig {
             self.rate_mbps,
             self.etar_mbps,
         )
-    }
-}
-
-fn validate_options(query: &HashMap<String, String>) -> Result<()> {
-    parse_rate(query.get("rate").map(String::as_str), "rate")?;
-    parse_rate(query.get("etar").map(String::as_str), "etar")?;
-    Ok(())
-}
-
-fn parse_rate(value: Option<&str>, name: &str) -> Result<i32> {
-    match value {
-        None => Ok(0),
-        Some(s) => s
-            .parse()
-            .ok()
-            .filter(|v| *v >= 0)
-            .ok_or_else(|| anyhow!("{name} must be a non-negative integer")),
     }
 }
 

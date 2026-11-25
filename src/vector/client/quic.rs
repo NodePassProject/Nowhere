@@ -151,6 +151,7 @@ pub(crate) async fn connect_quic(
     .context("Portal DNS timeout")??;
     let addresses =
         crate::common::filter_addrs_for_family(resolved, &config.dial_policy, remote.family);
+    let morph_enabled = config.morph_keys.is_some();
     let mut last = anyhow!("Portal DNS returned no address");
     for address in addresses {
         let result = async {
@@ -171,7 +172,7 @@ pub(crate) async fn connect_quic(
                 runtime.as_ref(),
             )?;
             let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
-                crate::transport::morph_endpoint_config(config.morph)?,
+                crate::transport::morph_endpoint_config(morph_enabled)?,
                 None,
                 socket,
                 runtime,
@@ -190,7 +191,7 @@ pub(crate) async fn connect_quic(
                 .keep_alive_interval(Some(std::time::Duration::from_secs(15)))
                 .max_idle_timeout(Some(crate::common::udp_idle_timeout().try_into()?))
                 .congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
-            crate::transport::configure_morph_mtu(&mut transport, config.morph);
+            crate::transport::configure_morph_mtu(&mut transport, morph_enabled);
             client.transport_config(Arc::new(transport));
             endpoint.set_default_client_config(client);
             let connection = timeout(

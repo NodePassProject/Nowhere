@@ -20,7 +20,6 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::common::{Logger, ShutdownSignals, rate_limit_bytes_per_second, shutdown_timeout};
-use crate::protocol::Credentials;
 use crate::telemetry::{InstanceRole, TelemetryServer};
 use crate::transport::{Buffers, RateLimiter, Stats};
 
@@ -81,8 +80,7 @@ impl VectorRuntime {
             crate::common::read_quic_udp_queue_bytes(&mut crate::common::env_value)?;
         let tcp_data_buf_size =
             crate::common::read_tcp_data_buf_size(&mut crate::common::env_value)?;
-        let config = VectorConfig::from_url(&parsed_url)?;
-        let credentials = Credentials::new(&parsed_url)?;
+        let (config, credentials) = VectorConfig::from_url(&parsed_url)?;
         let stats = Arc::new(Stats::default());
         let shutdown = CancellationToken::new();
         let read_bps = rate_limit_bytes_per_second(config.rate_mbps) as i64;
