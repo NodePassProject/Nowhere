@@ -11,7 +11,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 use super::cipher::TcpCipher;
 use super::policy::{PreludePolicy, TCP_PRELUDE_ENV};
-use super::{AuthenticatedPrelude, ClientPrelude, MorphKeys, NONCE_LEN, TCP_PRELUDE_LEN};
+use super::{
+    AuthenticatedPrelude, ClientPrelude, MorphGrade, MorphKeys, NONCE_LEN, TCP_PRELUDE_LEN,
+};
 
 pub(crate) fn validate_tcp_prelude_env() -> io::Result<()> {
     PreludePolicy::from_env(TCP_PRELUDE_ENV).map(|_| ())
@@ -20,9 +22,75 @@ pub(crate) fn validate_tcp_prelude_env() -> io::Result<()> {
 pub(super) struct TcpMorph {
     pub(super) read_cipher: TcpCipher,
     pub(super) write_cipher: TcpCipher,
+    read_record: Option<RecordState>,
+    write_record: Option<RecordState>,
     read_offset: u64,
     write_offset: u64,
     pub(super) write_buffer: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct RecordState {
+    header: [u8; 5],
+    header_len: usize,
+    payload_left: usize,
+    skip_payload: bool,
+}
+
+impl RecordState {
+    fn span(self, available: usize) -> (usize, bool) {
+        if self.payload_left == 0 {
+            (available.min(self.header.len() - self.header_len), true)
+        } else {
+            (available.min(self.payload_left), !self.skip_payload)
+        }
+    }
+
+    fn advance(&mut self, plain: &[u8]) {
+        if self.payload_left != 0 {
+            self.payload_left -= plain.len();
+            return;
+        }
+        let end = self.header_len + plain.len();
+        self.header[self.header_len..end].copy_from_slice(plain);
+        self.header_len = end;
+        if end == self.header.len() {
+            self.header_len = 0;
+            self.payload_left = u16::from_be_bytes([self.header[3], self.header[4]]) as usize;
+            self.skip_payload = self.header[..3] == [23, 3, 3] && self.payload_left <= 18432;
+        }
+    }
+
+    fn apply(
+        &mut self,
+        cipher: &mut TcpCipher,
+        mut offset: u64,
+        data: &mut [u8],
+        opening: bool,
+    ) -> io::Result<()> {
+        let mut position = None;
+        let mut rest = data;
+        while !rest.is_empty() {
+            let (count, mask) = self.span(rest.len());
+            let (part, next) = rest.split_at_mut(count);
+            if !opening {
+                self.advance(part);
+            }
+            if mask {
+                if position != Some(offset) {
+                    cipher.try_seek(offset)?;
+                }
+                cipher.try_apply_keystream(part)?;
+                position = Some(offset + count as u64);
+            }
+            if opening {
+                self.advance(part);
+            }
+            rest = next;
+            offset += count as u64;
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct MorphTcpStream<S> {
@@ -115,6 +183,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> MorphTcpStream<S> {
             morph: Some(TcpMorph {
                 read_cipher: TcpCipher::new(keys.cipher, read_key, &nonce),
                 write_cipher: TcpCipher::new(keys.cipher, write_key, &nonce),
+                read_record: (keys.grade == MorphGrade::Core).then(RecordState::default),
+                write_record: (keys.grade == MorphGrade::Core).then(RecordState::default),
                 read_offset: 0,
                 write_offset: 0,
                 write_buffer: Vec::new(),
@@ -148,9 +218,12 @@ impl<S: AsyncRead + Unpin> AsyncRead for MorphTcpStream<S> {
             Poll::Ready(Ok(())) => {
                 let count = inner_buf.filled().len();
                 let state = self.morph.as_mut().unwrap();
-                state
-                    .read_cipher
-                    .try_apply_keystream(&mut inner_buf.filled_mut()[..count])?;
+                let data = inner_buf.filled_mut();
+                if let Some(record) = &mut state.read_record {
+                    record.apply(&mut state.read_cipher, state.read_offset, data, true)?;
+                } else {
+                    state.read_cipher.try_apply_keystream(data)?;
+                }
                 state.read_offset += count as u64;
                 buf.advance(count);
                 debug_assert_eq!(buf.filled().len(), before + count);
@@ -203,10 +276,38 @@ impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
         if state.write_buffer.len() < count {
             state.write_buffer.resize(count, 0);
         }
-        state
-            .write_cipher
-            .try_apply_keystream_b2b(&input[..count], &mut state.write_buffer[..count])?;
-        match Pin::new(&mut this.inner).poll_write(cx, &state.write_buffer[..count]) {
+        let output = &mut state.write_buffer[..count];
+        let mut next_record = state.write_record;
+        if let Some(record) = &mut next_record {
+            output.copy_from_slice(&input[..count]);
+            record.apply(&mut state.write_cipher, state.write_offset, output, false)?;
+        } else {
+            state
+                .write_cipher
+                .try_apply_keystream_b2b(&input[..count], output)?;
+        }
+        let result = Pin::new(&mut this.inner).poll_write(cx, output);
+        if let Some(record) = &mut state.write_record {
+            return match result {
+                Poll::Ready(Ok(0)) => Poll::Ready(Err(io::ErrorKind::WriteZero.into())),
+                Poll::Ready(Ok(n)) => {
+                    if n == count {
+                        state.write_record = next_record;
+                    } else {
+                        let mut written = &input[..n];
+                        while !written.is_empty() {
+                            let (span, _) = record.span(written.len());
+                            record.advance(&written[..span]);
+                            written = &written[span..];
+                        }
+                    }
+                    state.write_offset += n as u64;
+                    Poll::Ready(Ok(n))
+                }
+                other => other,
+            };
+        }
+        match result {
             Poll::Ready(Ok(0)) => {
                 state.write_cipher.try_seek(state.write_offset)?;
                 Poll::Ready(Err(io::ErrorKind::WriteZero.into()))

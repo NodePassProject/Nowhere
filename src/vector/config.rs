@@ -13,7 +13,7 @@ use crate::common::{
     CarrierEndpoint, DialPolicy, ServiceEndpoint, SocksCredentials, first_raw_query_value,
     format_host_port, parse_host_port, parse_socks_value, query_first,
 };
-use crate::transport::{MorphCipher, MorphKeys};
+use crate::transport::{MorphCipher, MorphGrade, MorphKeys};
 
 const VECTOR_QUERY_KEYS: &[&str] = &["in", "sni", "pin", "rate", "etar", "morph", "cipher"];
 
@@ -88,19 +88,17 @@ impl PortalClientConfig {
             _ => bail!("unsupported client URL scheme"),
         };
         let cipher = MorphCipher::parse(query.get("cipher").map(String::as_str))?;
-        let morph = match query.get("morph").map(String::as_str) {
-            Some("0") => false,
-            None | Some("1") => true,
-            Some(_) => bail!("{context}: morph must be 0 or 1"),
-        };
+        let grade = MorphGrade::parse(query.get("morph").map(String::as_str))
+            .map_err(|error| anyhow::anyhow!("{context}: {error}"))?;
+        let morph = grade.is_some();
         if morph {
             match net {
                 CarrierMode::Tcp => crate::transport::validate_tcp_prelude_env()?,
                 CarrierMode::Udp => crate::transport::validate_udp_prelude_env()?,
             }
         }
-        let morph_keys = morph
-            .then(|| MorphKeys::from_url(url, cipher))
+        let morph_keys = grade
+            .map(|grade| MorphKeys::from_url(url, cipher, grade))
             .transpose()?;
         let sni = query
             .get("sni")
@@ -168,7 +166,7 @@ impl PortalClientConfig {
         clean.set_fragment(None);
         let query = query_first(&clean, &["net", "morph", "cipher", "sni"])?;
         if !query.contains_key("morph") {
-            bail!("fingerprint requires morph=0 or morph=1");
+            bail!("fingerprint requires morph=0, morph=1 or morph=2");
         }
         Self::parse(&clean, &query)
     }
@@ -253,7 +251,7 @@ impl VectorConfig {
             self.socks.endpoint(),
             self.sni.as_deref().unwrap_or(self.host()),
             self.pin.as_deref().unwrap_or("none"),
-            u8::from(self.morph),
+            self.morph_keys.as_ref().map_or(0, MorphKeys::mode_number),
             self.morph_keys.as_ref().map_or("", MorphKeys::cipher_query),
             self.rate_mbps,
             self.etar_mbps,

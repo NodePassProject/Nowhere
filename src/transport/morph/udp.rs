@@ -17,7 +17,7 @@ use quinn::{AsyncUdpSocket, UdpPoller};
 use super::cipher::MorphCipher;
 use super::policy::{PreludePolicy, UDP_PRELUDE_ENV};
 use super::udp_socket::ClientUdpSocket;
-use super::{MorphKeyBytes, MorphKeys, NONCE_LEN, UDP_PRELUDE_LEN};
+use super::{MorphGrade, MorphKeyBytes, MorphKeys, NONCE_LEN, UDP_PRELUDE_LEN};
 
 const QUINN_DEFAULT_MTU_UPPER_BOUND: u16 = 1452;
 pub(super) const UDP_NONCE_STREAM_LIMIT: u64 = (1u64 << 38) - 64;
@@ -58,6 +58,7 @@ pub(crate) fn wrap_morph_udp_socket(
             Ok(Arc::new(MorphUdpSocket {
                 inner,
                 cipher: keys.cipher,
+                grade: keys.grade,
                 tx_key,
                 rx_key,
                 role,
@@ -173,6 +174,7 @@ pub(crate) fn configure_morph_mtu(transport: &mut quinn::TransportConfig, enable
 pub(super) struct MorphUdpSocket {
     pub(super) inner: Arc<dyn AsyncUdpSocket>,
     pub(super) cipher: MorphCipher,
+    pub(super) grade: MorphGrade,
     pub(super) tx_key: MorphKeyBytes,
     pub(super) rx_key: MorphKeyBytes,
     pub(super) role: UdpRole,
@@ -238,7 +240,7 @@ impl AsyncUdpSocket for MorphUdpSocket {
             let nonce: &mut [u8; NONCE_LEN] = nonce.try_into().expect("fixed nonce prefix");
             nonce_generator.generate(nonce)?;
             self.cipher
-                .apply_datagram(&self.tx_key, nonce, plain, payload)?;
+                .apply_datagram(self.grade, false, &self.tx_key, nonce, plain, payload)?;
             wire_offset = wire_end;
         }
         debug_assert_eq!(wire_offset, wire_len);
@@ -338,6 +340,8 @@ impl AsyncUdpSocket for MorphUdpSocket {
                 let nonce: &[u8; NONCE_LEN] = nonce.try_into().expect("fixed nonce prefix");
                 let end = decoded_len + encrypted.len();
                 self.cipher.apply_datagram(
+                    self.grade,
+                    true,
                     &self.rx_key,
                     nonce,
                     encrypted,

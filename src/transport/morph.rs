@@ -34,11 +34,36 @@ const UDP_S2C_INFO: &[u8] = b"udp s2c";
 const TCP_PRELUDE_AUTH_INFO: &[u8] = b"tcp prelude auth";
 const TCP_PRELUDE_MASK_INFO: &[u8] = b"tcp prelude mask";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MorphGrade {
+    Full,
+    Core,
+}
+
+impl MorphGrade {
+    pub(crate) fn parse(value: Option<&str>) -> anyhow::Result<Option<Self>> {
+        match value {
+            Some("0") => Ok(None),
+            None | Some("1") => Ok(Some(Self::Full)),
+            Some("2") => Ok(Some(Self::Core)),
+            Some(_) => anyhow::bail!("morph must be 0, 1 or 2"),
+        }
+    }
+
+    fn number(self) -> u8 {
+        match self {
+            Self::Full => 1,
+            Self::Core => 2,
+        }
+    }
+}
+
 type MorphKeyBytes = [u8; 32];
 
 #[derive(Clone)]
 pub(crate) struct MorphKeys {
     cipher: MorphCipher,
+    grade: MorphGrade,
     tcp_c2s: MorphKeyBytes,
     tcp_s2c: MorphKeyBytes,
     udp_c2s: MorphKeyBytes,
@@ -54,9 +79,14 @@ impl fmt::Debug for MorphKeys {
 }
 
 impl MorphKeys {
-    pub(crate) fn from_url(url: &url::Url, cipher: MorphCipher) -> anyhow::Result<Self> {
+    pub(crate) fn from_url(
+        url: &url::Url,
+        cipher: MorphCipher,
+        grade: MorphGrade,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             cipher,
+            grade,
             ..Self::derive(&crate::protocol::Credentials::decode_shared_key(url)?)
         })
     }
@@ -65,10 +95,15 @@ impl MorphKeys {
         self.cipher.query()
     }
 
+    pub(crate) fn mode_number(&self) -> u8 {
+        self.grade.number()
+    }
+
     pub(crate) fn derive(shared_key: &[u8]) -> Self {
         let root = hmac_sha256(MORPH_ROOT_SALT, shared_key);
         Self {
             cipher: MorphCipher::ChaCha,
+            grade: MorphGrade::Full,
             tcp_c2s: hkdf_expand_one(root, TCP_C2S_INFO),
             tcp_s2c: hkdf_expand_one(root, TCP_S2C_INFO),
             udp_c2s: hkdf_expand_one(root, UDP_C2S_INFO),

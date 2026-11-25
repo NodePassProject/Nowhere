@@ -16,7 +16,7 @@ use crate::common::{
     resolve_bind_addrs,
 };
 use crate::protocol::Credentials;
-use crate::transport::{Buffers, MorphCipher, MorphKeys, RateLimiter, Stats};
+use crate::transport::{Buffers, MorphCipher, MorphGrade, MorphKeys, RateLimiter, Stats};
 
 use super::{
     Portal, PortalInner, admission,
@@ -38,7 +38,7 @@ impl Portal {
             anyhow::bail!("invalid Portal URL");
         }
         let query = query_first(&url, PORTAL_QUERY_PARAMETERS)?;
-        validate_query(&query)?;
+        let grade = validate_query(&query)?;
         let endpoint = ServiceEndpoint::parse(&url, true, "portal endpoint")?;
         let bind_host = listen_host.unwrap_or(&endpoint.host);
         let credentials = Credentials::for_service(&url, "Portal listener")?;
@@ -46,8 +46,8 @@ impl Portal {
             crate::common::read_handshake_timeout(&mut crate::common::env_value, &url)?;
         let runtime = super::config::PortalRuntimeConfig::from_env(handshake_timeout)?;
         let cipher = MorphCipher::parse(query.get("cipher").map(String::as_str))?;
-        let morph_keys = (query.get("morph").is_none_or(|s| s == "1"))
-            .then(|| MorphKeys::from_url(&url, cipher))
+        let morph_keys = grade
+            .map(|grade| MorphKeys::from_url(&url, cipher, grade))
             .transpose()?;
         let out = query.get("out").map(String::as_str).unwrap_or("direct");
         let registry = if out == "egress" {
@@ -90,7 +90,7 @@ impl Portal {
             } else {
                 format!("&{}", dial.to_string().replace(' ', "&"))
             },
-            u8::from(morph_keys.is_some()),
+            morph_keys.as_ref().map_or(0, MorphKeys::mode_number),
             morph_keys.as_ref().map_or("", MorphKeys::cipher_query)
         );
         let outbound = match &registry {
@@ -148,7 +148,7 @@ impl Portal {
     }
 }
 
-fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<()> {
+fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<Option<MorphGrade>> {
     for name in ["tls", "crt", "key", "rate", "etar", "dial", "out"] {
         if query.get(name).is_some_and(String::is_empty) {
             anyhow::bail!("empty {name} parameter");
@@ -159,18 +159,14 @@ fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<(
     {
         anyhow::bail!("tls=1 or tls=2 required");
     }
-    if let Some(morph) = query.get("morph")
-        && !matches!(morph.as_str(), "0" | "1")
-    {
-        anyhow::bail!("morph must be 0 or 1");
-    }
+    let grade = MorphGrade::parse(query.get("morph").map(String::as_str))?;
     let tls_is_ca = query.get("tls").is_some_and(|value| value == "2");
     let has_crt = query.contains_key("crt");
     let has_key = query.contains_key("key");
     if (tls_is_ca && !(has_crt && has_key)) || (!tls_is_ca && (has_crt || has_key)) {
         anyhow::bail!("crt and key are required exactly when tls=2");
     }
-    Ok(())
+    Ok(grade)
 }
 
 fn parse_rate(query: &std::collections::HashMap<String, String>, name: &str) -> Result<i32> {

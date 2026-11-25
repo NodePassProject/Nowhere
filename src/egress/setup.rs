@@ -52,7 +52,10 @@ impl Egress {
             config.sni.as_deref().unwrap_or(config.host()),
             config.pin.as_deref().unwrap_or("none"),
             dial.to_string().replace(' ', "&"),
-            u8::from(config.morph),
+            config
+                .morph_keys
+                .as_ref()
+                .map_or(0, crate::transport::MorphKeys::mode_number),
             config
                 .morph_keys
                 .as_ref()
