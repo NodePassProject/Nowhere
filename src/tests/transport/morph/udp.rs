@@ -148,40 +148,46 @@ impl AsyncUdpSocket for FakeUdpSocket {
 #[tokio::test]
 async fn udp_preserves_gso_datagram_boundaries() {
     for cipher in [MorphCipher::ChaCha, MorphCipher::Aes] {
-        assert_gso_datagram_boundaries(cipher).await;
+        for grade in [MorphGrade::Full, MorphGrade::Core] {
+            assert_gso_datagram_boundaries(cipher, grade).await;
+        }
     }
 }
 
-async fn assert_gso_datagram_boundaries(cipher: MorphCipher) {
+async fn assert_gso_datagram_boundaries(cipher: MorphCipher, grade: MorphGrade) {
     let key = MorphKeys::derive(b"shared").udp_c2s;
     let raw = Arc::new(FakeUdpSocket::default());
     let socket = MorphUdpSocket {
         inner: raw.clone(),
         cipher,
+        grade,
         tx_key: key,
         rx_key: key,
         role: UdpRole::Client,
         send: Mutex::new(UdpSendState::from_seed([1; 32])),
         receive: Mutex::new(UdpReceiveState::new()),
     };
-    for plain in [
-        b"abcdef".as_slice(),
-        b"abcde".as_slice(),
-        b"ghijkl".as_slice(),
-    ] {
+    let stride = 60;
+    let wire_stride = stride + NONCE_LEN;
+    for len in [stride * 2, stride + 42, stride + 41] {
+        let mut plain = vec![0x45; len];
+        plain[stride] = 0xc0;
         socket
             .try_send(&Transmit {
                 destination: "127.0.0.1:2".parse().unwrap(),
                 ecn: None,
-                contents: plain,
-                segment_size: Some(3),
+                contents: &plain,
+                segment_size: Some(stride),
                 src_ip: None,
             })
             .unwrap();
-        let (wire, stride) = raw.sent.lock().unwrap().pop().unwrap();
-        assert_eq!(stride, Some(15));
+        let (wire, sent_stride) = raw.sent.lock().unwrap().pop().unwrap();
+        assert_eq!(sent_stride, Some(wire_stride));
         assert_eq!(wire.len(), plain.len() + 2 * NONCE_LEN);
-        assert_ne!(&wire[..NONCE_LEN], &wire[15..15 + NONCE_LEN]);
+        assert_ne!(
+            &wire[..NONCE_LEN],
+            &wire[wire_stride..wire_stride + NONCE_LEN]
+        );
 
         let wire_len = wire.len();
         raw.receive.lock().unwrap().push_back((
@@ -189,12 +195,12 @@ async fn assert_gso_datagram_boundaries(cipher: MorphCipher) {
             RecvMeta {
                 addr: "127.0.0.1:2".parse().unwrap(),
                 len: wire_len,
-                stride: 15,
+                stride: wire_stride,
                 ecn: None,
                 dst_ip: None,
             },
         ));
-        let mut output = [0xa7; 6];
+        let mut output = [0xa7; 120];
         let mut bufs = [IoSliceMut::new(&mut output)];
         let mut meta = [RecvMeta::default()];
         let count = poll_fn(|cx| socket.poll_recv(cx, &mut bufs, &mut meta))
@@ -204,7 +210,7 @@ async fn assert_gso_datagram_boundaries(cipher: MorphCipher) {
         assert_eq!(&output[..plain.len()], plain);
         assert!(output[plain.len()..].iter().all(|byte| *byte == 0xa7));
         assert_eq!(meta[0].len, plain.len());
-        assert_eq!(meta[0].stride, 3);
+        assert_eq!(meta[0].stride, stride);
     }
 }
 
@@ -215,6 +221,7 @@ async fn udp_discards_invalid_wire_datagrams_before_returning_valid_data() {
     let socket = MorphUdpSocket {
         inner: raw.clone(),
         cipher: MorphCipher::ChaCha,
+        grade: MorphGrade::Full,
         tx_key: key,
         rx_key: key,
         role: UdpRole::Client,
@@ -288,6 +295,7 @@ async fn udp_reuses_buffers_without_relaxing_current_receive_bounds() {
     let socket = MorphUdpSocket {
         inner: raw.clone(),
         cipher: MorphCipher::ChaCha,
+        grade: MorphGrade::Full,
         tx_key: key,
         rx_key: key,
         role: UdpRole::Client,
@@ -421,6 +429,7 @@ fn filter_socket(raw: Arc<FakeUdpSocket>, role: UdpRole) -> MorphUdpSocket {
     MorphUdpSocket {
         inner: raw,
         cipher: MorphCipher::ChaCha,
+        grade: MorphGrade::Full,
         tx_key: key,
         rx_key: key,
         role,

@@ -649,3 +649,116 @@ async fn aes_limits_each_tcp_direction() {
     stream.shutdown().await.unwrap();
     assert_eq!(peer.read(&mut wire).await.unwrap(), 0);
 }
+
+#[test]
+fn core_masks_headers_and_uses_absolute_offsets_across_records() {
+    for suite in [MorphCipher::ChaCha, MorphCipher::Aes] {
+        let key = [0x27; 32];
+        let nonce = [11; NONCE_LEN];
+        let mut plain = Vec::new();
+        let mut ranges = Vec::new();
+        for (prefix, size, skip) in [
+            ([23, 3, 3], 18432u16, true),
+            ([23, 3, 1], 31, false),
+            ([22, 3, 3], 19, false),
+            ([23, 3, 3], 18433, false),
+            ([23, 3, 3], 0, true),
+            ([23, 3, 3], 47, true),
+        ] {
+            let start = plain.len();
+            plain.extend(prefix);
+            plain.extend(size.to_be_bytes());
+            plain.resize(plain.len() + usize::from(size), 0x92);
+            ranges.push(start..if skip { start + 5 } else { plain.len() });
+        }
+        let mut full = plain.clone();
+        let mut cipher = TcpCipher::new(suite, &key, &nonce);
+        cipher.try_apply_keystream(&mut full).unwrap();
+        let mut expected = plain.clone();
+        for range in ranges {
+            expected[range.clone()].copy_from_slice(&full[range]);
+        }
+        let mut encoded = plain.clone();
+        let mut state = RecordState::default();
+        for (index, part) in encoded.chunks_mut(7).enumerate() {
+            state
+                .apply(&mut cipher, (index * 7) as u64, part, false)
+                .unwrap();
+        }
+        assert_eq!(encoded, expected);
+
+        let mut state = RecordState::default();
+        for (index, part) in encoded.chunks_mut(3).enumerate() {
+            state
+                .apply(&mut cipher, (index * 3) as u64, part, true)
+                .unwrap();
+        }
+        assert_eq!(encoded, plain);
+    }
+}
+
+#[test]
+fn core_commits_only_accepted_write_bytes() {
+    for cipher in [MorphCipher::ChaCha, MorphCipher::Aes] {
+        let written = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inner = PendingWriteStream {
+            ready: Arc::new(AtomicBool::new(true)),
+            writes: Arc::new(AtomicUsize::new(0)),
+            written: written.clone(),
+            outcomes: std::sync::Mutex::new(VecDeque::from([
+                WriteOutcome::Accept(2),
+                WriteOutcome::Pending,
+                WriteOutcome::Error(io::ErrorKind::Interrupted),
+                WriteOutcome::Accept(usize::MAX),
+            ])),
+        };
+        let mut keys = MorphKeys::derive(b"shared");
+        keys.grade = MorphGrade::Core;
+        keys.cipher = cipher;
+        let nonce = [17; NONCE_LEN];
+        let mut stream = MorphTcpStream::initialized_for_test(inner, &keys, nonce, true);
+        let mut context = Context::from_waker(Waker::noop());
+        let accepted = [23, 3, 3, 0, 3, 10, 20, 30, 22, 3, 3, 0, 1, 43];
+        assert!(matches!(
+            Pin::new(&mut stream).poll_write(&mut context, &accepted),
+            Poll::Ready(Ok(2))
+        ));
+        let abandoned = [1, 0, 1, 0xcc, 0xdd];
+        assert!(matches!(
+            Pin::new(&mut stream).poll_write(&mut context, &abandoned),
+            Poll::Pending
+        ));
+        assert!(matches!(
+            Pin::new(&mut stream).poll_write(&mut context, &abandoned),
+            Poll::Ready(Err(_))
+        ));
+        assert!(matches!(
+            Pin::new(&mut stream).poll_write(&mut context, &accepted[2..]),
+            Poll::Ready(Ok(12))
+        ));
+
+        let mut expected = accepted;
+        let mut cipher = TcpCipher::new(cipher, &keys.tcp_c2s, &nonce);
+        RecordState::default()
+            .apply(&mut cipher, 0, &mut expected, false)
+            .unwrap();
+        assert_eq!(*written.lock().unwrap(), expected);
+    }
+}
+
+#[tokio::test]
+async fn core_skipped_payload_still_exhausts_the_stream() {
+    for cipher in [MorphCipher::ChaCha, MorphCipher::Aes] {
+        let mut keys = MorphKeys::derive(b"shared");
+        keys.grade = MorphGrade::Core;
+        keys.cipher = cipher;
+        let (client_io, _server_io) = tokio::io::duplex(64);
+        let mut client =
+            MorphTcpStream::initialized_for_test(client_io, &keys, [7; NONCE_LEN], true);
+        client.write_all(&[23, 3, 3, 0, 10]).await.unwrap();
+        let state = client.morph.as_mut().unwrap();
+        state.write_offset = state.write_cipher.limit() - 1;
+        assert_eq!(client.write(&[1, 2]).await.unwrap(), 1);
+        assert!(client.write(&[2]).await.is_err());
+    }
+}

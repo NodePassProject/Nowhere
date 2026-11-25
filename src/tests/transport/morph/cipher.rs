@@ -51,8 +51,46 @@ fn aes_matches_tcp_and_udp_vectors() {
     ] {
         let mut actual = [0; 37];
         MorphCipher::Aes
-            .apply_datagram(key, &nonce, &plain, &mut actual)
+            .apply_datagram(
+                super::MorphGrade::Full,
+                false,
+                key,
+                &nonce,
+                &plain,
+                &mut actual,
+            )
             .unwrap();
         assert_eq!(actual, hex(expected));
+    }
+}
+
+#[test]
+fn core_datagram_masks_the_expected_ranges_at_absolute_offsets() {
+    let key = [12; 32];
+    let nonce = [5; 12];
+    for cipher in [MorphCipher::ChaCha, MorphCipher::Aes] {
+        for first in [0x40, 0xc0] {
+            for len in [1, 40, 41, 42, 139] {
+                let mut plain = vec![0x27; len];
+                plain[0] = first;
+                let mut full = vec![0; len];
+                cipher
+                    .apply_datagram(MorphGrade::Full, false, &key, &nonce, &plain, &mut full)
+                    .unwrap();
+                let mut core = vec![0; len];
+                cipher
+                    .apply_datagram(MorphGrade::Core, false, &key, &nonce, &plain, &mut core)
+                    .unwrap();
+                if first & 0x80 == 0 && len > 41 {
+                    full[25..len - 16].copy_from_slice(&plain[25..len - 16]);
+                }
+                assert_eq!(core, full);
+                let mut opened = vec![0; len];
+                cipher
+                    .apply_datagram(MorphGrade::Core, true, &key, &nonce, &core, &mut opened)
+                    .unwrap();
+                assert_eq!(opened, plain);
+            }
+        }
     }
 }

@@ -24,7 +24,7 @@ fn toolbox_configuration_errors_explain_the_failure_without_echoing_values() {
         ),
         (
             "vector://0123456789abcdef0123456789abcdef@localhost:2000?morph=secret",
-            "morph must be 0 or 1",
+            "morph must be 0, 1 or 2",
         ),
         (
             "vector://0123456789abcdef0123456789abcdef@localhost:2000?sni=secret:443",

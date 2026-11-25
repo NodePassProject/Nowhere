@@ -44,7 +44,7 @@ fn defaults_and_unknown_options_are_ignored() {
 
 #[test]
 fn recognized_invalid_values_and_missing_ingress_fail() {
-    for query in ["morph=2", "rate=-1", "etar=no", "pin=bad"] {
+    for query in ["morph=3", "rate=-1", "etar=no", "pin=bad"] {
         assert!(parse(query).is_err(), "{query}");
     }
     let url = Url::parse("vector://0123456789abcdef0123456789abcdef@localhost:2000").unwrap();
@@ -240,6 +240,13 @@ fn probe_and_fingerprint_use_decoded_key_bytes() {
 fn cipher_validates_the_first_literal_parameter_even_when_morph_is_disabled() {
     let aes = parse("%63ipher=chacha&cipher=%61es&cipher=%ZZ").unwrap();
     assert!(aes.effective_url().contains("morph=1&cipher=aes"));
+
+    let core = parse("morph=2&cipher=aes").unwrap();
+    assert!(core.effective_url().contains("morph=2&cipher=aes"));
+    assert_eq!(
+        core.morph_keys.as_ref().unwrap().udp_keys(),
+        aes.morph_keys.as_ref().unwrap().udp_keys()
+    );
 
     let disabled = parse("morph=0&cipher=aes").unwrap();
     assert!(disabled.morph_keys.is_none());

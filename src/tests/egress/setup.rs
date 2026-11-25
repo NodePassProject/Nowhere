@@ -94,7 +94,7 @@ fn handshake_timeout_is_shared_by_egress_connection_and_forwarding_per_instance(
         ("fedcba9876543210fedcba9876543210", 24700),
     ] {
         for carrier in ["tcp", "udp"] {
-            for morph in [0, 1] {
+            for morph in [0, 1, 2] {
                 let egress = Egress::new(
                     Url::parse(&format!(
                         "egress://{key}@127.0.0.1/{carrier}:2000?morph={morph}&pin={}",
@@ -104,6 +104,12 @@ fn handshake_timeout_is_shared_by_egress_connection_and_forwarding_per_instance(
                     Logger,
                 )
                 .unwrap();
+                let effective = Url::parse(&egress.effective).unwrap();
+                assert!(
+                    effective
+                        .query_pairs()
+                        .any(|(key, value)| { key == "morph" && value == morph.to_string() })
+                );
                 let expected = if std::env::var_os("NOW_TEST_HANDSHAKE_OVERRIDE").is_some() {
                     std::time::Duration::from_secs(45)
                 } else {

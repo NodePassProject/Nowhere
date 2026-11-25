@@ -30,6 +30,10 @@ fn startup_url_preserves_effective_values_and_omits_credentials() {
             "?morph=0",
             "portal://127.0.0.1:2000?out=direct&tls=1&dial=auto&morph=0&rate=0&etar=0",
         ),
+        (
+            "?morph=2&cipher=aes",
+            "portal://127.0.0.1:2000?out=direct&tls=1&dial=auto&morph=2&cipher=aes&rate=0&etar=0",
+        ),
     ] {
         let portal = Portal::new(
             Url::parse(&format!(
