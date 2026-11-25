@@ -118,6 +118,13 @@ congestion and transport budgets.
 Observe per-process and per-Flow behavior when choosing concurrency or rate
 settings. Use [Testing](testing.md#performance-measurements) for measurements.
 
+On Linux GNU builds, glibc heap fragmentation and retained free pages can keep
+RSS elevated after QUIC traffic subsides. To test whether memory returns to the
+OS sooner, start Nowhere with `MALLOC_MMAP_THRESHOLD_=32768`. This fixes the
+glibc `mmap` threshold at 32 KiB and can increase CPU use through more memory
+mapping and unmapping. Compare RSS and CPU under the same workload.
+See the [glibc allocation tunables](https://sourceware.org/glibc/manual/latest/html_node/Memory-Allocation-Tunables.html).
+
 Shutdown stops admission, cancels service work and drains within
 `NOW_SHUTDOWN_TIMEOUT` (default `5s`). Tasks and owned resources are reclaimed;
 active counters decrement with their owners. Pending handshakes, authentication

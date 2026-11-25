@@ -104,7 +104,8 @@ Optional parameters:
 
 The `fingerprint` command additionally accepts `sni` and requires an explicit
 `morph=0`, `morph=1` or `morph=2`. Set the mode and Cipher used by Portal.
-Inspection uses TCP/TLS even when the link specifies `net=udp`. See
+Inspection uses TCP/TLS even when the link specifies `net=udp`. With Morph
+enabled, inspection validates `NOW_MORPH_TCP_PRELUDE`. See
 [Operations](operations.md#diagnose-target-setup). Client applications define
 their own support for additional share-link parameters.
 
