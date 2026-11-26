@@ -14,7 +14,7 @@ sender is therefore not sufficient for this Portal.
 | --- | --- |
 | [Configuration](configuration.md) | Service URLs, runtime defaults and Morph prelude policy |
 | [Prelude Extension](prelude.md) | Morph TCP authentication and replay protection; Morph UDP Prelude |
-| [Grade Extension](grade.md) | Full and Core Morph modes, shared directional labels and masking ranges |
+| [Grade Extension](grade.md) | Full and Core Morph grades, shared directional labels and masking ranges |
 | [Cipher Extension](cipher.md) | ChaCha20-IETF and AES-128-CTR keystream rules |
 | [Egress Extension](egress.md) | Optional remote exits: deployment, authentication, registration and Wire rules |
 | [Security](security.md) | Certificate trust and implementation resource protection |

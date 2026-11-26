@@ -10,7 +10,7 @@ Start a trusted connection, choose a transport and place the exit.
 |---|---|
 | [Quick start](quick-start.md) | Build, connect applications and verify the first Flow |
 | [Configuration](configuration.md) | Role URLs, options, defaults and environment settings |
-| [Grade Extension](grade.md) | Full and Core Morph modes and masking ranges |
+| [Grade Extension](grade.md) | Full and Core Morph grades and masking ranges |
 | [Cipher Extension](cipher.md) | ChaCha20-IETF and AES-128-CTR |
 | [Prelude Extension](prelude.md) | Morph TCP authentication and replay protection; Morph UDP Prelude |
 | [Egress Extension](egress.md) | Remote-exit deployment, lifecycle and Wire rules |

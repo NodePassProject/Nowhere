@@ -16,17 +16,18 @@ keystream, and the
 
 ## Configuration
 
-Vector, Portal and Egress select Morph with the `morph` URL parameter. The same
-parameter selects Morph in a [share link](configuration.md#share-links).
+Vector, Portal, Egress and [share links](configuration.md#share-links) use
+`morph=1` (default) to enable Morph and `morph=0` to pass transport bytes
+through.
 
-| `morph` | Mode | Masking |
-| --- | --- | --- |
-| `0` | Off | Transport bytes pass through |
-| `1` | Full (default) | All TLS stream or QUIC Datagram bytes |
-| `2` | Core | TLS Record headers and selected TLS and QUIC bytes |
+| `grade` | Masking with Morph enabled |
+| --- | --- |
+| `full` (default) | All TLS stream or QUIC Datagram bytes |
+| `core` | TLS Record headers and selected TLS and QUIC bytes |
 
 Both grades support ChaCha20-IETF (`cipher=chacha`, the default) and
-AES-128-CTR (`cipher=aes`).
+AES-128-CTR (`cipher=aes`). Grade and Cipher are validated independently
+of the enable switch and apply only when Morph is enabled.
 
 ## Directional keys
 
@@ -90,7 +91,8 @@ Each GSO or GRO segment has its own Nonce and offsets.
 
 ## Compatibility
 
-Peers select the same Morph mode and, when enabled, the same Cipher. The
-envelope carries no grade or Cipher identifier. Configuration is out of band,
-with no negotiation or fallback. Portal requires the authenticated TCP Prelude
-for either grade. See [Interoperability](interoperability.md#morph).
+Peers select the same Morph enable setting and, when enabled, the same
+Grade and Cipher. The envelope carries no Grade or Cipher identifier.
+Configuration is out of band, with no negotiation or fallback. Portal requires
+the authenticated TCP Prelude for either grade. See
+[Interoperability](interoperability.md#morph).

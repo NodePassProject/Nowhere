@@ -87,7 +87,7 @@ Share links use a compact host and port:
 
 ```text
 nowhere://KEY@HOST:PORT
-nowhere://KEY@HOST:PORT?net=udp&morph=1&cipher=aes#NAME
+nowhere://KEY@HOST:PORT?net=udp&morph=1&grade=core&cipher=aes#NAME
 ```
 
 Share links do not accept carrier paths. Use a concrete DNS name, IPv4 address
@@ -99,13 +99,14 @@ Optional parameters:
 | Parameter | Accepted value | Default | Purpose |
 |---|---|---|---|
 | `net` | `tcp` or `udp` | `tcp` | Client carrier: TLS or QUIC |
-| `morph` | `0`, `1` or `2` | `1` | [Morph mode](grade.md#configuration). Peers must agree. |
+| `morph` | `0` or `1` | `1` | Morph enable switch. Peers must agree. |
+| `grade` | `full` or `core` | `full` | [Masking grade](grade.md#configuration) for enabled Morph |
 | `cipher` | `chacha` or `aes` | `chacha` | [Masking algorithm](cipher.md) for enabled Morph |
 
 The `fingerprint` command additionally accepts `sni` and requires an explicit
-`morph=0`, `morph=1` or `morph=2`. Set the mode and Cipher used by Portal.
-Inspection uses TCP/TLS even when the link specifies `net=udp`. With Morph
-enabled, inspection validates `NOW_MORPH_TCP_PRELUDE`. See
+`morph=0` or `morph=1`. Match Portal's switch and, when enabled, its Grade
+and Cipher. Inspection uses TCP/TLS even when the link specifies `net=udp`.
+With Morph enabled, inspection validates `NOW_MORPH_TCP_PRELUDE`. See
 [Operations](operations.md#diagnose-target-setup). Client applications define
 their own support for additional share-link parameters.
 
@@ -126,7 +127,8 @@ Portal listens on `ENDPOINT` and uses one fixed `out` for all Flows.
 | `dial` | IP literal or `auto` | `auto` | Outbound source binding; an IP restricts connections to its address family |
 | `dial4` | IPv4 literal or `auto` | `auto` | IPv4 outbound source binding |
 | `dial6` | IPv6 literal or `auto` | `auto` | IPv6 outbound source binding; IPv4-mapped addresses are invalid |
-| `morph` | `0`, `1` or `2` | `1` | [Morph mode](grade.md#configuration). Peers must agree. |
+| `morph` | `0` or `1` | `1` | Morph enable switch. Peers must agree. |
+| `grade` | `full` or `core` | `full` | [Masking grade](grade.md#configuration) for enabled Morph |
 | `cipher` | `chacha` or `aes` | `chacha` | [Masking algorithm](cipher.md) for enabled Morph |
 | `rate` | `0..=2147483647` Mbps | `0` | Vector-to-Target upload limit; `0` disables it |
 | `etar` | `0..=2147483647` Mbps | `0` | Target-to-Vector download limit; `0` disables it |
@@ -171,7 +173,8 @@ Vector connects to Portal over the carrier selected by `ENDPOINT`.
 | `in` | `[USER:PASS@]HOST:PORT` | Required for a service; optional for probe | Local SOCKS5 listener, with optional authentication |
 | `sni` | ASCII DNS name, empty or `none` | Endpoint host | Verified server name; empty or `none` uses the host |
 | `pin` | 64 lowercase hexadecimal characters, empty or `none` | System CA and hostname verification | Exact certificate SHA-256; empty or `none` uses normal verification |
-| `morph` | `0`, `1` or `2` | `1` | [Morph mode](grade.md#configuration). Peers must agree. |
+| `morph` | `0` or `1` | `1` | Morph enable switch. Peers must agree. |
+| `grade` | `full` or `core` | `full` | [Masking grade](grade.md#configuration) for enabled Morph |
 | `cipher` | `chacha` or `aes` | `chacha` | [Masking algorithm](cipher.md) for enabled Morph |
 | `rate` | `0..=2147483647` Mbps | `0` | Vector-to-Target upload limit; `0` disables it |
 | `etar` | `0..=2147483647` Mbps | `0` | Target-to-Vector download limit; `0` disables it |
@@ -211,7 +214,8 @@ target access. The `HOST:PORT` shorthand selects QUIC.
 | `dial` | IP literal or `auto` | `auto` | Target source binding; an IP restricts target connections to its address family |
 | `dial4` | IPv4 literal or `auto` | `auto` | IPv4 target source binding |
 | `dial6` | IPv6 literal or `auto` | `auto` | IPv6 target source binding; IPv4-mapped addresses are invalid |
-| `morph` | `0`, `1` or `2` | `1` | [Morph mode](grade.md#configuration). Peers must agree. |
+| `morph` | `0` or `1` | `1` | Morph enable switch. Peers must agree. |
+| `grade` | `full` or `core` | `full` | [Masking grade](grade.md#configuration) for enabled Morph |
 | `cipher` | `chacha` or `aes` | `chacha` | [Masking algorithm](cipher.md) for enabled Morph |
 | `rate` | `0..=2147483647` Mbps | `0` | Vector-to-Target upload limit; `0` disables it |
 | `etar` | `0..=2147483647` Mbps | `0` | Target-to-Vector download limit; `0` disables it |
@@ -227,8 +231,8 @@ use automatic source selection.
 Startup logs show role URLs with explicit defaults. Shared Key, SOCKS
 credentials, `crt`, `key` and unknown options are omitted. Portal with
 `out=egress` also omits source-binding parameters. These redacted URLs are
-diagnostic views. They show the effective `morph` and include `cipher` when
-Morph is enabled.
+diagnostic views. They show the effective `morph` and include `grade` and
+`cipher` when Morph is enabled.
 
 ## Parameter overview
 
@@ -246,7 +250,8 @@ A dash means that the role does not recognize the parameter.
 | `dial` | IP literal, `auto` | `auto` | Yes | — | Yes |
 | `dial4` | IPv4 literal, `auto` | `auto` | Yes | — | Yes |
 | `dial6` | IPv6 literal, `auto` | `auto` | Yes | — | Yes |
-| `morph` | `0`, `1`, `2` | `1` | Yes | Yes | Yes |
+| `morph` | `0`, `1` | `1` | Yes | Yes | Yes |
+| `grade` | `full`, `core` | `full` | Yes | Yes | Yes |
 | `cipher` | `chacha`, `aes` | `chacha` | Yes | Yes | Yes |
 | `rate` | `0..=2147483647` Mbps | `0` | Yes | Yes | Yes |
 | `etar` | `0..=2147483647` Mbps | `0` | Yes | Yes | Yes |

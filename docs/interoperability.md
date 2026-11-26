@@ -50,10 +50,11 @@ reconnection must not recover a previous Flow.
 
 ## Morph
 
-Peers use the same [Morph mode](grade.md) and, when enabled, the same
-[Cipher](cipher.md). Cover Off, Full and Core, including TCP partial reads and
-writes, absolute Cipher offsets, UDP segmentation boundaries and nonce overhead. The receive path must accept the
-64-byte prelude independently of the sender's generation policy. Nowhere's
+Peers use the same Morph enable setting and, when enabled, the same
+[Grade](grade.md) and [Cipher](cipher.md). Cover Off, Full and Core, including
+TCP partial reads and writes, absolute Cipher offsets, UDP segmentation
+boundaries and nonce overhead. The receive path must accept the 64-byte Prelude
+independently of the sender's generation policy. Nowhere's
 [prelude policies](configuration.md#tcp-morph-prelude) do not require a matching
 policy on the peer.
 

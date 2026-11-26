@@ -133,9 +133,8 @@ the Core contract and documents Nowhere's extensions.
 
 ### Wire masking
 
-Full Morph with ChaCha20-IETF (`morph=1&cipher=chacha`) is the default.
-Core Morph (`morph=2`) masks selected byte ranges. Set `morph=0` to disable
-Morph. With Morph enabled, peers use the same
+Full Morph with ChaCha20-IETF is the default. Core Morph masks selected byte ranges.
+Set `morph=0` to disable Morph. With Morph enabled, peers use the same
 [grade](docs/grade.md) and [cipher](docs/cipher.md).
 
 TLS and QUIC provide certificate verification and authenticated encryption.
