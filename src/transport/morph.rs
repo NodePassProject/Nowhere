@@ -41,21 +41,33 @@ pub(crate) enum MorphGrade {
 }
 
 impl MorphGrade {
-    pub(crate) fn parse(value: Option<&str>) -> anyhow::Result<Option<Self>> {
+    fn parse(value: Option<&str>) -> anyhow::Result<Self> {
         match value {
-            Some("0") => Ok(None),
-            None | Some("1") => Ok(Some(Self::Full)),
-            Some("2") => Ok(Some(Self::Core)),
-            Some(_) => anyhow::bail!("morph must be 0, 1 or 2"),
+            None | Some("full") => Ok(Self::Full),
+            Some("core") => Ok(Self::Core),
+            Some(_) => anyhow::bail!("grade must be full or core"),
         }
     }
 
-    fn number(self) -> u8 {
+    fn as_str(self) -> &'static str {
         match self {
-            Self::Full => 1,
-            Self::Core => 2,
+            Self::Full => "full",
+            Self::Core => "core",
         }
     }
+}
+
+pub(crate) fn parse_morph(
+    query: &std::collections::HashMap<String, String>,
+) -> anyhow::Result<Option<(MorphGrade, MorphCipher)>> {
+    let enabled = match query.get("morph").map(String::as_str) {
+        None | Some("1") => true,
+        Some("0") => false,
+        Some(_) => anyhow::bail!("morph must be 0 or 1"),
+    };
+    let grade = MorphGrade::parse(query.get("grade").map(String::as_str))?;
+    let cipher = MorphCipher::parse(query.get("cipher").map(String::as_str))?;
+    Ok(enabled.then_some((grade, cipher)))
 }
 
 type MorphKeyBytes = [u8; 32];
@@ -91,12 +103,15 @@ impl MorphKeys {
         })
     }
 
-    pub(crate) fn cipher_query(&self) -> &'static str {
-        self.cipher.query()
-    }
-
-    pub(crate) fn mode_number(&self) -> u8 {
-        self.grade.number()
+    pub(crate) fn effective_query(keys: Option<&Self>) -> String {
+        match keys {
+            Some(keys) => format!(
+                "morph=1&grade={}&cipher={}",
+                keys.grade.as_str(),
+                keys.cipher.as_str()
+            ),
+            None => "morph=0".to_owned(),
+        }
     }
 
     pub(crate) fn derive(shared_key: &[u8]) -> Self {

@@ -55,8 +55,9 @@ Service options:
   dial6=<ipv6|auto>   IPv6 source; mutually exclusive with dial.
   sni=<name|none>     Client verified server name; default endpoint host.
   pin=<sha256|none>   Exact certificate pin; otherwise system CA verification.
-  morph=0|1|2         Morph: off, Full, or Core; default 1, both peers must agree.
-  cipher=chacha|aes   Morph algorithm; default chacha, both peers must agree.
+  morph=0|1           Morph switch; default 1, both peers must agree.
+  grade=full|core     Morph masking grade; default full, both enabled peers must agree.
+  cipher=chacha|aes   Morph algorithm; default chacha, both enabled peers must agree.
   rate=<mbps>         Vector-to-target limit; default 0 disables it.
   etar=<mbps>         Target-to-Vector limit; default 0 disables it.
 
@@ -73,7 +74,7 @@ Constraints:
   out=egress accepts TLS/QUIC and rejects dial, dial4 and dial6.
   Shared keys require exactly 32 lowercase hex text characters.
   Unknown parameters are ignored; first recognized duplicate wins.
-  fingerprint requires morph=0|1|2; net defaults to tcp.
+  fingerprint requires explicit morph=0|1; net defaults to tcp.
   probe sends no target payload. fingerprint queries TCP/TLS only.
 
 Documentation:

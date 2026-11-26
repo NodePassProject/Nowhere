@@ -93,15 +93,12 @@ fn fingerprint_share_links_decode_keys_and_ignore_display_names_and_flow_options
 #[test]
 fn fingerprint_defaults_carrier_and_requires_morph() {
     for (query, expected) in [
-        ("", "fingerprint requires morph=0, morph=1 or morph=2"),
-        (
-            "net=udp",
-            "fingerprint requires morph=0, morph=1 or morph=2",
-        ),
+        ("", "fingerprint requires morph=0 or morph=1"),
+        ("net=udp", "fingerprint requires morph=0 or morph=1"),
         ("net=&morph=0", "net must be tcp or udp"),
         ("net=invalid&net=tcp&morph=0", "net must be tcp or udp"),
-        ("net=tcp&morph=", "morph must be 0, 1 or 2"),
-        ("net=tcp&morph=invalid&morph=0", "morph must be 0, 1 or 2"),
+        ("net=tcp&morph=", "morph must be 0 or 1"),
+        ("net=tcp&morph=invalid&morph=0", "morph must be 0 or 1"),
     ] {
         let url = Url::parse(&format!(
             "nowhere://0123456789abcdef0123456789abcdef@localhost:2000?{query}#NAME"

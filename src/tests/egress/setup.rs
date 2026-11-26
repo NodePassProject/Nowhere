@@ -74,6 +74,7 @@ fn fixed_quic_and_effective_defaults_ignore_unknown_options_and_hide_credentials
             ("dial4".into(), "192.0.2.254".into()),
             ("dial6".into(), "auto".into()),
             ("morph".into(), "1".into()),
+            ("grade".into(), "full".into()),
             ("cipher".into(), "chacha".into()),
             ("rate".into(), "0".into()),
             ("etar".into(), "0".into()),
@@ -98,10 +99,10 @@ fn handshake_timeout_is_shared_by_egress_connection_and_forwarding_per_instance(
         ("fedcba9876543210fedcba9876543210", 24700),
     ] {
         for carrier in ["tcp", "udp"] {
-            for morph in [0, 1, 2] {
+            for (morph, grade) in [(0, "core"), (1, "full"), (1, "core")] {
                 let egress = Egress::new(
                     Url::parse(&format!(
-                        "egress://{key}@127.0.0.1/{carrier}:2000?morph={morph}&pin={}",
+                        "egress://{key}@127.0.0.1/{carrier}:2000?morph={morph}&grade={grade}&cipher=aes&pin={}",
                         "0".repeat(64)
                     ))
                     .unwrap(),
@@ -109,10 +110,16 @@ fn handshake_timeout_is_shared_by_egress_connection_and_forwarding_per_instance(
                 )
                 .unwrap();
                 let effective = Url::parse(&egress.effective).unwrap();
+                let morph_query = if morph == 0 {
+                    "morph=0".to_owned()
+                } else {
+                    format!("morph=1&grade={grade}&cipher=aes")
+                };
                 assert!(
                     effective
-                        .query_pairs()
-                        .any(|(key, value)| { key == "morph" && value == morph.to_string() })
+                        .query()
+                        .unwrap()
+                        .contains(&format!("&{morph_query}&rate="))
                 );
                 let expected = if std::env::var_os("NOW_TEST_HANDSHAKE_OVERRIDE").is_some() {
                     std::time::Duration::from_secs(45)

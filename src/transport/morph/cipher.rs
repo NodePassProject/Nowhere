@@ -30,10 +30,10 @@ impl MorphCipher {
         }
     }
 
-    pub(super) fn query(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
-            Self::ChaCha => "&cipher=chacha",
-            Self::Aes => "&cipher=aes",
+            Self::ChaCha => "chacha",
+            Self::Aes => "aes",
         }
     }
 

@@ -16,7 +16,7 @@ use crate::common::{
     resolve_bind_addrs,
 };
 use crate::protocol::Credentials;
-use crate::transport::{Buffers, MorphCipher, MorphGrade, MorphKeys, RateLimiter, Stats};
+use crate::transport::{Buffers, MorphKeys, RateLimiter, Stats, parse_morph};
 
 use super::{
     Portal, PortalInner, admission,
@@ -25,7 +25,8 @@ use super::{
 };
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
-    "tls", "crt", "key", "rate", "etar", "dial", "dial4", "dial6", "morph", "cipher", "out",
+    "tls", "crt", "key", "rate", "etar", "dial", "dial4", "dial6", "morph", "grade", "cipher",
+    "out",
 ];
 
 impl Portal {
@@ -38,16 +39,16 @@ impl Portal {
             anyhow::bail!("invalid Portal URL");
         }
         let query = query_first(&url, PORTAL_QUERY_PARAMETERS)?;
-        let grade = validate_query(&query)?;
+        validate_query(&query)?;
+        let morph = parse_morph(&query)?;
         let endpoint = ServiceEndpoint::parse(&url, true, "portal endpoint")?;
         let bind_host = listen_host.unwrap_or(&endpoint.host);
         let credentials = Credentials::for_service(&url, "Portal listener")?;
         let handshake_timeout =
             crate::common::read_handshake_timeout(&mut crate::common::env_value, &url)?;
         let runtime = super::config::PortalRuntimeConfig::from_env(handshake_timeout)?;
-        let cipher = MorphCipher::parse(query.get("cipher").map(String::as_str))?;
-        let morph_keys = grade
-            .map(|grade| MorphKeys::from_url(&url, cipher, grade))
+        let morph_keys = morph
+            .map(|(grade, cipher)| MorphKeys::from_url(&url, cipher, grade))
             .transpose()?;
         let out = query.get("out").map(String::as_str).unwrap_or("direct");
         let registry = if out == "egress" {
@@ -83,15 +84,14 @@ impl Portal {
             morph_keys.is_some(),
         )?;
         let effective = format!(
-            "portal://{}?out={out_label}&tls={tls_mode}{}&morph={}{}&rate={rate}&etar={etar}",
+            "portal://{}?out={out_label}&tls={tls_mode}{}&{}&rate={rate}&etar={etar}",
             endpoint.canonical(),
             if registry.is_some() {
                 String::new()
             } else {
                 format!("&{}", dial.to_string().replace(' ', "&"))
             },
-            morph_keys.as_ref().map_or(0, MorphKeys::mode_number),
-            morph_keys.as_ref().map_or("", MorphKeys::cipher_query)
+            MorphKeys::effective_query(morph_keys.as_ref())
         );
         let outbound = match &registry {
             Some(registry) => Outlet::Egress(registry.clone()),
@@ -148,7 +148,7 @@ impl Portal {
     }
 }
 
-fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<Option<MorphGrade>> {
+fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<()> {
     for name in ["tls", "crt", "key", "dial", "out"] {
         if query.get(name).is_some_and(String::is_empty) {
             anyhow::bail!("empty {name} parameter");
@@ -159,14 +159,13 @@ fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<O
     {
         anyhow::bail!("tls=1 or tls=2 required");
     }
-    let grade = MorphGrade::parse(query.get("morph").map(String::as_str))?;
     let tls_is_ca = query.get("tls").is_some_and(|value| value == "2");
     let has_crt = query.contains_key("crt");
     let has_key = query.contains_key("key");
     if (tls_is_ca && !(has_crt && has_key)) || (!tls_is_ca && (has_crt || has_key)) {
         anyhow::bail!("crt and key are required exactly when tls=2");
     }
-    Ok(grade)
+    Ok(())
 }
 
 #[cfg(test)]

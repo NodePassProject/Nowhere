@@ -13,7 +13,7 @@ use url::Url;
 use crate::common::{DialPolicy, Logger, OutboundDialer, parse_rate, query_first};
 use crate::portal::forward::{Forwarder, Outlet};
 use crate::protocol::Credentials;
-use crate::transport::{Buffers, RateLimiter, Stats};
+use crate::transport::{Buffers, MorphKeys, RateLimiter, Stats};
 use crate::vector::{PortalClientConfig, tls::ClientTls};
 
 use super::Egress;
@@ -27,7 +27,7 @@ impl Egress {
         let query = query_first(
             &url,
             &[
-                "sni", "pin", "morph", "cipher", "dial", "dial4", "dial6", "rate", "etar",
+                "sni", "pin", "morph", "grade", "cipher", "dial", "dial4", "dial6", "rate", "etar",
             ],
         )?;
         let config = PortalClientConfig::parse(&url, &query)?;
@@ -39,19 +39,12 @@ impl Egress {
         let tls = ClientTls::new(&config)?;
         let dial = DialPolicy::from_query(&query)?;
         let effective = format!(
-            "egress://{}?sni={}&pin={}&{}&morph={}{}&rate={upload}&etar={download}",
+            "egress://{}?sni={}&pin={}&{}&{}&rate={upload}&etar={download}",
             config.endpoint(),
             config.sni.as_deref().unwrap_or(config.host()),
             config.pin.as_deref().unwrap_or("none"),
             dial.to_string().replace(' ', "&"),
-            config
-                .morph_keys
-                .as_ref()
-                .map_or(0, crate::transport::MorphKeys::mode_number),
-            config
-                .morph_keys
-                .as_ref()
-                .map_or("", |keys| keys.cipher_query())
+            MorphKeys::effective_query(config.morph_keys.as_ref())
         );
         let tls_pool_max = if config.net == crate::vector::config::CarrierMode::Tcp {
             tls_pool_max_from_env()?

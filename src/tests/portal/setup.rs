@@ -3,8 +3,6 @@
 
 //! Portal effective configuration, outlet selection, defaults, and credential redaction tests.
 
-use std::collections::HashMap;
-
 use super::*;
 
 #[test]
@@ -12,23 +10,23 @@ fn startup_url_preserves_effective_values_and_omits_credentials() {
     for (query, expected) in [
         (
             "?net=%ZZ&socks=%FF&unknown=%ZZ",
-            "portal://127.0.0.1:2000?out=direct&tls=1&dial=auto&morph=1&cipher=chacha&rate=0&etar=0",
+            "portal://127.0.0.1:2000?out=direct&tls=1&dial=auto&morph=1&grade=full&cipher=chacha&rate=0&etar=0",
         ),
         (
             "?etar=20&rate=10&dial4=127.0.0.1&morph=1&out=a%3Ab:p%40ss@localhost:1080",
-            "portal://127.0.0.1:2000?out=localhost:1080&tls=1&dial4=127.0.0.1&dial6=auto&morph=1&cipher=chacha&rate=10&etar=20",
+            "portal://127.0.0.1:2000?out=localhost:1080&tls=1&dial4=127.0.0.1&dial6=auto&morph=1&grade=full&cipher=chacha&rate=10&etar=20",
         ),
         (
             "?out=egress&unknown=secret",
-            "portal://127.0.0.1:2000?out=egress&tls=1&morph=1&cipher=chacha&rate=0&etar=0",
+            "portal://127.0.0.1:2000?out=egress&tls=1&morph=1&grade=full&cipher=chacha&rate=0&etar=0",
         ),
         (
-            "?morph=0",
+            "?morph=0&grade=core&cipher=aes",
             "portal://127.0.0.1:2000?out=direct&tls=1&dial=auto&morph=0&rate=0&etar=0",
         ),
         (
-            "?morph=2&cipher=aes",
-            "portal://127.0.0.1:2000?out=direct&tls=1&dial=auto&morph=2&cipher=aes&rate=0&etar=0",
+            "?grade=core&cipher=aes",
+            "portal://127.0.0.1:2000?out=direct&tls=1&dial=auto&morph=1&grade=core&cipher=aes&rate=0&etar=0",
         ),
     ] {
         let portal = Portal::new(
@@ -39,18 +37,7 @@ fn startup_url_preserves_effective_values_and_omits_credentials() {
             Logger,
         )
         .unwrap();
-        let actual = Url::parse(&portal.inner.effective).unwrap();
-        let expected = Url::parse(expected).unwrap();
-        assert_eq!(actual.scheme(), expected.scheme());
-        assert_eq!(actual.host_str(), expected.host_str());
-        assert_eq!(actual.port(), expected.port());
-        assert!(actual.username().is_empty());
-        assert!(actual.password().is_none());
-        assert_eq!(actual.query_pairs().count(), expected.query_pairs().count());
-        assert_eq!(
-            actual.query_pairs().collect::<HashMap<_, _>>(),
-            expected.query_pairs().collect::<HashMap<_, _>>()
-        );
+        assert_eq!(portal.inner.effective, expected);
     }
 }
 

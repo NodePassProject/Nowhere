@@ -11,7 +11,7 @@ async fn fingerprint_rejects_invalid_raw_share_links_before_network_access() {
     for (raw, expected) in [
         (
             format!("nowhere://{KEY}@localhost:2000"),
-            "fingerprint requires morph=0, morph=1 or morph=2",
+            "fingerprint requires morph=0 or morph=1",
         ),
         (
             format!("nowhere://{KEY}@localhost/tcp:2006/%2e%2e/udp:2017#Name"),

@@ -37,6 +37,7 @@ fn defaults_and_unknown_options_are_ignored() {
             ("sni".into(), "localhost".into()),
             ("pin".into(), "none".into()),
             ("morph".into(), "1".into()),
+            ("grade".into(), "full".into()),
             ("cipher".into(), "chacha".into()),
             ("rate".into(), "0".into()),
             ("etar".into(), "0".into()),
@@ -243,21 +244,36 @@ fn probe_and_fingerprint_use_decoded_key_bytes() {
 }
 
 #[test]
-fn cipher_validates_the_first_literal_parameter_even_when_morph_is_disabled() {
-    let aes = parse("%63ipher=chacha&cipher=%61es&cipher=%ZZ").unwrap();
-    assert!(aes.effective_url().contains("morph=1&cipher=aes"));
+fn effective_url_reports_morph_switch_grade_and_cipher() {
+    let udp_keys = MorphKeys::derive(b"0123456789abcdef0123456789abcdef").udp_keys();
+    for (query, expected) in [
+        ("", "morph=1&grade=full&cipher=chacha"),
+        (
+            "morph=1&morph=2&cipher=aes",
+            "morph=1&grade=full&cipher=aes",
+        ),
+        ("grade=core", "morph=1&grade=core&cipher=chacha"),
+        (
+            "%67rade=full&grade=%63ore&grade=%ZZ&%63ipher=chacha&cipher=%61es&cipher=%ZZ",
+            "morph=1&grade=core&cipher=aes",
+        ),
+        ("morph=0&grade=core&cipher=aes", "morph=0"),
+    ] {
+        let config = parse(query).unwrap();
+        assert_eq!(
+            config.morph_keys.as_ref().map(MorphKeys::udp_keys),
+            (expected != "morph=0").then_some(udp_keys)
+        );
+        assert!(
+            config
+                .effective_url()
+                .contains(&format!("&{expected}&rate="))
+        );
+    }
+}
 
-    let core = parse("morph=2&cipher=aes").unwrap();
-    assert!(core.effective_url().contains("morph=2&cipher=aes"));
-    assert_eq!(
-        core.morph_keys.as_ref().unwrap().udp_keys(),
-        aes.morph_keys.as_ref().unwrap().udp_keys()
-    );
-
-    let disabled = parse("morph=0&cipher=aes").unwrap();
-    assert!(disabled.morph_keys.is_none());
-    assert!(!disabled.effective_url().contains("cipher="));
-
+#[test]
+fn morph_parameters_validate_the_first_literal_value_even_when_disabled() {
     for query in [
         "morph=0&cipher=AES",
         "cipher",
@@ -331,17 +347,17 @@ fn morph_prelude_validation_child() {
     let pin = "0".repeat(64);
 
     for carrier in ["tcp", "udp"] {
-        for morph in [0, 1, 2] {
+        for (morph, grade) in [(0, "core"), (1, "full"), (1, "core")] {
             let vector = Url::parse(&format!(
-                "vector://{KEY}@127.0.0.1/{carrier}:2000?in=127.0.0.1:1080&morph={morph}&pin={pin}"
+                "vector://{KEY}@127.0.0.1/{carrier}:2000?in=127.0.0.1:1080&morph={morph}&grade={grade}&pin={pin}"
             ))
             .unwrap();
             let egress = Url::parse(&format!(
-                "egress://{KEY}@127.0.0.1/{carrier}:2000?morph={morph}&pin={pin}"
+                "egress://{KEY}@127.0.0.1/{carrier}:2000?morph={morph}&grade={grade}&pin={pin}"
             ))
             .unwrap();
             let share = Url::parse(&format!(
-                "nowhere://{KEY}@127.0.0.1:2000?net={carrier}&morph={morph}"
+                "nowhere://{KEY}@127.0.0.1:2000?net={carrier}&morph={morph}&grade={grade}"
             ))
             .unwrap();
 

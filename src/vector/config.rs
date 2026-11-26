@@ -15,9 +15,10 @@ use crate::common::{
     query_first_with_unlisted,
 };
 use crate::protocol::Credentials;
-use crate::transport::{MorphCipher, MorphGrade, MorphKeys};
+use crate::transport::{MorphKeys, parse_morph};
 
-const VECTOR_CLIENT_QUERY_KEYS: &[&str] = &["sni", "pin", "rate", "etar", "morph", "cipher"];
+const VECTOR_CLIENT_QUERY_KEYS: &[&str] =
+    &["sni", "pin", "rate", "etar", "morph", "grade", "cipher"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CarrierMode {
@@ -87,17 +88,15 @@ impl PortalClientConfig {
             },
             _ => bail!("unsupported client URL scheme"),
         };
-        let cipher = MorphCipher::parse(query.get("cipher").map(String::as_str))?;
-        let grade = MorphGrade::parse(query.get("morph").map(String::as_str))
-            .map_err(|error| anyhow::anyhow!("{context}: {error}"))?;
-        if grade.is_some() {
+        let morph = parse_morph(query).map_err(|error| anyhow::anyhow!("{context}: {error}"))?;
+        if morph.is_some() {
             match net {
                 CarrierMode::Tcp => crate::transport::validate_tcp_prelude_env()?,
                 CarrierMode::Udp => crate::transport::validate_udp_prelude_env()?,
             }
         }
-        let morph_keys = grade
-            .map(|grade| MorphKeys::from_url(url, cipher, grade))
+        let morph_keys = morph
+            .map(|(grade, cipher)| MorphKeys::from_url(url, cipher, grade))
             .transpose()?;
         let sni = query
             .get("sni")
@@ -178,9 +177,9 @@ impl PortalClientConfig {
         }
         let mut clean = url.clone();
         clean.set_fragment(None);
-        let query = query_first(&clean, &["net", "morph", "cipher", "sni"])?;
+        let query = query_first(&clean, &["net", "morph", "grade", "cipher", "sni"])?;
         if !query.contains_key("morph") {
-            bail!("fingerprint requires morph=0, morph=1 or morph=2");
+            bail!("fingerprint requires morph=0 or morph=1");
         }
         Self::parse(&clean, &query)
     }
@@ -262,13 +261,12 @@ impl VectorConfig {
 
     pub(super) fn effective_url(&self) -> String {
         format!(
-            "vector://{}?in={}&sni={}&pin={}&morph={}{}&rate={}&etar={}",
+            "vector://{}?in={}&sni={}&pin={}&{}&rate={}&etar={}",
             self.endpoint(),
             self.socks.endpoint(),
             self.sni.as_deref().unwrap_or(self.host()),
             self.pin.as_deref().unwrap_or("none"),
-            self.morph_keys.as_ref().map_or(0, MorphKeys::mode_number),
-            self.morph_keys.as_ref().map_or("", MorphKeys::cipher_query),
+            MorphKeys::effective_query(self.morph_keys.as_ref()),
             self.rate_mbps,
             self.etar_mbps,
         )
