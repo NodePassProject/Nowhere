@@ -14,7 +14,6 @@ const BUCKETS: usize = CAPACITY * 2;
 const EMPTY: u32 = u32::MAX;
 const WINDOW: usize = 1024;
 
-#[derive(Clone, Copy)]
 struct Entry {
     identity: u64,
     highest: u64,
@@ -23,10 +22,9 @@ struct Entry {
 }
 
 struct ReplayState {
-    entries: Box<[Entry]>,
+    entries: Vec<Entry>,
     buckets: Box<[u32]>,
     hash: RandomState,
-    len: usize,
     oldest: usize,
 }
 
@@ -38,19 +36,9 @@ impl ReplayProtection {
     pub(super) fn new() -> Self {
         Self {
             state: Mutex::new(ReplayState {
-                entries: vec![
-                    Entry {
-                        identity: 0,
-                        highest: 0,
-                        bitmap: [0; WINDOW / 64],
-                        next: EMPTY
-                    };
-                    CAPACITY
-                ]
-                .into_boxed_slice(),
+                entries: Vec::with_capacity(CAPACITY),
                 buckets: vec![EMPTY; BUCKETS].into_boxed_slice(),
                 hash: RandomState::new(),
-                len: 0,
                 oldest: 0,
             }),
         }
@@ -83,10 +71,9 @@ impl ReplayProtection {
             entry.mark(authentication.counter);
             return true;
         }
-        let index = if state.len < CAPACITY {
-            let index = state.len;
-            state.len += 1;
-            index
+        let len = state.entries.len();
+        let index = if len < CAPACITY {
+            len
         } else {
             let index = state.oldest;
             state.remove(index);
@@ -94,13 +81,18 @@ impl ReplayProtection {
             index
         };
         let bucket = state.bucket(authentication.identity);
-        state.entries[index] = Entry {
+        let mut entry = Entry {
             identity: authentication.identity,
             highest: authentication.counter,
             bitmap: [0; WINDOW / 64],
             next: state.buckets[bucket],
         };
-        state.entries[index].bitmap[0] = 1;
+        entry.bitmap[0] = 1;
+        if index == len {
+            state.entries.push(entry);
+        } else {
+            state.entries[index] = entry;
+        }
         state.buckets[bucket] = index as u32;
         true
     }

@@ -19,8 +19,9 @@ fn first_duplicate_out_of_order_and_invalid_counters() {
     assert!(!replay.commit(authentication(1, 0)));
     assert!(!replay.commit(authentication(1, 1 << 48)));
     assert!(replay.precheck(authentication(1, 100)));
-    assert_eq!(replay.state.lock().unwrap().len, 0);
+    assert!(replay.state.lock().unwrap().entries.is_empty());
     assert!(replay.commit(authentication(1, 100)));
+    assert_eq!(replay.state.lock().unwrap().entries.len(), 1);
     assert!(!replay.precheck(authentication(1, 100)));
     assert!(!replay.commit(authentication(1, 100)));
     assert!(replay.commit(authentication(1, 99)));
@@ -105,12 +106,25 @@ fn deterministic_random_sequence_matches_set_reference() {
 #[test]
 fn capacity_fifo_and_repeated_rotation_keep_storage_fixed() {
     let replay = ReplayProtection::new();
-    let (entries, buckets) = {
+    let (entries, capacity, buckets) = {
         let state = replay.state.lock().unwrap();
-        (state.entries.as_ptr(), state.buckets.as_ptr())
+        assert!(state.entries.is_empty());
+        assert!(state.entries.capacity() >= CAPACITY);
+        (
+            state.entries.as_ptr(),
+            state.entries.capacity(),
+            state.buckets.as_ptr(),
+        )
     };
-    for identity in 0..CAPACITY as u64 {
+    for identity in 0..(CAPACITY - 1) as u64 {
         assert!(replay.commit(authentication(identity, 1)));
+    }
+    assert_eq!(replay.state.lock().unwrap().entries.len(), CAPACITY - 1);
+    assert!(replay.commit(authentication((CAPACITY - 1) as u64, 1)));
+    {
+        let state = replay.state.lock().unwrap();
+        assert_eq!(state.entries.len(), CAPACITY);
+        assert_eq!(state.oldest, 0);
     }
     assert!(replay.commit(authentication(0, 2)));
     assert!(replay.commit(authentication(CAPACITY as u64, 1)));
@@ -122,8 +136,8 @@ fn capacity_fifo_and_repeated_rotation_keep_storage_fixed() {
         assert!(replay.commit(authentication(identity, 1)));
     }
     let state = replay.state.lock().unwrap();
-    assert_eq!(state.len, CAPACITY);
     assert_eq!(state.entries.len(), CAPACITY);
+    assert_eq!(state.entries.capacity(), capacity);
     assert_eq!(state.buckets.len(), BUCKETS);
     assert_eq!(entries, state.entries.as_ptr());
     assert_eq!(buckets, state.buckets.as_ptr());
@@ -155,6 +169,35 @@ fn collisions_preserve_links_when_fifo_removes_middle_and_tail() {
         assert!(state.find(colliding[3]).is_none());
         assert_eq!(state.find(colliding[2]), Some(2));
     }
+}
+
+#[test]
+fn fifo_replacement_in_the_same_bucket_reuses_the_slot_without_a_self_link() {
+    let replay = ReplayProtection::new();
+    let (replacement, other_identities) = {
+        let state = replay.state.lock().unwrap();
+        let bucket = state.bucket(0);
+        let replacement = (1..)
+            .find(|&identity| state.bucket(identity) == bucket)
+            .unwrap();
+        let other_identities: Vec<_> = (1..)
+            .filter(|&identity| state.bucket(identity) != bucket)
+            .take(CAPACITY - 1)
+            .collect();
+        (replacement, other_identities)
+    };
+    assert!(replay.commit(authentication(0, 1)));
+    for identity in other_identities {
+        assert!(replay.commit(authentication(identity, 1)));
+    }
+    assert!(replay.commit(authentication(replacement, 1)));
+    {
+        let state = replay.state.lock().unwrap();
+        assert_eq!(state.entries[0].next, EMPTY);
+        assert_eq!(state.find(replacement), Some(0));
+    }
+    assert!(replay.precheck(authentication(0, 1)));
+    assert!(!replay.commit(authentication(replacement, 1)));
 }
 
 #[test]
