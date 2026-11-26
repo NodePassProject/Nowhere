@@ -5,6 +5,16 @@
 
 use super::*;
 
+impl MorphKeys {
+    pub(crate) fn core_aes(shared_key: &[u8]) -> Self {
+        Self {
+            grade: MorphGrade::Core,
+            cipher: MorphCipher::Aes,
+            ..Self::derive(shared_key)
+        }
+    }
+}
+
 pub(super) fn hex<const N: usize>(value: &str) -> [u8; N] {
     assert_eq!(value.len(), N * 2);
     let mut bytes = [0; N];

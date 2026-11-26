@@ -27,6 +27,10 @@ fn toolbox_configuration_errors_explain_the_failure_without_echoing_values() {
             "morph must be 0 or 1",
         ),
         (
+            "vector://0123456789abcdef0123456789abcdef@localhost:2000?morph=0&grade=secret",
+            "grade must be full or core",
+        ),
+        (
             "vector://0123456789abcdef0123456789abcdef@localhost:2000?sni=secret:443",
             "sni must be an ASCII DNS name",
         ),

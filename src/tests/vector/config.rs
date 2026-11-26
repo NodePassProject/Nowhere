@@ -275,6 +275,16 @@ fn effective_url_reports_morph_switch_grade_and_cipher() {
 #[test]
 fn morph_parameters_validate_the_first_literal_value_even_when_disabled() {
     for query in [
+        "morph=2&grade=core",
+        "morph=2&morph=1",
+        "morph=",
+        "morph=0&grade=CORE",
+        "morph=0&grade=bad",
+        "grade",
+        "grade=&grade=core",
+        "grade=%FF",
+        "grade=%2563ore",
+        "grade=%６３ore",
         "morph=0&cipher=AES",
         "cipher",
         "cipher=&cipher=aes",

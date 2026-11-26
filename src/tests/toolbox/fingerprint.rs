@@ -99,6 +99,9 @@ fn fingerprint_defaults_carrier_and_requires_morph() {
         ("net=invalid&net=tcp&morph=0", "net must be tcp or udp"),
         ("net=tcp&morph=", "morph must be 0 or 1"),
         ("net=tcp&morph=invalid&morph=0", "morph must be 0 or 1"),
+        ("grade=core", "fingerprint requires morph=0 or morph=1"),
+        ("morph=0&grade=bad", "grade must be full or core"),
+        ("morph=0&cipher=bad", "cipher must be chacha or aes"),
     ] {
         let url = Url::parse(&format!(
             "nowhere://0123456789abcdef0123456789abcdef@localhost:2000?{query}#NAME"
@@ -131,9 +134,18 @@ async fn fingerprint_reads_the_leaf_certificate_with_and_without_morph_without_f
     use tokio_rustls::TlsAcceptor;
 
     use crate::common::certificate_sha256;
-    use crate::transport::MorphTcpStream;
+    use crate::transport::{MorphKeys, MorphTcpStream};
 
-    for (net, morph) in [("tcp", 0), ("tcp", 1), ("udp", 0), ("udp", 1)] {
+    for (net, query, morph_keys) in [
+        ("tcp", "morph=0", None),
+        ("tcp", "morph=1", Some(MorphKeys::derive(KEY.as_bytes()))),
+        ("udp", "morph=0", None),
+        (
+            "udp",
+            "morph=1&grade=core&cipher=aes",
+            Some(MorphKeys::core_aes(KEY.as_bytes())),
+        ),
+    ] {
         let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
         let certificate: CertificateDer<'static> = generated.cert.into();
         let expected = certificate_sha256(&certificate);
@@ -149,10 +161,9 @@ async fn fingerprint_reads_the_leaf_certificate_with_and_without_morph_without_f
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let url = Url::parse(&format!(
-            "nowhere://0123456789abcdef0123456789abcdef@{address}?net={net}&morph={morph}&sni=wrong.example&unknown=ignored#My%20Portal"
+            "nowhere://0123456789abcdef0123456789abcdef@{address}?net={net}&{query}&sni=wrong.example&unknown=ignored#My%20Portal"
         )).unwrap();
         let config = PortalClientConfig::from_fingerprint_url(&url).unwrap();
-        let morph_keys = config.morph_keys.clone();
         let server_task = tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.unwrap();
             let stream = MorphTcpStream::accept(tcp, morph_keys).await.unwrap();

@@ -14,6 +14,10 @@ async fn fingerprint_rejects_invalid_raw_share_links_before_network_access() {
             "fingerprint requires morph=0 or morph=1",
         ),
         (
+            format!("nowhere://{KEY}@localhost:2000?morph=2&grade=core"),
+            "morph must be 0 or 1",
+        ),
+        (
             format!("nowhere://{KEY}@localhost/tcp:2006/%2e%2e/udp:2017#Name"),
             "must not contain '.' or '..' segments",
         ),
@@ -64,6 +68,14 @@ async fn invalid_configuration_urls_fail_before_service_startup_with_safe_errors
         (
             format!("egress://{KEY}@localhost:2000?etar=2147483648"),
             "etar must be a non-negative integer",
+        ),
+        (
+            format!("portal://{KEY}@127.0.0.1:2000?morph=2&grade=core"),
+            "morph must be 0 or 1",
+        ),
+        (
+            format!("egress://{KEY}@localhost:2000?morph=0&grade=bad"),
+            "grade must be full or core",
         ),
     ] {
         let error = tokio::time::timeout(
