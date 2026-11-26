@@ -3,7 +3,7 @@
 
 //! UDP-over-stream packet framing tests.
 
-use crate::protocol::{encode_udp_packet, read_udp_packet, read_udp_packet_into};
+use crate::protocol::test_support::{encode_udp_packet, read_udp_packet, read_udp_packet_into};
 
 use super::*;
 

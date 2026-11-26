@@ -10,6 +10,7 @@ mod prehello;
 mod udp;
 mod vn;
 
+use crate::protocol::test_support::encode_target;
 use crate::protocol::{AuthTransport, encode_auth_frame};
 
 use super::*;
@@ -36,7 +37,7 @@ fn tag(q: &quinn::Connection, egress: bool) -> [u8; 16] {
 
 async fn request(send: &mut quinn::SendStream, kind: u8, target: &Target) {
     let mut bytes = vec![kind];
-    bytes.extend(crate::protocol::encode_target(target).unwrap());
+    bytes.extend(encode_target(target).unwrap());
     send.write_all(&bytes).await.unwrap();
 }
 

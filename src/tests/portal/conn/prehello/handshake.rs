@@ -5,6 +5,8 @@
 
 use std::io::Cursor;
 
+use crate::protocol::test_support::encode_target;
+
 use super::*;
 
 #[tokio::test]
@@ -260,7 +262,7 @@ async fn fragmented_client_hello_continues_authentication_and_bidirectional_flow
         let (target, echo) = tcp_echo().await;
         let mut request = frame.to_vec();
         request.push(0);
-        request.extend(crate::protocol::encode_target(&target).unwrap());
+        request.extend(encode_target(&target).unwrap());
         std::io::Write::write_all(&mut client.writer(), &request).unwrap();
         flush_tls(&mut client, &mut stream).await;
         let mut result = [0];

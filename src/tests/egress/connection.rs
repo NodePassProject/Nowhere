@@ -6,6 +6,7 @@
 use url::Url;
 
 use crate::common::Logger;
+use crate::protocol::test_support::encode_target;
 use crate::protocol::{AUTH_EXPORTER_LABEL, AuthTransport, Credentials};
 
 use super::*;
@@ -114,10 +115,8 @@ async fn accepted_barrier_prevents_dial_when_business_stream_arrives_first() {
     let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
     let mut request = vec![0];
-    request.extend(
-        crate::protocol::encode_target(&crate::protocol::Target::Ip(target.local_addr().unwrap()))
-            .unwrap(),
-    );
+    request
+        .extend(encode_target(&crate::protocol::Target::Ip(target.local_addr().unwrap())).unwrap());
     send.write_all(&request).await.unwrap();
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(60), target.accept())

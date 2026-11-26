@@ -3,6 +3,8 @@
 
 //! Portal udp connection regression tests.
 
+use crate::protocol::test_support::encode_udp_data;
+
 use super::*;
 
 #[tokio::test]
@@ -23,7 +25,7 @@ async fn persistent_udp_control_fin_reclaims_without_close_datagram() {
             .await
             .is_err()
     );
-    let frame = crate::protocol::encode_udp_data(id, b"packet").unwrap();
+    let frame = encode_udp_data(id, b"packet").unwrap();
     q.send_datagram(bytes::Bytes::from(frame)).unwrap();
     let response = tokio::time::timeout(Duration::from_secs(1), q.read_datagram())
         .await
@@ -51,10 +53,8 @@ async fn persistent_udp_control_fin_reclaims_without_close_datagram() {
     })
     .await
     .unwrap();
-    q.send_datagram(bytes::Bytes::from(
-        crate::protocol::encode_udp_data(id, b"late").unwrap(),
-    ))
-    .unwrap();
+    q.send_datagram(bytes::Bytes::from(encode_udp_data(id, b"late").unwrap()))
+        .unwrap();
     let deadline = tokio::time::Instant::now() + Duration::from_millis(40);
     while let Ok(Ok(bytes)) = tokio::time::timeout_at(deadline, q.read_datagram()).await {
         assert!(matches!(
@@ -142,7 +142,7 @@ async fn pre_ready_unknown_and_auth_only_datagrams_never_reach_target() {
     let (endpoint, q) = connect(&h).await;
     let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let target = Target::Ip(socket.local_addr().unwrap());
-    let frame = crate::protocol::encode_udp_data(1, b"auth-only").unwrap();
+    let frame = encode_udp_data(1, b"auth-only").unwrap();
     q.send_datagram(bytes::Bytes::from(frame)).unwrap();
     let (mut auth, mut response) = q.open_bi().await.unwrap();
     auth.write_all(&tag(&q, false)).await.unwrap();
@@ -151,14 +151,14 @@ async fn pre_ready_unknown_and_auth_only_datagrams_never_reach_target() {
     let (mut send, mut recv) = q.open_bi().await.unwrap();
     let id = crate::protocol::udp_flow_id(u64::from(send.id()), false).unwrap();
     q.send_datagram(bytes::Bytes::from(
-        crate::protocol::encode_udp_data(id, b"before request").unwrap(),
+        encode_udp_data(id, b"before request").unwrap(),
     ))
     .unwrap();
     tokio::time::sleep(Duration::from_millis(30)).await;
     request(&mut send, 1, &target).await;
     assert_eq!(result(&mut recv).await, SetupResult::Ready);
     q.send_datagram(bytes::Bytes::from(
-        crate::protocol::encode_udp_data(1, b"still auth-only").unwrap(),
+        encode_udp_data(1, b"still auth-only").unwrap(),
     ))
     .unwrap();
     let mut bytes = [0; 64];
@@ -241,12 +241,8 @@ async fn datagrams_queued_before_auth_cannot_become_first_udp_flow_payload() {
     let h = Harness::new("direct", false).await;
     let target = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let (endpoint, q) = connect(&h).await;
-    q.send_datagram(
-        crate::protocol::encode_udp_data(1, b"early")
-            .unwrap()
-            .into(),
-    )
-    .unwrap();
+    q.send_datagram(encode_udp_data(1, b"early").unwrap().into())
+        .unwrap();
     let (mut send, mut recv) = q.open_bi().await.unwrap();
     send.write_all(&tag(&q, false)).await.unwrap();
     request(&mut send, 1, &Target::Ip(target.local_addr().unwrap())).await;
@@ -257,12 +253,8 @@ async fn datagrams_queued_before_auth_cannot_become_first_udp_flow_payload() {
             .await
             .is_err()
     );
-    q.send_datagram(
-        crate::protocol::encode_udp_data(1, b"ready")
-            .unwrap()
-            .into(),
-    )
-    .unwrap();
+    q.send_datagram(encode_udp_data(1, b"ready").unwrap().into())
+        .unwrap();
     let (size, _) = tokio::time::timeout(Duration::from_secs(1), target.recv_from(&mut buffer))
         .await
         .unwrap()

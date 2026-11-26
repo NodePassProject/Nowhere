@@ -3,6 +3,8 @@
 
 //! Morph TCP admission retention, release, and shutdown regressions.
 
+use crate::protocol::test_support::encode_target;
+
 use super::*;
 
 #[tokio::test]
@@ -218,9 +220,7 @@ async fn parked_tls_auth_frame_must_finish_before_original_deadline() {
             tokio::time::sleep_until(started + Duration::from_millis(1650)).await;
         }
         let mut request = vec![frame[frame.len() - 1], 0];
-        request.extend(
-            crate::protocol::encode_target(&Target::Ip(target.local_addr().unwrap())).unwrap(),
-        );
+        request.extend(encode_target(&Target::Ip(target.local_addr().unwrap())).unwrap());
         let sent = tls.write_all(&request).await;
         if late {
             let _ = tls.flush().await;

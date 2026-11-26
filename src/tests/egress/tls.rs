@@ -9,6 +9,8 @@ use socket2::SockRef;
 use tokio::sync::mpsc;
 use url::Url;
 
+use crate::protocol::test_support::encode_target;
+
 use super::*;
 
 const KEY: &str = "0123456789abcdef0123456789abcdef";
@@ -346,7 +348,7 @@ async fn max_one_replaces_consumed_standby_without_exceeding_one() {
     tokio::time::sleep(ttl + Duration::from_millis(50)).await;
     let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = crate::protocol::Target::Ip(target.local_addr().unwrap());
-    seed.write_all(&crate::protocol::encode_target(&address).unwrap())
+    seed.write_all(&encode_target(&address).unwrap())
         .await
         .unwrap();
     seed.flush().await.unwrap();

@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use url::Url;
 
+use crate::protocol::test_support::{encode_target, encode_udp_data_fragments};
+
 use super::*;
 
 const KEY: &str = "0123456789abcdef0123456789abcdef";
@@ -21,10 +23,8 @@ fn deterministic_mutation_corpus_bounds_target_datagram_reassembly_and_urls() {
         random ^= random << 17;
         random
     };
-    let target =
-        crate::protocol::encode_target(&Target::domain("example.com", 443).unwrap()).unwrap();
-    let frame =
-        crate::protocol::encode_udp_data_fragments(2, 1, b"fragmented payload", 16).unwrap();
+    let target = encode_target(&Target::domain("example.com", 443).unwrap()).unwrap();
+    let frame = encode_udp_data_fragments(2, 1, b"fragmented payload", 16).unwrap();
     let mut assembly = crate::protocol::DatagramReassembler::new(ReassemblyConfig::default());
     let now = std::time::Instant::now();
     for i in 0..20000 {
@@ -44,10 +44,10 @@ fn deterministic_mutation_corpus_bounds_target_datagram_reassembly_and_urls() {
         if i % 5 == 0 {
             bytes.truncate(next() as usize % (bytes.len() + 1));
         }
-        if let Ok((decoded, consumed)) = crate::protocol::decode_target(&bytes) {
+        if let Ok((decoded, consumed)) = super::request::decode_target(&bytes) {
             assert!(consumed <= bytes.len());
             assert_eq!(
-                crate::protocol::decode_target(&crate::protocol::encode_target(&decoded).unwrap())
+                super::request::decode_target(&encode_target(&decoded).unwrap())
                     .unwrap()
                     .0,
                 decoded

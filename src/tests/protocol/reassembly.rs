@@ -3,8 +3,9 @@
 
 //! Bounded fragment reassembly, ownership, expiry, and eviction tests.
 
+use crate::protocol::MAX_FLOW_ID;
 use crate::protocol::datagram::{OwnedUdpFrame, decode_udp_frame_owned};
-use crate::protocol::{MAX_FLOW_ID, ReassemblyDropReason, encode_udp_data_fragments};
+use crate::protocol::test_support::encode_udp_data_fragments;
 
 use super::*;
 

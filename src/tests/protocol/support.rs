@@ -8,9 +8,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::Target;
 
-pub(crate) use super::reassembly::ReassemblyDropReason;
-pub(crate) use super::request::decode_target;
-
 pub(crate) fn encode_udp_data(flow_id: u32, payload: &[u8]) -> Result<Vec<u8>> {
     if payload.len() > super::datagram::UDP_PACKET_MAX {
         bail!("protocol::test_support::encode_udp_data: payload too large");

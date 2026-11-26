@@ -5,6 +5,7 @@
 
 use std::sync::atomic::Ordering;
 
+use crate::protocol::test_support::read_udp_packet;
 use crate::protocol::write_udp_packet;
 
 use super::*;
@@ -30,13 +31,7 @@ async fn stream_tunnel_reuses_receive_buffer_and_accounts_only_completed_packets
         assert_eq!(packet.payload(&buffer), payload);
         assert_eq!(buffer.as_ptr(), pointer);
         assert!(tunnel.send(payload).await.unwrap());
-        assert_eq!(
-            crate::protocol::read_udp_packet(&mut peer)
-                .await
-                .unwrap()
-                .unwrap(),
-            payload
-        );
+        assert_eq!(read_udp_packet(&mut peer).await.unwrap().unwrap(), payload);
     }
     assert_eq!(stats.udp_active.load(Ordering::Relaxed), 1);
     assert_eq!(stats.udp_upload_bytes.load(Ordering::Relaxed), 11);

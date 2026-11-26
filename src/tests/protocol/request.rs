@@ -7,7 +7,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use tokio::io::AsyncReadExt;
 
-use crate::protocol::{encode_target, write_request, write_request_frame};
+use crate::protocol::test_support::{encode_target, write_request, write_request_frame};
 
 use super::*;
 

@@ -6,6 +6,8 @@
 use chacha20::ChaCha20;
 use chacha20::cipher::{KeyIvInit, StreamCipher};
 
+use crate::protocol::test_support::encode_udp_data;
+
 use super::*;
 
 #[tokio::test]
@@ -54,12 +56,8 @@ async fn every_supported_morph_quic_version_authenticates_and_forwards_tcp_and_u
         let id = crate::protocol::udp_flow_id(u64::from(send.id()), false).unwrap();
         request(&mut send, 1, &udp).await;
         assert_eq!(result(&mut recv).await, SetupResult::Ready);
-        q.send_datagram(
-            crate::protocol::encode_udp_data(id, b"supported version")
-                .unwrap()
-                .into(),
-        )
-        .unwrap();
+        q.send_datagram(encode_udp_data(id, b"supported version").unwrap().into())
+            .unwrap();
         let response = tokio::time::timeout(Duration::from_secs(2), q.read_datagram())
             .await
             .unwrap()

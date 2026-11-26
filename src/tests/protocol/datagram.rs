@@ -3,7 +3,8 @@
 
 //! QUIC UDP frame codec and fragmentation boundary tests.
 
-use crate::protocol::{MAX_FLOW_ID, encode_udp_data, encode_udp_data_fragments};
+use crate::protocol::MAX_FLOW_ID;
+use crate::protocol::test_support::{encode_udp_data, encode_udp_data_fragments};
 
 use super::*;
 

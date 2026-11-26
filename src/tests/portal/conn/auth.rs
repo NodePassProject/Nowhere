@@ -3,6 +3,8 @@
 
 //! Portal auth connection regression tests.
 
+use crate::protocol::test_support::encode_target;
+
 use super::*;
 
 #[tokio::test]
@@ -95,7 +97,7 @@ async fn tls_replay(morph: bool) {
     let (target, echo) = tcp_echo().await;
     let mut request = frame.to_vec();
     request.push(0);
-    request.extend(crate::protocol::encode_target(&target).unwrap());
+    request.extend(encode_target(&target).unwrap());
     first.write_all(&request).await.unwrap();
     assert_eq!(
         SetupResult::from(crate::protocol::read_flow_result(&mut first).await.unwrap()),
